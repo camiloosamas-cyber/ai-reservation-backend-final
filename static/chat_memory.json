@@ -1,0 +1,58 @@
+[
+  {
+    "role": "user",
+    "content": "What did I just say?"
+  },
+  {
+    "role": "assistant",
+    "content": "I'm sorry, I don't have that information right now. Would you like me to connect you with our team? \ud83d\ude0a"
+  },
+  {
+    "role": "user",
+    "content": "Hello!"
+  },
+  {
+    "role": "assistant",
+    "content": "Hello! \ud83d\ude0a Welcome to La Casa Italiana. How can I assist you today?"
+  },
+  {
+    "role": "user",
+    "content": "What did I just say?"
+  },
+  {
+    "role": "assistant",
+    "content": "I'm sorry, I don't have that information right now. Would you like me to connect you with our team? \ud83d\ude0a"
+  },
+  {
+    "role": "user",
+    "content": "Hello!"
+  },
+  {
+    "role": "assistant",
+    "content": "Hello! \ud83d\ude0a Welcome to La Casa Italiana. How can I assist you today?"
+  },
+  {
+    "role": "user",
+    "content": "What did I just say?"
+  },
+  {
+    "role": "assistant",
+    "content": "I'm sorry, I don't have that information right now. Would you like me to connect you with our team? \ud83d\ude0a"
+  },
+  {
+    "role": "user",
+    "content": "Hey, I\u2019m Camilo!"
+  },
+  {
+    "role": "assistant",
+    "content": "Hello, Camilo! \ud83d\ude0a Welcome to La Casa Italiana. How can I assist you today?"
+  },
+  {
+    "role": "user",
+    "content": "What\u2019s my name?"
+  },
+  {
+    "role": "assistant",
+    "content": "I'm sorry, I don't have that information right now. Would you like me to connect you with our team? \ud83d\ude0a"
+  }
+]
