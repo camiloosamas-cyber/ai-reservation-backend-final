@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, WebSocket, Form
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -57,16 +57,7 @@ def init_db():
 
 init_db()
 
-# ---------------- Models ----------------
-class CreateReservation(BaseModel):
-    customer_name: str
-    customer_email: Optional[str] = None
-    contact_phone: Optional[str] = None
-    datetime: str
-    party_size: int
-    table_number: Optional[str] = None
-    notes: Optional[str] = None
-
+# ---------------- Models (keep for type validation) ----------------
 class UpdateReservation(BaseModel):
     reservation_id: int
     datetime: Optional[str] = None
@@ -78,7 +69,8 @@ class UpdateReservation(BaseModel):
 class CancelReservation(BaseModel):
     reservation_id: int
 
-# Utility for analytics
+
+# ---------- Utilities / analytics ----------
 def parse_dt(s: str) -> Optional[datetime]:
     try:
         if s.endswith("Z"):
@@ -87,12 +79,13 @@ def parse_dt(s: str) -> Optional[datetime]:
     except:
         return None
 
-# ---------------- Data Access ----------------
+
 def get_reservations():
     conn = get_db()
     rows = conn.execute("SELECT * FROM reservations ORDER BY datetime DESC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
 
 def get_analytics():
     conn = get_db()
@@ -106,10 +99,8 @@ def get_analytics():
     now = datetime.now()
     week_ago = now - timedelta(days=7)
 
-    weekly = 0
-    times = []
-    party_vals = []
-    cancelled = 0
+    weekly, cancelled = 0, 0
+    times, party_vals = [], []
 
     for r in reservations:
         if r.get("party_size"):
@@ -135,29 +126,39 @@ def get_analytics():
         "cancel_rate": cancel_rate,
     }
 
+
 # ---------------- Routes ----------------
 @app.get("/", response_class=HTMLResponse)
 def home():
     return "<h3>✅ Backend Running</h3><p>Open <a href='/dashboard'>/dashboard</a></p>"
 
+
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
-
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
             "reservations": get_reservations(),
             **get_analytics(),
-
-            # ✅ Needed for WhatsApp + date parsing
             "parse_dt": parse_dt,
-            "timedelta": timedelta
+            "timedelta": timedelta,
         },
     )
 
+
+# ✅ FIXED — Chatbase-friendly POST that accepts strings or numbers
 @app.post("/createReservation")
-async def create_reservation(data: CreateReservation):
+async def create_reservation(request: Request):
+    data = await request.json()
+
+    # Convert party_size safely (Chatbase may send "2")
+    party_size = data.get("party_size")
+    try:
+        party_size = int(party_size) if party_size is not None else None
+    except:
+        party_size = None
+
     conn = get_db()
     conn.execute("""
       INSERT INTO reservations (
@@ -165,17 +166,32 @@ async def create_reservation(data: CreateReservation):
         datetime, party_size, table_number, notes, status
       ) VALUES (?,?,?,?,?,?,?, 'confirmed')
     """, (
-        data.customer_name, data.customer_email, data.contact_phone,
-        data.datetime, data.party_size, data.table_number, data.notes
+        data.get("customer_name"),
+        data.get("customer_email"),
+        data.get("contact_phone"),
+        data.get("datetime"),
+        party_size,
+        data.get("table_number"),
+        data.get("notes")
     ))
     conn.commit()
     conn.close()
+
     await notify({"type": "refresh"})
-    return {"message": "created"}
+
+    reply = (
+        f"🎉 Reservation created!\n"
+        f"✔ Name: {data.get('customer_name')}\n"
+        f"✔ Date/Time: {data.get('datetime')}\n"
+        f"✔ Party size: {party_size}\n\n"
+        "If you need changes, just tell me."
+    )
+
+    return {"message": reply, "status": "created"}
+
 
 @app.post("/updateReservation")
 async def update_reservation(data: UpdateReservation):
-
     fields, values = [], []
 
     if data.datetime: fields.append("datetime = ?"); values.append(data.datetime)
@@ -198,14 +214,17 @@ async def update_reservation(data: UpdateReservation):
     await notify({"type": "refresh"})
     return {"message": "updated"}
 
+
 @app.post("/cancelReservation")
 async def cancel_reservation(data: CancelReservation):
     conn = get_db()
     conn.execute("UPDATE reservations SET status='cancelled' WHERE reservation_id=?", (data.reservation_id,))
     conn.commit()
     conn.close()
+
     await notify({"type": "refresh"})
     return {"message": "cancelled"}
+
 
 @app.post("/resetReservations")
 async def reset_reservations():
@@ -215,7 +234,8 @@ async def reset_reservations():
     conn.close()
     return {"message": "✅ all reservations cleared"}
 
-# ---------------- Real-time WebSocket ----------------
+
+# ---------------- WebSocket (auto-refresh dashboard) ----------------
 clients = []
 
 @app.websocket("/ws")
@@ -228,27 +248,10 @@ async def websocket_endpoint(websocket: WebSocket):
     except:
         clients.remove(websocket)
 
+
 async def notify(message: dict):
     for ws in clients:
         try:
             await ws.send_text(json.dumps(message))
         except:
             pass
-
-# ---------------- Twilio WhatsApp minimal echo ----------------
-@app.post("/whatsapp")
-async def whatsapp_webhook(
-    Body: str = Form(...),
-    From: str = Form(...)
-):
-    """
-    Minimal Twilio WhatsApp webhook:
-    - Receives the incoming message (Body)
-    - Replies with a simple echo so we know the loop works
-    """
-    reply_text = f"Got it! You said: {Body}"
-    twiml = (
-        "<?xml version='1.0' encoding='UTF-8'?>"
-        f"<Response><Message>{reply_text}</Message></Response>"
-    )
-    return Response(content=twiml, media_type="application/xml")
