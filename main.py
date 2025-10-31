@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Request, WebSocket
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request, WebSocket, Form
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -234,3 +234,21 @@ async def notify(message: dict):
             await ws.send_text(json.dumps(message))
         except:
             pass
+
+# ---------------- Twilio WhatsApp minimal echo ----------------
+@app.post("/whatsapp")
+async def whatsapp_webhook(
+    Body: str = Form(...),
+    From: str = Form(...)
+):
+    """
+    Minimal Twilio WhatsApp webhook:
+    - Receives the incoming message (Body)
+    - Replies with a simple echo so we know the loop works
+    """
+    reply_text = f"Got it! You said: {Body}"
+    twiml = (
+        "<?xml version='1.0' encoding='UTF-8'?>"
+        f"<Response><Message>{reply_text}</Message></Response>"
+    )
+    return Response(content=twiml, media_type="application/xml")
