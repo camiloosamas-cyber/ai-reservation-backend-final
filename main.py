@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Request, WebSocket, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request, WebSocket
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,20 +10,16 @@ from datetime import datetime, timedelta
 import json
 import os
 
-# --- OpenAI (for WhatsApp AI parsing) ---
-from openai import OpenAI
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
 app = FastAPI()
 
-# ✅ Always work inside Backend folder
+# ✅ Always run inside backend folder (Render safe)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# Static + templates
+# Static + templates (dashboard)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# CORS
+# CORS (lets WhatsApp / ChatGPT access API)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,7 +27,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------- DB ----------------
+# ---------------------------------------
+# DATABASE
+# ---------------------------------------
+
 DB_PATH = os.path.join(os.getcwd(), "reservations.db")
 
 def get_db():
@@ -53,7 +52,7 @@ def init_db():
         party_size INTEGER,
         table_number TEXT,
         notes TEXT,
-        status TEXT DEFAULT 'pending'
+        status TEXT DEFAULT 'confirmed'
     )
     """)
     conn.commit()
@@ -61,7 +60,10 @@ def init_db():
 
 init_db()
 
-# ---------------- Models (keep for type validation) ----------------
+# ---------------------------------------
+# MODELS (for Edit/Cancel)
+# ---------------------------------------
+
 class UpdateReservation(BaseModel):
     reservation_id: int
     datetime: Optional[str] = None
@@ -74,7 +76,10 @@ class CancelReservation(BaseModel):
     reservation_id: int
 
 
-# ---------- Utilities / analytics ----------
+# ---------------------------------------
+# UTILITIES
+# ---------------------------------------
+
 def parse_dt(s: str) -> Optional[datetime]:
     try:
         if s.endswith("Z"):
@@ -83,13 +88,11 @@ def parse_dt(s: str) -> Optional[datetime]:
     except:
         return None
 
-
 def get_reservations():
     conn = get_db()
     rows = conn.execute("SELECT * FROM reservations ORDER BY datetime DESC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
-
 
 def get_analytics():
     conn = get_db()
@@ -103,20 +106,22 @@ def get_analytics():
     now = datetime.now()
     week_ago = now - timedelta(days=7)
 
-    weekly, cancelled = 0, 0
-    times, party_vals = [], []
+    weekly = 0
+    cancelled = 0
+    party_vals = []
+    times = []
 
     for r in reservations:
-        if r.get("party_size"):
+        if r["party_size"]:
             party_vals.append(int(r["party_size"]))
 
-        dt = parse_dt(r.get("datetime", ""))
+        dt = parse_dt(r["datetime"])
         if dt:
             if dt > week_ago:
                 weekly += 1
             times.append(dt.strftime("%H:%M"))
 
-        if r.get("status") == "cancelled":
+        if r["status"] == "cancelled":
             cancelled += 1
 
     avg = round(sum(party_vals) / len(party_vals), 1) if party_vals else 0
@@ -130,12 +135,13 @@ def get_analytics():
         "cancel_rate": cancel_rate,
     }
 
+# ---------------------------------------
+# ROUTES
+# ---------------------------------------
 
-# ---------------- Routes ----------------
 @app.get("/", response_class=HTMLResponse)
 def home():
-    return "<h3>✅ Backend Running</h3><p>Open <a href='/dashboard'>/dashboard</a></p>"
-
+    return "<h3>✅ Backend Running</h3><p>Open <a href='/dashboard'>Dashboard</a></p>"
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -146,29 +152,28 @@ async def dashboard(request: Request):
             "reservations": get_reservations(),
             **get_analytics(),
             "parse_dt": parse_dt,
-            "timedelta": timedelta,
+            "timedelta": timedelta
         },
     )
 
-
-# ✅ /createReservation — accepts strings or numbers for party_size
+# ✅ ChatGPT Action calls /createReservation with a JSON payload
 @app.post("/createReservation")
 async def create_reservation(request: Request):
     data = await request.json()
 
-    # Convert party_size safely (may arrive as "2")
+    # Convert party_size safely
     party_size = data.get("party_size")
     try:
-        party_size = int(party_size) if party_size is not None else None
+        party_size = int(party_size)
     except:
         party_size = None
 
     conn = get_db()
     conn.execute("""
-      INSERT INTO reservations (
+        INSERT INTO reservations (
         customer_name, customer_email, contact_phone,
         datetime, party_size, table_number, notes, status
-      ) VALUES (?,?,?,?,?,?,?, 'confirmed')
+        ) VALUES (?,?,?,?,?,?,?, 'confirmed')
     """, (
         data.get("customer_name"),
         data.get("customer_email"),
@@ -183,15 +188,7 @@ async def create_reservation(request: Request):
 
     await notify({"type": "refresh"})
 
-    reply = (
-        f"🎉 Reservation created!\n"
-        f"✔ Name: {data.get('customer_name')}\n"
-        f"✔ Date/Time: {data.get('datetime')}\n"
-        f"✔ Party size: {party_size}\n\n"
-        "If you need changes, just tell me."
-    )
-
-    return {"message": reply, "status": "created"}
+    return {"message": "✅ Reservation saved", "status": "created"}
 
 
 @app.post("/updateReservation")
@@ -201,12 +198,8 @@ async def update_reservation(data: UpdateReservation):
     if data.datetime: fields.append("datetime = ?"); values.append(data.datetime)
     if data.party_size: fields.append("party_size = ?"); values.append(int(data.party_size))
     if data.table_number: fields.append("table_number = ?"); values.append(data.table_number)
-    if data.notes is not None: fields.append("notes = ?"); values.append(data.notes)
+    if data.notes != None: fields.append("notes = ?"); values.append(data.notes)
     if data.status: fields.append("status = ?"); values.append(data.status)
-
-    if not fields:
-        fields.append("status = ?")
-        values.append("updated")
 
     values.append(data.reservation_id)
 
@@ -222,7 +215,7 @@ async def update_reservation(data: UpdateReservation):
 @app.post("/cancelReservation")
 async def cancel_reservation(data: CancelReservation):
     conn = get_db()
-    conn.execute("UPDATE reservations SET status='cancelled' WHERE reservation_id=?", (data.reservation_id,))
+    conn.execute("UPDATE reservations SET status = 'cancelled' WHERE reservation_id = ?", (data.reservation_id,))
     conn.commit()
     conn.close()
 
@@ -239,108 +232,10 @@ async def reset_reservations():
     return {"message": "✅ all reservations cleared"}
 
 
-# ---------------- WhatsApp webhook → OpenAI → DB ----------------
-@app.post("/whatsapp")
-async def whatsapp_webhook(Body: str = Form(...)):
-    """
-    Twilio Sandbox sends form-encoded fields including `Body`.
-    We send the text to OpenAI (gpt-4.1-mini) asking for a single JSON object.
-    If required fields are present → insert into DB and confirm.
-    Otherwise → ask the user for the missing piece.
-    """
-    print("📩 Incoming WhatsApp:", Body)
+# ---------------------------------------
+# REALTIME DASHBOARD (WEBSOCKET)
+# ---------------------------------------
 
-    # Ask the model to output ONLY JSON with the fields we need
-    system_prompt = (
-        "You are an AI reservation assistant for a restaurant.\n"
-        "Extract a single reservation from the user's message and return ONLY a compact JSON object with keys:\n"
-        'customer_name (string), customer_email (string, optional), contact_phone (string, optional), '
-        'party_size (number), datetime (ISO8601 if possible or the user\'s phrasing), '
-        'table_number (string, optional), notes (string, optional).\n'
-        "If one of (customer_name, party_size, datetime) is missing, return a JSON with only "
-        '{"ask":"<one short question to get the missing info>"} and nothing else.'
-    )
-
-    try:
-        resp = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            temperature=0,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": Body}
-            ]
-        )
-        text = resp.choices[0].message.content.strip()
-        # Ensure we try to load a JSON object from the reply
-        # (some models may wrap it in code fences)
-        if text.startswith("```"):
-            text = text.strip("`")
-            # remove possible language hint like ```json
-            if "\n" in text:
-                text = "\n".join(text.split("\n")[1:])
-        data = json.loads(text)
-    except Exception as e:
-        print("❌ OpenAI parse error:", e)
-        return {"message": "Sorry, I didn’t catch that. Can you repeat the booking details?"}
-
-    # If the model asks a clarifying question
-    if isinstance(data, dict) and "ask" in data:
-        return {"message": data["ask"]}
-
-    # Validate required fields
-    required = ["customer_name", "party_size", "datetime"]
-    missing = [k for k in required if not data.get(k)]
-    if missing:
-        ask = "I just need " + ", ".join(missing) + "."
-        return {"message": ask}
-
-    # Build payload for /createReservation and coerce party_size
-    payload = {
-        "customer_name": data.get("customer_name"),
-        "customer_email": data.get("customer_email") or "",
-        "contact_phone": data.get("contact_phone") or "",
-        "party_size": data.get("party_size"),
-        "datetime": data.get("datetime"),
-        "table_number": data.get("table_number") or "",
-        "notes": data.get("notes") or ""
-    }
-
-    # Insert directly (reuse same logic as /createReservation)
-    try:
-        party_size = payload.get("party_size")
-        try:
-            party_size = int(party_size) if party_size is not None else None
-        except:
-            party_size = None
-
-        conn = get_db()
-        conn.execute("""
-          INSERT INTO reservations (
-            customer_name, customer_email, contact_phone,
-            datetime, party_size, table_number, notes, status
-          ) VALUES (?,?,?,?,?,?,?, 'confirmed')
-        """, (
-            payload["customer_name"],
-            payload["customer_email"],
-            payload["contact_phone"],
-            payload["datetime"],
-            party_size,
-            payload["table_number"],
-            payload["notes"]
-        ))
-        conn.commit()
-        conn.close()
-
-        await notify({"type": "refresh"})
-        return {
-            "message": f"✅ Reservation created for {payload['customer_name']} on {payload['datetime']} (party {party_size})."
-        }
-    except Exception as e:
-        print("❌ DB insert error:", e)
-        return {"message": "I had trouble saving that. Can you rephrase the details?"}
-
-
-# ---------------- WebSocket (auto-refresh dashboard) ----------------
 clients = []
 
 @app.websocket("/ws")
@@ -352,7 +247,6 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except:
         clients.remove(websocket)
-
 
 async def notify(message: dict):
     for ws in clients:
