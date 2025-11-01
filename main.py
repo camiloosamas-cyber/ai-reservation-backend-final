@@ -17,14 +17,14 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = FastAPI()
 
-# ✅ Always work inside backend folder
+# ✅ Always run inside the backend folder location
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # Static + templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# CORS
+# CORS – allow frontend to talk to backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,15 +32,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------- DB ----------------
+# ---------------- DATABASE ----------------
 DB_PATH = os.path.join(os.getcwd(), "reservations.db")
 
 
 def get_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=3000;")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=3000")
     return conn
 
 
@@ -56,7 +56,7 @@ def init_db():
         party_size INTEGER,
         table_number TEXT,
         notes TEXT,
-        status TEXT DEFAULT 'pending'
+        status TEXT DEFAULT 'confirmed'
     )
     """)
     conn.commit()
@@ -65,7 +65,7 @@ def init_db():
 
 init_db()
 
-# ---------------- Models ----------------
+# ---------------- MODELS (update + cancel) ----------------
 class UpdateReservation(BaseModel):
     reservation_id: int
     datetime: Optional[str] = None
@@ -79,7 +79,7 @@ class CancelReservation(BaseModel):
     reservation_id: int
 
 
-# ---------- Util / analytics ----------
+# ---------------- UTILS / ANALYTICS ----------------
 def parse_dt(s: str) -> Optional[datetime]:
     try:
         if s.endswith("Z"):
@@ -105,7 +105,8 @@ def get_analytics():
         return {"weekly_count": 0, "avg_party_size": 0, "peak_time": "N/A", "cancel_rate": 0}
 
     reservations = [dict(r) for r in rows]
-    now, week_ago = datetime.now(), datetime.now() - timedelta(days=7)
+    now = datetime.now()
+    week_ago = now - timedelta(days=7)
 
     weekly, cancelled = 0, 0
     times, party_vals = [], []
@@ -135,7 +136,7 @@ def get_analytics():
     }
 
 
-# ---------------- Routes ----------------
+# ---------------- ROUTES ----------------
 @app.get("/", response_class=HTMLResponse)
 def home():
     return "<h3>✅ Backend Running</h3><p>Open <a href='/dashboard'>/dashboard</a></p>"
@@ -227,15 +228,15 @@ async def reset_reservations():
     return {"message": "✅ all reservations cleared"}
 
 
-# ---------------- WhatsApp webhook → AI → DB ----------------
+# ---------------- WHATSAPP WEBHOOK ----------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
     print("📩 Incoming WhatsApp:", Body)
 
     prompt = """
-You are an AI restaurant reservation assistant.
-Extract a reservation and return ONLY JSON.
-If missing info, return ONLY: {"ask":"<question>"}.
+You are an AI reservation assistant.
+Extract the reservation and return ONLY JSON.
+If missing data, return ONLY: {"ask": "<question>"}.
 JSON fields: customer_name, customer_email, contact_phone, party_size, datetime, table_number, notes.
 """
 
@@ -291,7 +292,7 @@ JSON fields: customer_name, customer_email, contact_phone, party_size, datetime,
     )
 
 
-# ---------------- WebSocket (dashboard live refresh) ----------------
+# ---------------- WEBSOCKET (AUTO REFRESH) ----------------
 clients = []
 
 
