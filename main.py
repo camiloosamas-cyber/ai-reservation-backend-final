@@ -3,8 +3,6 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
 from datetime import datetime
 import json, os, asyncio
 
@@ -43,11 +41,11 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_SERVICE_ROLE")
 )
 
-TABLE_LIMIT = 10  # restaurant tables
+TABLE_LIMIT = 10  # number of tables in restaurant
 
 
 def assign_table(date_str: str):
-    """ Returns first free table at that datetime """
+    """Returns first free table at that datetime"""
     booked = supabase.table("reservations") \
         .select("table_number") \
         .eq("datetime", date_str).execute()
@@ -63,7 +61,7 @@ def assign_table(date_str: str):
 
 
 def save_reservation(data):
-    """ Insert record into Supabase """
+    """Insert reservation into Supabase"""
     table = assign_table(data["datetime"])
     if not table:
         return "❌ No tables available at that time."
@@ -90,6 +88,7 @@ def save_reservation(data):
         f"🍽 Table: {table}"
     )
 
+
 # ---------------------------------------------------------
 # DASHBOARD ROUTE
 # ---------------------------------------------------------
@@ -108,7 +107,7 @@ async def dashboard(request: Request):
 
 
 # ---------------------------------------------------------
-# WHATSAPP WEBHOOK
+# WHATSAPP WEBHOOK (AI extracts JSON)
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
@@ -117,11 +116,11 @@ async def whatsapp_webhook(Body: str = Form(...)):
     resp = MessagingResponse()
 
     prompt = """
-You extract restaurant reservation details from WhatsApp.
+You extract restaurant reservation details from the message.
 
 RETURN ONLY VALID JSON. No explanation.
 
-Valid JSON structure:
+VALID JSON:
 {
  "customer_name": "",
  "customer_email": "",
@@ -131,8 +130,8 @@ Valid JSON structure:
  "notes": ""
 }
 
-If missing information:
-{"ask":"What detail is missing?"}
+If missing details:
+{"ask":"<question>"}
 """
 
     try:
@@ -146,7 +145,6 @@ If missing information:
         )
 
         output = result.choices[0].message.content.strip()
-
         if output.startswith("```"):
             output = output.replace("```json", "").replace("```", "").strip()
 
@@ -164,14 +162,50 @@ If missing information:
     confirmation_msg = save_reservation(data)
     resp.message(confirmation_msg)
 
-    # 🔥 Auto-refresh dashboard (trigger websocket refresh)
-    asyncio.create_task(notify_refresh())
-
+    asyncio.create_task(notify_refresh())  # 🔥 Live dashboard update
     return Response(content=str(resp), media_type="application/xml")
 
 
 # ---------------------------------------------------------
-# WEBSOCKET AUTO REFRESH
+# API FOR DASHBOARD ACTIONS
+# ---------------------------------------------------------
+@app.post("/createReservation")
+async def create_reservation(payload: dict):
+    confirmation = save_reservation(payload)
+    asyncio.create_task(notify_refresh())
+    return {"success": True, "message": confirmation}
+
+
+@app.post("/updateReservation")
+async def update_reservation(update: dict):
+    supabase.table("reservations") \
+        .update({
+            "datetime": update.get("datetime"),
+            "party_size": update.get("party_size"),
+            "table_number": update.get("table_number"),
+            "notes": update.get("notes"),
+            "status": update.get("status", "updated"),
+        }) \
+        .eq("reservation_id", update["reservation_id"]) \
+        .execute()
+
+    asyncio.create_task(notify_refresh())
+    return {"success": True}
+
+
+@app.post("/cancelReservation")
+async def cancel_reservation(update: dict):
+    supabase.table("reservations") \
+        .update({"status": "cancelled"}) \
+        .eq("reservation_id", update["reservation_id"]) \
+        .execute()
+
+    asyncio.create_task(notify_refresh())
+    return {"success": True}
+
+
+# ---------------------------------------------------------
+# AUTO REFRESH WEBSOCKET
 # ---------------------------------------------------------
 clients = []
 
@@ -188,7 +222,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 async def notify_refresh():
-    """ sends refresh ping to dashboard clients """
+    """Push 'refresh' to all dashboard clients"""
     for ws in clients:
         try:
             await ws.send_text("refresh")
