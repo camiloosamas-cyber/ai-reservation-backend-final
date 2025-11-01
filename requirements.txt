@@ -4,3 +4,4 @@ jinja2
 python-dotenv
 httpx
 openai>=1.40.0
+python-multipart
