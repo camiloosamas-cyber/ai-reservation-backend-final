@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
 from supabase import create_client, Client
+import urllib.parse
 import json
 import os
 
@@ -35,7 +36,8 @@ SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
-TABLE_LIMIT = 10  # ✅ restaurant has 10 tables (T1–T10)
+TABLE_LIMIT = 10  # ✅ 10 tables (T1–T10)
+
 
 # -------------------------------------------------
 # MODELS
@@ -52,25 +54,24 @@ class CreateReservation(BaseModel):
 # -------------------------------------------------
 # HELPERS
 # -------------------------------------------------
-def format_datetime(dt_str: str):
-    dt = datetime.fromisoformat(dt_str.replace("Z", ""))
-    return dt.strftime("%A — %I:%M %p")  # Example: Saturday — 07:30 PM
-
-
 def assign_table(res_date: str):
-    """Returns first available table number T1-T10 for the given datetime."""
     existing = supabase.table("reservations") \
         .select("table_number") \
         .eq("datetime", res_date).execute()
 
-    used_tables = {row["table_number"] for row in existing.data}
+    used = {row["table_number"] for row in existing.data}
 
     for i in range(1, TABLE_LIMIT + 1):
         table_name = f"T{i}"
-        if table_name not in used_tables:
+        if table_name not in used:
             return table_name
 
     return None  # fully booked
+
+
+def format_datetime(dt_str: str):
+    dt = datetime.fromisoformat(dt_str.replace("Z", ""))
+    return dt.strftime("%A — %I:%M %p")
 
 
 # -------------------------------------------------
@@ -84,16 +85,9 @@ def home():
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     result = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
-    reservations = result.data
-
     return templates.TemplateResponse(
         "dashboard.html",
-        {
-            "request": request,
-            "reservations": reservations,
-            "parse_dt": datetime.fromisoformat,
-            "timedelta": timedelta
-        },
+        {"request": request, "reservations": result.data, "parse_dt": datetime.fromisoformat}
     )
 
 
@@ -101,6 +95,7 @@ async def dashboard(request: Request):
 async def create_reservation(data: CreateReservation):
 
     table_assigned = assign_table(data.datetime)
+
     if not table_assigned:
         return JSONResponse({"message": "No tables available at that time 😞"})
 
@@ -117,13 +112,13 @@ async def create_reservation(data: CreateReservation):
 
     await notify({"type": "refresh"})
 
-    readable_date = format_datetime(data.datetime)
+    readable = format_datetime(data.datetime)
 
     reply = (
-        f"✅ *Reservation confirmed!*\n\n"
+        f"✅ *Reservation confirmed!*\n"
         f"👤 *Name:* {data.customer_name}\n"
         f"👥 *People:* {data.party_size}\n"
-        f"🗓 *Date:* {readable_date}\n"
+        f"🗓 *Date:* {readable}\n"
         f"🍽 *Table:* {table_assigned}"
     )
 
@@ -131,39 +126,49 @@ async def create_reservation(data: CreateReservation):
 
 
 # -------------------------------------------------
-# CHATBASE / WHATSAPP ACTION ENDPOINT (RECEIVES JSON)
+# ✅ FIXED WHATSAPP / CHATBASE ENDPOINT
 # -------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(request: Request):
-    raw = await request.body()
-    text_body = raw.decode("utf-8")
+    body = (await request.body()).decode("utf-8")
+    print("Incoming WhatsApp:", body)
 
-    print("Incoming WhatsApp:", text_body)
+    parsed = None
 
+    # 🔹 Case 1: JSON
     try:
-        # ✅ Expecting JSON from Chatbase Action
-        data = json.loads(text_body)
+        parsed = json.loads(body)
+    except:
+        pass
 
-        reservation = CreateReservation(**data)
-        response = await create_reservation(reservation)
+    # 🔹 Case 2: x-www-form-urlencoded (Chatbase / Twilio style)
+    if not parsed and "=" in body:
+        form = urllib.parse.parse_qs(body)
+        if "data" in form:  # Chatbase uses a field named 'data'
+            try:
+                parsed = json.loads(form["data"][0])
+            except:
+                pass
 
-        return JSONResponse(response)
-
-    except Exception as e:
-        print("⚠️ Not JSON:", e)
-        # Return generic prompt
+    # No JSON detected → fallback response
+    if not parsed:
         return JSONResponse({
-            "message": "I can book your reservation ✅\n\nSend in one message:\nName, date (YYYY-MM-DD), time, people"
+            "message": "✅ I can book your reservation.\nSend: Name, date (YYYY-MM-DD), time, people"
         })
+
+    # Now create reservation
+    data = CreateReservation(**parsed)
+    response = await create_reservation(data)
+    return JSONResponse(response)
 
 
 # -------------------------------------------------
-# WEBSOCKET REFRESH FOR DASHBOARD
+# LIVE DASHBOARD UPDATE (Websocket)
 # -------------------------------------------------
 clients = []
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def ws(websocket: WebSocket):
     await websocket.accept()
     clients.append(websocket)
     try:
