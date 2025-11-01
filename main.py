@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json, os, asyncio
 import dateparser  # natural language datetime parser
 
@@ -14,7 +14,7 @@ from supabase import create_client, Client
 from openai import OpenAI
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ✅ Twilio
+# ✅ Twilio Reply
 from twilio.twiml.messaging_response import MessagingResponse
 
 
@@ -42,11 +42,11 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_SERVICE_ROLE"),
 )
 
-TABLE_LIMIT = 10
+TABLE_LIMIT = 10  # number of tables
 
 
 def to_iso(dt_str: str):
-    """ Converts natural language datetime ('tomorrow at 8pm') → ISO """
+    """ Converts natural language datetime ('tomorrow at 8pm') → ISO string """
     try:
         parsed = dateparser.parse(dt_str)
         return parsed.isoformat()
@@ -55,7 +55,7 @@ def to_iso(dt_str: str):
 
 
 def assign_table(date_str: str):
-    """ Returns first available table at datetime """
+    """ Auto chooses first available table at given datetime """
     booked = supabase.table("reservations") \
         .select("table_number") \
         .eq("datetime", date_str).execute()
@@ -71,8 +71,7 @@ def assign_table(date_str: str):
 
 
 def save_reservation(data):
-    """ Save to DB with automatic table selection """
-
+    """ Create reservation in DB with auto table assignment """
     iso_dt = data.get("datetime")
 
     if not iso_dt or "T" not in iso_dt:
@@ -116,32 +115,52 @@ def home():
 
 
 # ---------------------------------------------------------
-# DASHBOARD (with analytics + crash proof)
+# DASHBOARD (fixed timezone crash)
 # ---------------------------------------------------------
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
+    res = supabase.table("reservations") \
+        .select("*") \
+        .order("datetime", desc=True) \
+        .execute()
+
     reservations = res.data or []
 
-    # KPI analytics
-    total = len(reservations)
-    cancelled = len([r for r in reservations if r.get("status") == "cancelled"])
-    week_ago = datetime.now() - timedelta(days=7)
-    weekly_count = len([r for r in reservations if r.get("datetime") and datetime.fromisoformat(r["datetime"]) > week_ago])
+    # Fix timezone mismatch issue (Render crash)
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+
+    weekly_count = 0
+    for r in reservations:
+        dt = r.get("datetime")
+        if not dt:
+            continue
+
+        try:
+            parsed = datetime.fromisoformat(dt)
+        except:
+            continue
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+
+        if parsed > week_ago:
+            weekly_count += 1
 
     party_sizes = [int(r["party_size"]) for r in reservations if r.get("party_size")]
     avg_party_size = round(sum(party_sizes) / len(party_sizes), 1) if party_sizes else 0
 
-    times = []
-    for r in reservations:
-        try:
-            dt = datetime.fromisoformat(r["datetime"])
-            times.append(dt.strftime("%H:%M"))
-        except:
-            pass
+    cancelled = len([r for r in reservations if r.get("status") == "cancelled"])
+    cancel_rate = round((cancelled / len(reservations)) * 100, 1) if reservations else 0
 
-    peak_time = max(set(times), key=times.count) if times else "N/A"
-    cancel_rate = round((cancelled / total) * 100, 1) if total else 0
+    peak_time = "—"
+    if reservations:
+        hours = [
+            datetime.fromisoformat(r["datetime"]).hour
+            for r in reservations if r.get("datetime")
+        ]
+        if hours:
+            peak_time = f"{max(set(hours), key=hours.count)}:00"
 
     return templates.TemplateResponse(
         "dashboard.html",
@@ -162,13 +181,11 @@ async def dashboard(request: Request):
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
 
-    print("📩 Incoming:", Body)
-
     resp = MessagingResponse()
 
     prompt = """
-Extract reservation details and return valid JSON ONLY.
-Convert natural language date → ISO 8601.
+Extract reservation details from WhatsApp messages.
+Always reply ONLY with JSON.
 
 {
  "customer_name": "",
@@ -179,7 +196,7 @@ Convert natural language date → ISO 8601.
  "notes": ""
 }
 
-If ANYTHING missing → return ONLY:
+If ANY detail is missing, reply ONLY:
 {"ask":"<question>"}
 """
 
@@ -194,13 +211,12 @@ If ANYTHING missing → return ONLY:
         )
 
         output = result.choices[0].message.content.strip()
-        if output.startswith("```"):
-            output = output.replace("```json", "").replace("```", "").strip()
+        output = output.replace("```json", "").replace("```", "").strip()
 
         data = json.loads(output)
 
     except:
-        resp.message("❌ I couldn’t understand that. Try again.")
+        resp.message("❌ I didn't get that, try again.")
         return Response(content=str(resp), media_type="application/xml")
 
     if "ask" in data:
@@ -215,7 +231,7 @@ If ANYTHING missing → return ONLY:
 
 
 # ---------------------------------------------------------
-# DASHBOARD API (Edit, create, cancel)
+# DASHBOARD API (edit / create / cancel)
 # ---------------------------------------------------------
 @app.post("/createReservation")
 async def create_reservation(payload: dict):
@@ -244,7 +260,6 @@ async def update_reservation(update: dict):
 
 @app.post("/cancelReservation")
 async def cancel(update: dict):
-
     supabase.table("reservations") \
         .update({"status": "cancelled"}) \
         .eq("reservation_id", update["reservation_id"]) \
@@ -255,7 +270,7 @@ async def cancel(update: dict):
 
 
 # ---------------------------------------------------------
-# WEBSOCKET LIVE REFRESH
+# WEBSOCKET AUTO REFRESH
 # ---------------------------------------------------------
 clients = []
 
