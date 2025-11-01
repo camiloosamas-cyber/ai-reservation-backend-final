@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, WebSocket, Form
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,8 +52,8 @@ class CreateReservation(BaseModel):
 # HELPERS
 # -------------------------------------------------
 def format_datetime(dt_str: str):
-    dt = datetime.fromisoformat(dt_str.replace("Z",""))
-    return dt.strftime("%A — %I:%M %p")  # Example: Saturday — 07:30 PM
+    dt = datetime.fromisoformat(dt_str.replace("Z", ""))
+    return dt.strftime("%A — %I:%M %p")
 
 def assign_table(res_date: str):
     """Returns first available table number T1-T10 for the given datetime"""
@@ -78,29 +78,25 @@ def assign_table(res_date: str):
 def home():
     return "<h3>✅ Backend Running</h3><p>Open <a href='/dashboard'>/dashboard</a></p>"
 
-
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     result = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
-    reservations = result.data
-
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
-            "reservations": reservations,
+            "reservations": result.data,
             "parse_dt": datetime.fromisoformat,
             "timedelta": timedelta
         },
     )
-
 
 @app.post("/createReservation")
 async def create_reservation(data: CreateReservation):
 
     table_assigned = assign_table(data.datetime)
     if not table_assigned:
-        return JSONResponse({"message": "No tables available at that time 😞"})
+        return {"message": "No tables available at that time 😞"}
 
     supabase.table("reservations").insert({
         "customer_name": data.customer_name,
@@ -127,28 +123,39 @@ async def create_reservation(data: CreateReservation):
 
     return {"message": reply, "status": "created"}
 
+# -------------------------------------------------
+# WHATSAPP WEBHOOK (TwiML response required)
+# -------------------------------------------------
 
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
     print("Incoming WhatsApp:", Body)
 
     try:
-        # ✅ Try to parse JSON from Chatbase webhook
+        # ✅ Attempt to parse JSON from Chatbase agent
         parsed = json.loads(Body)
-
         reservation = CreateReservation(**parsed)
         response = await create_reservation(reservation)
+        reply_message = response["message"]
 
-        return JSONResponse(response)
+    except Exception:
+        # ❌ Not JSON → it's just a WhatsApp message from customer
+        reply_message = (
+            "✅ I can book your reservation.\n\n"
+            "Please send in *one message*:\n"
+            "`Name, date (YYYY-MM-DD), time, people`\n\n"
+            "Example:\n"
+            "`Reservation under Daniel, 4 people Saturday 7:30pm`"
+        )
 
-    except Exception as e:
-        print("Not JSON, Chat message instead:", e)
+    # ✅ WhatsApp/Twilio requires XML (TwiML), NOT JSON
+    twilio_xml = f"""
+<Response>
+  <Message>{reply_message}</Message>
+</Response>
+""".strip()
 
-        # ✅ reply back to WhatsApp normally (NOT XML)
-        return JSONResponse({
-            "message": "Sure ✅ Please tell me:\n\n• Name\n• Date (YYYY-MM-DD)\n• Time\n• People"
-        })
-
+    return Response(content=twilio_xml, media_type="application/xml")
 
 # -------------------------------------------------
 # WEBSOCKET REFRESH FOR DASHBOARD
@@ -164,7 +171,6 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except:
         clients.remove(websocket)
-
 
 async def notify(message: dict):
     for ws in clients:
