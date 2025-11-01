@@ -116,7 +116,6 @@
     }
     .dropdown-menu button:hover{ background:#eef2ff; }
 
-    /* ✅ FIXED MODAL INPUT SPACING — HORIZONTAL */
     .modal-backdrop{
       position:fixed; inset:0; background:#0008;
       display:none; align-items:center; justify-content:center;
@@ -140,10 +139,7 @@
       gap:20px;
       margin-bottom:14px;
     }
-    .field{
-      width:48%;                /* ✅ keeps 2 per row, spaced */
-      box-sizing:border-box;
-    }
+    .field{ width:48%; box-sizing:border-box; }
 
     .field input,.field textarea{
       width:100%;
@@ -194,13 +190,13 @@
     <button class="btn" id="todayBtn">Today</button>
   </div>
 
-  <!-- TABLE AVAILABILITY -->
+  <!-- ✅ TABLE AVAILABILITY -->
   <div class="table-availability">
     <h2>🟩 Table Availability</h2>
     <div id="tableGrid" class="table-grid"></div>
   </div>
 
-  <!-- TABLE -->
+  <!-- ✅ MAIN TABLE -->
   <div class="table-wrap">
     <table>
       <thead>
@@ -255,7 +251,7 @@
     </table>
   </div>
 
-  <!-- INSIGHTS -->
+  <!-- ✅ INSIGHTS -->
   <h2 style="margin-top:24px;">📊 Insights</h2>
   <div class="cards" style="grid-template-columns:repeat(3,1fr);">
     <div class="card"><h3>Avg Party</h3><p>{{ avg_party_size }}</p></div>
@@ -312,6 +308,7 @@
   </div>
 </div>
 
+
 <script>
 function toggleMenu(el){
   const menu = el.nextElementSibling;
@@ -348,7 +345,11 @@ function filter(){
 q.oninput=filter;
 dateF.onchange=filter;
 statusF.onchange=filter;
-document.getElementById("todayBtn").onclick=()=>{ dateF.value=new Date().toISOString().slice(0,10); filter(); };
+
+document.getElementById("todayBtn").onclick=()=>{
+  dateF.value=new Date().toISOString().slice(0,10);
+  filter();
+};
 
 /* ✅ TABLE AVAILABILITY */
 const TABLE_IDS = ["T1","T2","T3","T4","T5","T6","T7","T8","T9","T10"];
@@ -375,14 +376,25 @@ function filterByTable(table){
   q.value="";
   dateF.value="";
   statusF.value="active";
-  [...tbody.rows].forEach(r=>{ r.style.display = (r.dataset.table === table) ? "" : "none"; });
+  [...tbody.rows].forEach(r=>{
+    r.style.display = (r.dataset.table === table) ? "" : "none";
+  });
   buildTableGrid();
 }
 
 /* ✅ Actions */
-async function markStatus(id,s){ await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:s})}); location.reload(); }
-async function doArchive(id){ await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:"archived"})}); location.reload(); }
-async function doCancel(id){ await fetch("/cancelReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id})}); location.reload(); }
+async function markStatus(id,s){
+  await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:s})});
+  location.reload();
+}
+async function doArchive(id){
+  await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:"archived"})});
+  location.reload();
+}
+async function doCancel(id){
+  await fetch("/cancelReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id})});
+  location.reload();
+}
 
 /* ✅ Calling + WhatsApp */
 function callCustomer(phone){
@@ -397,7 +409,7 @@ function sendWhatsApp(phone,name,dt){
 
 document.getElementById("refreshBtn").onclick=()=>location.reload();
 
-/* ✅ Real-time websocket refresh */
+/* ✅ FIXED REAL-TIME REFRESH (Render compatible) */
 (function(){
   try{
     const ws=new WebSocket(`${location.protocol==="https:"?"wss":"ws"}://${location.host}/ws`);
@@ -405,7 +417,8 @@ document.getElementById("refreshBtn").onclick=()=>location.reload();
   }catch(e){}
 })();
 
-/* ✅ EDIT MODAL JS */
+
+/* ✅ MODALS */
 let currentId=null;
 function openEdit(id,dt,ps,table,notes){
   currentId=id;
@@ -415,7 +428,10 @@ function openEdit(id,dt,ps,table,notes){
   document.getElementById("notes").value = notes && notes !== "null" ? notes : "";
   document.getElementById("editModal").style.display="flex";
 }
-function closeEdit(){ document.getElementById("editModal").style.display="none"; }
+function closeEdit(){
+  document.getElementById("editModal").style.display="none";
+}
+
 document.getElementById("saveBtn").onclick=async ()=>{
   const payload={
     reservation_id:currentId,
@@ -429,7 +445,7 @@ document.getElementById("saveBtn").onclick=async ()=>{
   closeEdit(); location.reload();
 };
 
-/* ✅ NEW RESERVATION MODAL JS */
+/* ✅ NEW RESERVATION MODAL */
 document.getElementById("newBtn").onclick=()=>{ document.getElementById("newModal").style.display="flex"; };
 document.getElementById("closeNewBtn").onclick=()=>{ document.getElementById("newModal").style.display="none"; };
 
@@ -461,6 +477,7 @@ document.getElementById("createBtn").onclick=async ()=>{
   document.getElementById("newModal").style.display="none";
   location.reload();
 };
+
 
 /* ✅ Export CSV */
 document.getElementById("exportBtn").onclick=()=>{
