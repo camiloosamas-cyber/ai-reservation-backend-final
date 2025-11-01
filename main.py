@@ -3,27 +3,19 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
-import sqlite3
+from openai import OpenAI
+from supabase import create_client, Client
 from datetime import datetime, timedelta
 import json
 import os
 
-# ✅ OpenAI SDK
-from openai import OpenAI
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
+# ---------------- INIT ----------------
 app = FastAPI()
-
-# ✅ Ensure script always runs relative to backend folder
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # Static + templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# ✅ Allow dashboard/frontend to connect
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,51 +23,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------- DATABASE ----------------
-DB_PATH = os.path.join(os.getcwd(), "reservations.db")
+# ✅ Connect to Supabase using Render env vars
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE")
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=3000")
-    return conn
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
-def init_db():
-    conn = get_db()
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS reservations (
-        reservation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        customer_name TEXT,
-        customer_email TEXT,
-        contact_phone TEXT,
-        datetime TEXT,
-        party_size INTEGER,
-        table_number TEXT,
-        notes TEXT,
-        status TEXT DEFAULT 'confirmed'
-    )
-    """)
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# ---------------- MODELS ----------------
-class UpdateReservation(BaseModel):
-    reservation_id: int
-    datetime: Optional[str] = None
-    party_size: Optional[int] = None
-    table_number: Optional[str] = None
-    notes: Optional[str] = None
-    status: Optional[str] = None
-
-class CancelReservation(BaseModel):
-    reservation_id: int
+# ✅ OpenAI init
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-# ---------------- ANALYTICS UTILS ----------------
-def parse_dt(s: str) -> Optional[datetime]:
+# ---------------- UTIL ----------------
+def parse_dt(s: str):
     try:
         if s.endswith("Z"):
             s = s.replace("Z", "+00:00")
@@ -83,26 +42,24 @@ def parse_dt(s: str) -> Optional[datetime]:
     except:
         return None
 
-def get_reservations():
-    conn = get_db()
-    rows = conn.execute("SELECT * FROM reservations ORDER BY datetime DESC").fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+
+def get_reservations_db():
+    response = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
+    return response.data
+
 
 def get_analytics():
-    conn = get_db()
-    rows = conn.execute("SELECT * FROM reservations").fetchall()
-    conn.close()
-
-    if not rows:
+    reservations = get_reservations_db()
+    if not reservations:
         return {"weekly_count": 0, "avg_party_size": 0, "peak_time": "N/A", "cancel_rate": 0}
 
-    reservations = [dict(r) for r in rows]
     now = datetime.now()
     week_ago = now - timedelta(days=7)
 
-    weekly, cancelled = 0, 0
-    times, party_vals = [], []
+    weekly = 0
+    party_vals = []
+    times = []
+    cancelled = 0
 
     for r in reservations:
         if r.get("party_size"):
@@ -132,7 +89,8 @@ def get_analytics():
 # ---------------- ROUTES ----------------
 @app.get("/", response_class=HTMLResponse)
 def home():
-    return "<h3>✅ Backend Running</h3><p>Open <a href='/dashboard'>/dashboard</a></p>"
+    return "<h3>✅ Backend running (Supabase mode)</h3><p>Go to <a href='/dashboard'>/dashboard</a></p>"
+
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -140,7 +98,7 @@ async def dashboard(request: Request):
         "dashboard.html",
         {
             "request": request,
-            "reservations": get_reservations(),
+            "reservations": get_reservations_db(),
             **get_analytics(),
             "parse_dt": parse_dt,
             "timedelta": timedelta,
@@ -148,93 +106,74 @@ async def dashboard(request: Request):
     )
 
 
-# ---------------- WHATSAPP → AI → DB ----------------
+@app.post("/createReservation")
+async def create_reservation(request: Request):
+    data = await request.json()
+
+    supabase.table("reservations").insert({
+        "customer_name": data["customer_name"],
+        "customer_email": data["customer_email"],
+        "contact_phone": data["contact_phone"],
+        "datetime": data["datetime"],
+        "party_size": data["party_size"],
+        "table_number": data.get("table_number", ""),
+        "notes": data.get("notes", "")
+    }).execute()
+
+    await notify({"type": "refresh"})
+    return {"message": "created"}
+
+
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
-    print("📩 Incoming WhatsApp:", Body)
+    print("📩 Incoming:", Body)
 
     prompt = """
-You are an AI restaurant reservation assistant.
+You MUST reply ONLY in JSON. NO extra text.
 
-RULES:
-- ALWAYS return valid JSON.
-- NEVER repeat questions already answered.
-- If missing data, return ONLY: {"ask":"<question>"}.
-- KEEP previously inferred values unless overwritten.
+If missing data, return:
+{"ask": "<question>"}
 
-VALID JSON FORMAT:
-
+If all data is present, return:
 {
- "customer_name": "",
- "customer_email": "",
- "contact_phone": "",
- "party_size": "",
- "datetime": "",
- "table_number": "",
- "notes": ""
+  "customer_name": "",
+  "customer_email": "",
+  "contact_phone": "",
+  "party_size": "",
+  "datetime": "",
+  "table_number": "",
+  "notes": ""
 }
-
-Fix common email mistakes (extra dots, missing @, etc.)
 """
 
     try:
         resp = client.chat.completions.create(
             model="gpt-4.1-mini",
-            temperature=0,
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": Body}
             ]
         )
+        raw = resp.choices[0].message.content.strip()
+        raw = raw.replace("```json", "").replace("```", "")
+        data = json.loads(raw)
 
-        output = resp.choices[0].message.content.strip()
+    except:
+        return Response("<Response><Message>Sorry, repeat?</Message></Response>", media_type="application/xml")
 
-        if output.startswith("```"):
-            output = output.replace("```json", "").replace("```", "").strip()
-
-        print("🔍 AI OUTPUT:", output)
-        data = json.loads(output)
-
-    except Exception as e:
-        print("❌ Parsing error:", e)
-        return Response(
-            content="<Response><Message>Sorry, try again.</Message></Response>",
-            media_type="application/xml"
-        )
-
-    # Missing information? Ask it.
     if "ask" in data:
-        return Response(
-            content=f"<Response><Message>{data['ask']}</Message></Response>",
-            media_type="application/xml"
-        )
+        return Response(f"<Response><Message>{data['ask']}</Message></Response>", media_type="application/xml")
 
-    # Save into DB
-    conn = get_db()
-    conn.execute("""
-        INSERT INTO reservations (customer_name, customer_email, contact_phone,
-        datetime, party_size, table_number, notes, status)
-        VALUES (?,?,?,?,?,?,?, 'confirmed')
-    """, (
-        data.get("customer_name"),
-        data.get("customer_email") or "",
-        data.get("contact_phone") or "",
-        data.get("datetime"),
-        int(data.get("party_size")),
-        data.get("table_number") or "",
-        data.get("notes") or "",
-    ))
-    conn.commit()
-    conn.close()
-
+    supabase.table("reservations").insert(data).execute()
     await notify({"type": "refresh"})
+
     return Response(
-        content=f"<Response><Message>✅ Reservation created for {data['customer_name']} on {data['datetime']}.</Message></Response>",
+        f"<Response><Message>✅ Reservation created for {data['customer_name']} on {data['datetime']}.</Message></Response>",
         media_type="application/xml"
     )
 
 
-# ---------------- DASHBOARD AUTO-REFRESH ----------------
+# ---------------- WEBSOCKETS ----------------
 clients = []
 
 @app.websocket("/ws")
@@ -246,6 +185,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except:
         clients.remove(websocket)
+
 
 async def notify(message: dict):
     for ws in clients:
