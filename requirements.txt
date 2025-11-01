@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
 jinja2
-httpx
 python-dotenv
-openai==1.46.0
+httpx
+openai>=1.40.0
