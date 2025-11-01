@@ -6,3 +6,4 @@ httpx
 openai>=1.40.0
 python-multipart
 supabase
+twilio
