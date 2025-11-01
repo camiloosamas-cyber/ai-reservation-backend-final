@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 import json, os, asyncio
+import dateparser   # NEW ✅ automatic natural language date parsing
 
 # ✅ Supabase
 from supabase import create_client, Client
@@ -41,11 +42,21 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_SERVICE_ROLE")
 )
 
-TABLE_LIMIT = 10  # number of tables in restaurant
+TABLE_LIMIT = 10  # restaurant capacity
+
+
+def to_iso(dt_str: str):
+    """ Converts natural language datetime ('tomorrow at 8pm') → ISO format """
+    try:
+        parsed = dateparser.parse(dt_str)
+        return parsed.isoformat()
+    except:
+        return None
 
 
 def assign_table(date_str: str):
-    """Returns first free table at that datetime"""
+    """ Returns first free table at that datetime """
+
     booked = supabase.table("reservations") \
         .select("table_number") \
         .eq("datetime", date_str).execute()
@@ -61,8 +72,18 @@ def assign_table(date_str: str):
 
 
 def save_reservation(data):
-    """Insert reservation into Supabase"""
-    table = assign_table(data["datetime"])
+    """ Insert record into Supabase """
+
+    # ✅ Convert datetime into ISO format if needed
+    iso_dt = data.get("datetime")
+
+    if not iso_dt or "T" not in iso_dt:
+        iso_dt = to_iso(iso_dt)
+
+    if not iso_dt:
+        return "❌ Invalid date/time. Please specify date and time."
+
+    table = assign_table(iso_dt)
     if not table:
         return "❌ No tables available at that time."
 
@@ -70,27 +91,26 @@ def save_reservation(data):
         "customer_name": data["customer_name"],
         "customer_email": data.get("customer_email", ""),
         "contact_phone": data.get("contact_phone", ""),
-        "datetime": data["datetime"],
+        "datetime": iso_dt,
         "party_size": int(data["party_size"]),
         "table_number": table,
         "notes": data.get("notes", ""),
         "status": "confirmed"
     }).execute()
 
-    dt = datetime.fromisoformat(data["datetime"])
-    formatted = dt.strftime("%A %I:%M %p")
+    readable = datetime.fromisoformat(iso_dt).strftime("%A %I:%M %p")
 
     return (
         f"✅ Reservation confirmed!\n"
         f"👤 {data['customer_name']}\n"
         f"👥 {data['party_size']} people\n"
-        f"🗓 {formatted}\n"
+        f"🗓 {readable}\n"
         f"🍽 Table: {table}"
     )
 
 
 # ---------------------------------------------------------
-# DASHBOARD ROUTE
+# DASHBOARD PAGE
 # ---------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -107,31 +127,33 @@ async def dashboard(request: Request):
 
 
 # ---------------------------------------------------------
-# WHATSAPP WEBHOOK (AI extracts JSON)
+# WHATSAPP WEBHOOK — AI creates JSON to extract info
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
 
     print("📩 Incoming:", Body)
+
     resp = MessagingResponse()
 
     prompt = """
-You extract restaurant reservation details from the message.
+You extract reservation details.
 
-RETURN ONLY VALID JSON. No explanation.
+⚠️ ALWAYS return valid JSON only.
 
-VALID JSON:
+REQUIRED FORMAT:
 {
  "customer_name": "",
  "customer_email": "",
  "contact_phone": "",
  "party_size": "",
- "datetime": "",
+ "datetime": "YYYY-MM-DDTHH:MM:SS",
  "notes": ""
 }
 
-If missing details:
-{"ask":"<question>"}
+- Convert natural language time to ISO 8601 format.
+- If ANY field is missing, respond ONLY with:
+{"ask":"<question you need>"}
 """
 
     try:
@@ -152,7 +174,7 @@ If missing details:
 
     except Exception as e:
         print("❌ JSON Parse Error:", e)
-        resp.message("❌ Error, try again.")
+        resp.message("❌ I couldn't understand. Try again.")
         return Response(content=str(resp), media_type="application/xml")
 
     if "ask" in data:
@@ -162,12 +184,12 @@ If missing details:
     confirmation_msg = save_reservation(data)
     resp.message(confirmation_msg)
 
-    asyncio.create_task(notify_refresh())  # 🔥 Live dashboard update
+    asyncio.create_task(notify_refresh())  # live update dashboard
     return Response(content=str(resp), media_type="application/xml")
 
 
 # ---------------------------------------------------------
-# API FOR DASHBOARD ACTIONS
+# API CALLED FROM DASHBOARD
 # ---------------------------------------------------------
 @app.post("/createReservation")
 async def create_reservation(payload: dict):
@@ -178,6 +200,7 @@ async def create_reservation(payload: dict):
 
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
+
     supabase.table("reservations") \
         .update({
             "datetime": update.get("datetime"),
@@ -195,6 +218,7 @@ async def update_reservation(update: dict):
 
 @app.post("/cancelReservation")
 async def cancel_reservation(update: dict):
+
     supabase.table("reservations") \
         .update({"status": "cancelled"}) \
         .eq("reservation_id", update["reservation_id"]) \
@@ -205,7 +229,7 @@ async def cancel_reservation(update: dict):
 
 
 # ---------------------------------------------------------
-# AUTO REFRESH WEBSOCKET
+# WEBSOCKET LIVE REFRESH
 # ---------------------------------------------------------
 clients = []
 
@@ -222,7 +246,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 async def notify_refresh():
-    """Push 'refresh' to all dashboard clients"""
     for ws in clients:
         try:
             await ws.send_text("refresh")
