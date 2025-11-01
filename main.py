@@ -17,7 +17,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = FastAPI()
 
-# ✅ Always run inside the backend folder location
+# ✅ Always run inside backend folder location
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # Static + templates
@@ -65,7 +65,7 @@ def init_db():
 
 init_db()
 
-# ---------------- MODELS (update + cancel) ----------------
+# ---------------- MODELS ----------------
 class UpdateReservation(BaseModel):
     reservation_id: int
     datetime: Optional[str] = None
@@ -79,7 +79,7 @@ class CancelReservation(BaseModel):
     reservation_id: int
 
 
-# ---------------- UTILS / ANALYTICS ----------------
+# ---------------- ANALYTICS UTILS ----------------
 def parse_dt(s: str) -> Optional[datetime]:
     try:
         if s.endswith("Z"):
@@ -183,66 +183,35 @@ async def create_reservation(request: Request):
     return {"message": "created"}
 
 
-@app.post("/updateReservation")
-async def update_reservation(data: UpdateReservation):
-    fields, values = [], []
-
-    if data.datetime: fields.append("datetime = ?"); values.append(data.datetime)
-    if data.party_size: fields.append("party_size = ?"); values.append(int(data.party_size))
-    if data.table_number: fields.append("table_number = ?"); values.append(data.table_number)
-    if data.notes is not None: fields.append("notes = ?"); values.append(data.notes)
-    if data.status: fields.append("status = ?"); values.append(data.status)
-
-    if not fields:
-        fields.append("status = ?")
-        values.append("updated")
-
-    values.append(data.reservation_id)
-
-    conn = get_db()
-    conn.execute(f"UPDATE reservations SET {', '.join(fields)} WHERE reservation_id = ?", tuple(values))
-    conn.commit()
-    conn.close()
-
-    await notify({"type": "refresh"})
-    return {"message": "updated"}
-
-
-@app.post("/cancelReservation")
-async def cancel_reservation(data: CancelReservation):
-    conn = get_db()
-    conn.execute("UPDATE reservations SET status='cancelled' WHERE reservation_id=?", (data.reservation_id,))
-    conn.commit()
-    conn.close()
-
-    await notify({"type": "refresh"})
-    return {"message": "cancelled"}
-
-
-@app.post("/resetReservations")
-async def reset_reservations():
-    conn = get_db()
-    conn.execute("DELETE FROM reservations")
-    conn.commit()
-    conn.close()
-    return {"message": "✅ all reservations cleared"}
-
-
 # ---------------- WHATSAPP WEBHOOK ----------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
     print("📩 Incoming WhatsApp:", Body)
 
+    # Strong JSON-only prompt
     prompt = """
 You are an AI reservation assistant.
-Extract the reservation and return ONLY JSON.
-If missing data, return ONLY: {"ask": "<question>"}.
-JSON fields: customer_name, customer_email, contact_phone, party_size, datetime, table_number, notes.
+✅ ALWAYS reply ONLY with pure JSON. No explanations.
+✅ Format must be exactly:
+
+{
+  "customer_name": "",
+  "customer_email": "",
+  "contact_phone": "",
+  "party_size": "",
+  "datetime": "",
+  "table_number": "",
+  "notes": ""
+}
+
+❗ If ANY required info is missing, reply ONLY:
+{"ask": "<short question>"}
 """
 
     try:
         resp = client.chat.completions.create(
             model="gpt-4.1-mini",
+            temperature=0,
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": Body}
@@ -250,24 +219,29 @@ JSON fields: customer_name, customer_email, contact_phone, party_size, datetime,
         )
 
         output = resp.choices[0].message.content.strip()
+
+        # Strip code fences if present
         if output.startswith("```"):
             output = output.replace("```json", "").replace("```", "").strip()
 
+        print("🔍 AI OUTPUT:", output)
         data = json.loads(output)
 
     except Exception as e:
-        print("❌ Parsing error:", e)
+        print("❌ JSON error:", e)
         return Response(
             content="<Response><Message>Sorry, I didn’t catch that. Can you repeat?</Message></Response>",
             media_type="application/xml"
         )
 
+    # Missing info? Ask for it.
     if "ask" in data:
         return Response(
             content=f"<Response><Message>{data['ask']}</Message></Response>",
             media_type="application/xml"
         )
 
+    # ✅ Insert reservation
     conn = get_db()
     conn.execute("""
         INSERT INTO reservations (customer_name, customer_email, contact_phone,
@@ -292,7 +266,7 @@ JSON fields: customer_name, customer_email, contact_phone, party_size, datetime,
     )
 
 
-# ---------------- WEBSOCKET (AUTO REFRESH) ----------------
+# ---------------- WEBSOCKET FOR DASHBOARD AUTO REFRESH ----------------
 clients = []
 
 
