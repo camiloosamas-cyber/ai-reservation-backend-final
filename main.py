@@ -1,18 +1,23 @@
 from fastapi import FastAPI, Request, WebSocket, Form
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timedelta
 from pydantic import BaseModel
+from typing import Optional
+from datetime import datetime, timedelta
 from supabase import create_client, Client
-import os
+from twilio.twiml.messaging_response import MessagingResponse  # ✅ REQUIRED FOR WHATSAPP REPLY
 import json
-import re
+import os
 
+# -------------------------------------------------
+# INIT
+# -------------------------------------------------
 app = FastAPI()
 
-# STATIC + TEMPLATES -------------------------------------------------------
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -23,94 +28,153 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# SUPABASE INIT ------------------------------------------------------------
+# -------------------------------------------------
+# SUPABASE CLIENT
+# -------------------------------------------------
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE")
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
-TABLE_LIMIT = 10  # Number of tables available
+TABLE_LIMIT = 10  # T1–T10
 
-# MODELS -------------------------------------------------------------------
-class Reservation(BaseModel):
-    customer_name: str
-    datetime: str
-    party_size: int
-    customer_email: str = None
-    contact_phone: str = None
-    notes: str = None
+# -------------------------------------------------
+# HELPERS
+# -------------------------------------------------
+def format_datetime(dt_str: str):
+    dt = datetime.fromisoformat(dt_str.replace("Z", ""))
+    return dt.strftime("%A — %I:%M %p")
 
-def parse_whatsapp_message(msg: str):
-    """Extract name, date, time, and party size using regex."""
-    name = None
-    party = None
 
-    # Detect party size
-    party_match = re.search(r"(\d+)\s*(people|person|pax)?", msg, re.IGNORECASE)
-    if party_match:
-        party = int(party_match.group(1))
-
-    # Detect date (YYYY-MM-DD or "tomorrow" or weekday name)
-    if "tomorrow" in msg.lower():
-        date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    else:
-        date_match = re.search(r"\d{4}-\d{2}-\d{2}", msg)
-        date = date_match.group(0) if date_match else None
-
-    # Detect time
-    time_match = re.search(r"(\d{1,2}(:\d{2})?\s?(am|pm)?)", msg, re.IGNORECASE)
-    time = time_match.group(1) if time_match else None
-
-    # Detect name after "under"
-    name_match = re.search(r"under\s+([A-Za-z]+)", msg, re.IGNORECASE)
-    if name_match:
-        name = name_match.group(1)
-
-    if not (name and date and time and party):
-        return None
-
-    # Convert time to 24h and build datetime string
-    dt_obj = datetime.strptime(f"{date} {time}", "%Y-%m-%d %I:%M%p")
-    formatted_dt = dt_obj.isoformat()
-
-    return {
-        "customer_name": name,
-        "datetime": formatted_dt,
-        "party_size": party,
-        "contact_phone": None,
-        "customer_email": None,
-        "notes": None
-    }
-
-def assign_table(date_time: str):
-    """Assign first available table (T1–T10)."""
-    result = supabase.table("reservations") \
+def assign_table(res_date: str):
+    """Returns first available table number T1-T10 for the given datetime"""
+    existing = supabase.table("reservations") \
         .select("table_number") \
-        .eq("datetime", date_time).execute()
+        .eq("datetime", res_date).execute()
 
-    used = {row["table_number"] for row in result.data}
+    used_tables = {row["table_number"] for row in existing.data}
 
     for i in range(1, TABLE_LIMIT + 1):
-        table = f"T{i}"
-        if table not in used:
-            return table
-    return None
+        table_name = f"T{i}"
+        if table_name not in used_tables:
+            return table_name
+
+    return None  # fully booked
+
+
+def parse_whatsapp_message(raw: str):
+    """Extracts reservation info from a sentence like:
+       'Reservation under Daniel, 4 people tomorrow at 8pm'
+    """
+    raw = raw.lower()
+
+    if "reservation" not in raw:
+        return None
+
+    try:
+        # Basic parsing, enough to extract core info
+        parts = raw.replace("reservation under", "").strip().split(" ")
+
+        name = parts[0].capitalize()
+        people = int(parts[2])
+
+        # convert date/time
+        today = datetime.now()
+        if "tomorrow" in raw:
+            date = today + timedelta(days=1)
+        else:
+            date = today
+
+        # extract time
+        time_str = parts[-1].replace("pm", "").replace("am", "")
+        hour = int(time_str)
+        if "pm" in raw:
+            hour += 12
+
+        final_dt = date.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+        return {
+            "customer_name": name,
+            "customer_email": None,
+            "contact_phone": None,
+            "datetime": final_dt.isoformat(),
+            "party_size": people,
+            "notes": None
+        }
+
+    except Exception:
+        return None
+
+
+# -------------------------------------------------
+# ROUTES
+# -------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
 def home():
     return "<h3>✅ Backend Running</h3><p>Open <a href='/dashboard'>/dashboard</a></p>"
 
+
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    reservations = supabase.table("reservations").select("*").order("datetime", desc=True).execute().data
+    result = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
+    reservations = result.data
 
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "reservations": reservations,
-        "parse_dt": datetime.fromisoformat,
-        "timedelta": timedelta
-    })
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "reservations": reservations,
+            "parse_dt": datetime.fromisoformat,
+            "timedelta": timedelta
+        },
+    )
 
-# WEBSOCKET ----------------------------------------------------------------
+
+@app.post("/whatsapp")  # ✅ Twilio points HERE
+async def whatsapp_webhook(request: Request):
+    data = await request.form()
+    message = data.get("Body", "")
+
+    print("Incoming WhatsApp:", message)
+
+    parsed = parse_whatsapp_message(message)
+
+    if not parsed:
+        reply = (
+            "✅ I can book your reservation.\n\n"
+            "Send:\nName, date (YYYY-MM-DD), time, people\n\n"
+            "Example:\nReservation under Daniel, 4 people tomorrow at 8pm"
+        )
+    else:
+        table = assign_table(parsed["datetime"])
+        if not table:
+            reply = "❌ No tables available at that time."
+        else:
+            parsed["table_number"] = table
+            parsed["status"] = "confirmed"
+
+            supabase.table("reservations").insert(parsed).execute()
+            await notify({"type": "refresh"})
+
+            readable = format_datetime(parsed["datetime"])
+
+            reply = (
+                f"✅ Reservation confirmed!\n"
+                f"👤 {parsed['customer_name']}\n"
+                f"👥 {parsed['party_size']} people\n"
+                f"🗓 {readable}\n"
+                f"🍽 Table {table}"
+            )
+
+    twiml = MessagingResponse()
+    twiml.message(reply)
+    return Response(content=str(twiml), media_type="application/xml")  # ✅ REQUIRED FOR TWILIO
+
+
+# -------------------------------------------------
+# WEBSOCKET REFRESH
+# -------------------------------------------------
 clients = []
 
 @app.websocket("/ws")
@@ -123,35 +187,10 @@ async def websocket_endpoint(websocket: WebSocket):
     except:
         clients.remove(websocket)
 
+
 async def notify(message: dict):
     for ws in clients:
         try:
             await ws.send_text(json.dumps(message))
         except:
             pass
-
-# WHATSAPP WEBHOOK ---------------------------------------------------------
-@app.post("/whatsapp")
-async def whatsapp_webhook(request: Request):
-    data = await request.form()
-    msg = data.get("Body", "")
-
-    parsed = parse_whatsapp_message(msg)
-
-    if not parsed:
-        return JSONResponse({"message": "✅ I can book your reservation.\n\nSend:\nName, date (YYYY-MM-DD), time, people"})
-
-    table = assign_table(parsed["datetime"])
-    if not table:
-        return JSONResponse({"message": "❌ No tables available at that time."})
-
-    parsed["table_number"] = table
-    parsed["status"] = "confirmed"
-
-    supabase.table("reservations").insert(parsed).execute()
-    await notify({"type": "refresh"})
-
-    return JSONResponse({"message": f"✅ Reservation confirmed!\n👤 {parsed['customer_name']}\n👥 {parsed['party_size']} people\n🕒 {parsed['datetime']}\n🍽 Table {table}"})
-
-
-print("✅ TWILIO-ONLY RESERVATION BOT IS READY")
