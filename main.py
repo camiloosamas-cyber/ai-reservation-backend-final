@@ -48,15 +48,12 @@ class CreateReservation(BaseModel):
     party_size: int
     notes: Optional[str] = None
 
-
 # -------------------------------------------------
 # HELPERS
 # -------------------------------------------------
 def format_datetime(dt_str: str):
-    """Convert DB datetime into human readable output."""
     dt = datetime.fromisoformat(dt_str.replace("Z",""))
     return dt.strftime("%A — %I:%M %p")  # Example: Saturday — 07:30 PM
-
 
 def assign_table(res_date: str):
     """Returns first available table number T1-T10 for the given datetime"""
@@ -73,10 +70,10 @@ def assign_table(res_date: str):
 
     return None  # fully booked
 
-
 # -------------------------------------------------
 # ROUTES
 # -------------------------------------------------
+
 @app.get("/", response_class=HTMLResponse)
 def home():
     return "<h3>✅ Backend Running</h3><p>Open <a href='/dashboard'>/dashboard</a></p>"
@@ -135,14 +132,22 @@ async def create_reservation(data: CreateReservation):
 async def whatsapp_webhook(Body: str = Form(...)):
     print("Incoming WhatsApp:", Body)
 
-    # Extract structured JSON from Chatbase agent
     try:
-        data = json.loads(Body)
-    except:
-        return Response(content="Sorry, I didn’t catch that.", media_type="application/xml")
+        # ✅ Try to parse JSON from Chatbase webhook
+        parsed = json.loads(Body)
 
-    response = await create_reservation(CreateReservation(**data))
-    return response
+        reservation = CreateReservation(**parsed)
+        response = await create_reservation(reservation)
+
+        return JSONResponse(response)
+
+    except Exception as e:
+        print("Not JSON, Chat message instead:", e)
+
+        # ✅ reply back to WhatsApp normally (NOT XML)
+        return JSONResponse({
+            "message": "Sure ✅ Please tell me:\n\n• Name\n• Date (YYYY-MM-DD)\n• Time\n• People"
+        })
 
 
 # -------------------------------------------------
