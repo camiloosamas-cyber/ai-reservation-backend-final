@@ -14,24 +14,14 @@
       --head:#1d4ed8;
     }
 
-    body{
-      margin:0; background:var(--bg);
-      font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Arial;
-      color:var(--ink);
-    }
-
+    body{ margin:0; background:var(--bg); font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Arial; color:var(--ink); }
     .wrap{ max-width:1200px; margin:auto; padding:30px 16px; }
-
     header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
     header h1{ font-size:26px; font-weight:700; margin:0; }
     .sub{ margin-top:4px; font-size:14px; color:var(--muted); }
     .toolbar{ display:flex; gap:10px; }
 
-    .btn{
-      padding:10px 14px; border-radius:10px;
-      border:1px solid var(--border); font-weight:600;
-      cursor:pointer; background:white;
-    }
+    .btn{ padding:10px 14px; border-radius:10px; border:1px solid var(--border); font-weight:600; cursor:pointer; background:white; }
     .btn.primary{ background:var(--primary); color:white; border:none; }
 
     .cards{ display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:22px; }
@@ -39,45 +29,19 @@
     .card h3{ margin:0; font-size:13px; color:var(--muted); }
     .card p{ margin:0; font-size:28px; font-weight:800; }
 
-    /* ✅ FILTER BAR */
     .filters{
-      display:flex;
-      align-items:center;
-      gap:14px;
-      background:white;
-      padding:14px;
-      border-radius:14px;
-      border:1px solid var(--border);
-      box-shadow:var(--shadow);
+      display:flex; align-items:center; gap:14px; background:white; padding:14px;
+      border-radius:14px; border:1px solid var(--border); box-shadow:var(--shadow);
       margin-bottom:22px;
     }
-    .filters input, .filters select{
-      height:38px;
-      border-radius:10px;
-      border:1px solid var(--border);
-      padding:8px 12px;
-      font-size:14px;
-    }
+    .filters input, .filters select{ height:38px; border-radius:10px; border:1px solid var(--border); padding:8px 12px; font-size:14px; }
 
-    /* TABLE AVAILABILITY */
     .table-availability{
-      background:white;
-      border:1px solid var(--border);
-      border-radius:14px;
-      padding:16px;
-      box-shadow:var(--shadow);
-      margin-bottom:20px;
+      background:white; border:1px solid var(--border); border-radius:14px;
+      padding:16px; box-shadow:var(--shadow); margin-bottom:20px;
     }
-    .table-grid{
-      display:grid;
-      grid-template-columns: repeat(5, 1fr);
-      gap:10px;
-    }
-    .tcard{
-      background:white; border:1px solid var(--border); border-radius:12px;
-      padding:10px; cursor:pointer; transition:0.15s;
-      display:flex; flex-direction:column; gap:4px;
-    }
+    .table-grid{ display:grid; grid-template-columns: repeat(5, 1fr); gap:10px; }
+    .tcard{ background:white; border:1px solid var(--border); border-radius:12px; padding:10px; cursor:pointer; transition:0.15s; display:flex; flex-direction:column; gap:4px; }
     .tcard:hover{ background:#f9fbff; }
     .free{ background:#ecfdf5; color:#01643f; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700; }
     .occupied{ background:#fef2f2; color:#9b1c1c; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700; }
@@ -97,56 +61,26 @@
     .archived{ background:#d1d5db; color:#4b5563; }
 
     .contact-actions{ display:flex; gap:4px; margin-top:4px; }
-    .icon-btn{
-      padding:4px 6px; font-size:13px; border-radius:6px;
-      border:none; cursor:pointer; background:#eef2ff;
-    }
+    .icon-btn{ padding:4px 6px; font-size:13px; border-radius:6px; border:none; cursor:pointer; background:#eef2ff; }
 
     .menu-wrapper{ position:relative; }
     .menu-btn{ border:none; background:none; font-size:18px; cursor:pointer; }
     .dropdown-menu{
-      display:none; position:absolute; right:0; top:22px;
-      background:white; border:1px solid var(--border);
-      border-radius:8px; min-width:150px; box-shadow:var(--shadow);
-      z-index:50;
+      display:none; position:absolute; right:0; top:22px; background:white;
+      border:1px solid var(--border); border-radius:8px; min-width:150px;
+      box-shadow:var(--shadow); z-index:50;
     }
-    .dropdown-menu button{
-      width:100%; background:none; border:none; padding:8px 12px;
-      text-align:left; font-size:13px; cursor:pointer;
-    }
+    .dropdown-menu button{ width:100%; background:none; border:none; padding:8px 12px; text-align:left; font-size:13px; cursor:pointer; }
     .dropdown-menu button:hover{ background:#eef2ff; }
 
-    .modal-backdrop{
-      position:fixed; inset:0; background:#0008;
-      display:none; align-items:center; justify-content:center;
-      z-index:100;
-    }
-    .modal{
-      background:white;
-      width:600px;
-      max-width:90vw;
-      border-radius:16px;
-      padding:16px;
-      border:1px solid var(--border);
-      box-sizing:border-box;
-    }
+    .modal-backdrop{ position:fixed; inset:0; background:#0008; display:none; align-items:center; justify-content:center; z-index:100; }
+    .modal{ background:white; width:600px; max-width:90vw; border-radius:16px; padding:16px; border:1px solid var(--border); box-sizing:border-box; }
     .modal header{ padding-bottom:12px; border-bottom:1px solid var(--border); }
     .modal footer{ padding-top:12px; display:flex; justify-content:flex-end; gap:10px; }
 
-    .form-row{
-      display:flex;
-      justify-content:space-between;
-      gap:20px;
-      margin-bottom:14px;
-    }
+    .form-row{ display:flex; justify-content:space-between; gap:20px; margin-bottom:14px; }
     .field{ width:48%; box-sizing:border-box; }
-
-    .field input,.field textarea{
-      width:100%;
-      padding:10px;
-      border-radius:10px;
-      border:1px solid var(--border);
-    }
+    .field input,.field textarea{ width:100%; padding:10px; border-radius:10px; border:1px solid var(--border); }
   </style>
 </head>
 
@@ -208,14 +142,21 @@
       <tbody id="tbody">
 
       {% for r in reservations %}
+
       <tr data-name="{{ (r.customer_name ~ ' ' ~ r.customer_email)|lower }}"
-          data-date="{{ r.datetime.split('T')[0] }}"
+          data-date="{{ r.datetime if r.datetime else '' }}"
           data-status="{{ r.status }}"
           data-table="{{ r.table_number or '' }}">
 
-        {% set dt = r.datetime.split('T') %}
-<td>{{ dt[0] }}</td>
-<td>{{ dt[1][:5] if dt|length > 1 else "-" }}</td>
+        <!-- ✅ SAFE DATE/TIME HANDLING -->
+        {% if r.datetime %}
+          {% set dt = r.datetime.split('T') %}
+          <td>{{ dt[0] }}</td>
+          <td>{{ dt[1][:5] }}</td>
+        {% else %}
+          <td>-</td>
+          <td>-</td>
+        {% endif %}
 
         <td>{{ r.customer_name }}</td>
 
@@ -245,6 +186,7 @@
           </div>
         </td>
       </tr>
+
       {% endfor %}
 
       </tbody>
@@ -260,55 +202,7 @@
   </div>
 
 </div>
-
-<!-- ✅ EDIT MODAL -->
-<div class="modal-backdrop" id="editModal">
-  <div class="modal">
-    <header><h3>Edit Reservation</h3></header>
-    <div style="padding:16px;">
-      <div class="form-row">
-        <div class="field"><label>Date & Time</label><input id="dt" type="datetime-local"></div>
-        <div class="field"><label>Party</label><input id="ps" type="number" min="1"></div>
-      </div>
-      <div class="form-row">
-        <div class="field"><label>Table</label><input id="table"></div>
-        <div class="field"><label>Notes</label><textarea id="notes"></textarea></div>
-      </div>
-    </div>
-    <footer>
-      <button class="btn" onclick="closeEdit()">Cancel</button>
-      <button class="btn primary" id="saveBtn">Save</button>
-    </footer>
-  </div>
-</div>
-
-<!-- ✅ NEW RESERVATION MODAL -->
-<div class="modal-backdrop" id="newModal">
-  <div class="modal">
-    <header><h3>New Reservation</h3></header>
-    <div style="padding:16px;">
-      <div class="form-row">
-        <div class="field"><label>Name *</label><input id="new_name" required></div>
-        <div class="field"><label>Email</label><input id="new_email" type="email"></div>
-      </div>
-      <div class="form-row">
-        <div class="field"><label>Phone</label><input id="new_phone" type="tel"></div>
-        <div class="field"><label>Party *</label><input id="new_party" type="number" min="1" value="2"></div>
-      </div>
-      <div class="form-row">
-        <div class="field"><label>Date & Time *</label><input id="new_dt" type="datetime-local"></div>
-        <div class="field"><label>Table</label><input id="new_table"></div>
-      </div>
-      <div class="field"><label>Notes</label><textarea id="new_notes"></textarea></div>
-    </div>
-    <footer>
-      <button class="btn" id="closeNewBtn">Cancel</button>
-      <button class="btn primary" id="createBtn">Create</button>
-    </footer>
-  </div>
-</div>
-
-
+  
 <script>
 function toggleMenu(el){
   const menu = el.nextElementSibling;
@@ -511,3 +405,4 @@ buildTableGrid();
 
 </body>
 </html>
+
