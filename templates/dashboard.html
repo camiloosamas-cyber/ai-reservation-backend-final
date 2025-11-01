@@ -150,9 +150,14 @@
 
         <!-- ✅ SAFE DATE/TIME HANDLING -->
         {% if r.datetime %}
-          {% set dt = r.datetime.split('T') %}
-          <td>{{ dt[0] }}</td>
-          <td>{{ dt[1][:5] }}</td>
+          {% if r.datetime and "T" in r.datetime %}
+    {% set dt = r.datetime.split('T') %}
+    <td>{{ dt[0] }}</td>
+    <td>{{ dt[1][:5] }}</td>
+{% else %}
+    <td>-</td>
+    <td>-</td>
+{% endif %}
         {% else %}
           <td>-</td>
           <td>-</td>
@@ -405,4 +410,5 @@ buildTableGrid();
 
 </body>
 </html>
+
 
