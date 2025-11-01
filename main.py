@@ -3,9 +3,9 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime
+from datetime import datetime, timedelta
 import json, os, asyncio
-import dateparser   # NEW ✅ automatic natural language date parsing
+import dateparser  # natural language datetime parser
 
 # ✅ Supabase
 from supabase import create_client, Client
@@ -14,7 +14,7 @@ from supabase import create_client, Client
 from openai import OpenAI
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ✅ Twilio reply builder
+# ✅ Twilio
 from twilio.twiml.messaging_response import MessagingResponse
 
 
@@ -35,18 +35,18 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------
-# SUPABASE DB INIT
+# SUPABASE INIT
 # ---------------------------------------------------------
 supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_SERVICE_ROLE")
+    os.getenv("SUPABASE_SERVICE_ROLE"),
 )
 
-TABLE_LIMIT = 10  # restaurant capacity
+TABLE_LIMIT = 10
 
 
 def to_iso(dt_str: str):
-    """ Converts natural language datetime ('tomorrow at 8pm') → ISO format """
+    """ Converts natural language datetime ('tomorrow at 8pm') → ISO """
     try:
         parsed = dateparser.parse(dt_str)
         return parsed.isoformat()
@@ -55,8 +55,7 @@ def to_iso(dt_str: str):
 
 
 def assign_table(date_str: str):
-    """ Returns first free table at that datetime """
-
+    """ Returns first available table at datetime """
     booked = supabase.table("reservations") \
         .select("table_number") \
         .eq("datetime", date_str).execute()
@@ -72,16 +71,15 @@ def assign_table(date_str: str):
 
 
 def save_reservation(data):
-    """ Insert record into Supabase """
+    """ Save to DB with automatic table selection """
 
-    # ✅ Convert datetime into ISO format if needed
     iso_dt = data.get("datetime")
 
     if not iso_dt or "T" not in iso_dt:
         iso_dt = to_iso(iso_dt)
 
     if not iso_dt:
-        return "❌ Invalid date/time. Please specify date and time."
+        return "❌ Invalid date/time. Please specify date AND time."
 
     table = assign_table(iso_dt)
     if not table:
@@ -110,24 +108,56 @@ def save_reservation(data):
 
 
 # ---------------------------------------------------------
-# DASHBOARD PAGE
+# HOMEPAGE
 # ---------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home():
     return "<h3>✅ Backend running</h3><p>Go to /dashboard</p>"
 
 
+# ---------------------------------------------------------
+# DASHBOARD (with analytics + crash proof)
+# ---------------------------------------------------------
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
+    reservations = res.data or []
+
+    # KPI analytics
+    total = len(reservations)
+    cancelled = len([r for r in reservations if r.get("status") == "cancelled"])
+    week_ago = datetime.now() - timedelta(days=7)
+    weekly_count = len([r for r in reservations if r.get("datetime") and datetime.fromisoformat(r["datetime"]) > week_ago])
+
+    party_sizes = [int(r["party_size"]) for r in reservations if r.get("party_size")]
+    avg_party_size = round(sum(party_sizes) / len(party_sizes), 1) if party_sizes else 0
+
+    times = []
+    for r in reservations:
+        try:
+            dt = datetime.fromisoformat(r["datetime"])
+            times.append(dt.strftime("%H:%M"))
+        except:
+            pass
+
+    peak_time = max(set(times), key=times.count) if times else "N/A"
+    cancel_rate = round((cancelled / total) * 100, 1) if total else 0
+
     return templates.TemplateResponse(
         "dashboard.html",
-        {"request": request, "reservations": res.data},
+        {
+            "request": request,
+            "reservations": reservations,
+            "weekly_count": weekly_count,
+            "avg_party_size": avg_party_size,
+            "peak_time": peak_time,
+            "cancel_rate": cancel_rate,
+        },
     )
 
 
 # ---------------------------------------------------------
-# WHATSAPP WEBHOOK — AI creates JSON to extract info
+# WHATSAPP AI WEBHOOK
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
@@ -137,23 +167,20 @@ async def whatsapp_webhook(Body: str = Form(...)):
     resp = MessagingResponse()
 
     prompt = """
-You extract reservation details.
+Extract reservation details and return valid JSON ONLY.
+Convert natural language date → ISO 8601.
 
-⚠️ ALWAYS return valid JSON only.
-
-REQUIRED FORMAT:
 {
  "customer_name": "",
  "customer_email": "",
  "contact_phone": "",
  "party_size": "",
- "datetime": "YYYY-MM-DDTHH:MM:SS",
+ "datetime": "",
  "notes": ""
 }
 
-- Convert natural language time to ISO 8601 format.
-- If ANY field is missing, respond ONLY with:
-{"ask":"<question you need>"}
+If ANYTHING missing → return ONLY:
+{"ask":"<question>"}
 """
 
     try:
@@ -172,9 +199,8 @@ REQUIRED FORMAT:
 
         data = json.loads(output)
 
-    except Exception as e:
-        print("❌ JSON Parse Error:", e)
-        resp.message("❌ I couldn't understand. Try again.")
+    except:
+        resp.message("❌ I couldn’t understand that. Try again.")
         return Response(content=str(resp), media_type="application/xml")
 
     if "ask" in data:
@@ -184,18 +210,18 @@ REQUIRED FORMAT:
     confirmation_msg = save_reservation(data)
     resp.message(confirmation_msg)
 
-    asyncio.create_task(notify_refresh())  # live update dashboard
+    asyncio.create_task(notify_refresh())
     return Response(content=str(resp), media_type="application/xml")
 
 
 # ---------------------------------------------------------
-# API CALLED FROM DASHBOARD
+# DASHBOARD API (Edit, create, cancel)
 # ---------------------------------------------------------
 @app.post("/createReservation")
 async def create_reservation(payload: dict):
-    confirmation = save_reservation(payload)
+    msg = save_reservation(payload)
     asyncio.create_task(notify_refresh())
-    return {"success": True, "message": confirmation}
+    return {"success": True, "message": msg}
 
 
 @app.post("/updateReservation")
@@ -217,7 +243,7 @@ async def update_reservation(update: dict):
 
 
 @app.post("/cancelReservation")
-async def cancel_reservation(update: dict):
+async def cancel(update: dict):
 
     supabase.table("reservations") \
         .update({"status": "cancelled"}) \
