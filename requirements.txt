@@ -1,4 +1,6 @@
 fastapi
 uvicorn[standard]
 jinja2
-python-multipart
+httpx
+python-dotenv
+openai==1.46.0
