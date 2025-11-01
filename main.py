@@ -10,21 +10,20 @@ from datetime import datetime, timedelta
 import json
 import os
 
-# ✅ Correct OpenAI SDK import
+# ✅ OpenAI SDK
 from openai import OpenAI
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-
 app = FastAPI()
 
-# ✅ Always run inside backend folder location
+# ✅ Ensure script always runs relative to backend folder
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # Static + templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# CORS – allow frontend to talk to backend
+# ✅ Allow dashboard/frontend to connect
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,14 +34,12 @@ app.add_middleware(
 # ---------------- DATABASE ----------------
 DB_PATH = os.path.join(os.getcwd(), "reservations.db")
 
-
 def get_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=3000")
     return conn
-
 
 def init_db():
     conn = get_db()
@@ -62,7 +59,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 init_db()
 
 # ---------------- MODELS ----------------
@@ -73,7 +69,6 @@ class UpdateReservation(BaseModel):
     table_number: Optional[str] = None
     notes: Optional[str] = None
     status: Optional[str] = None
-
 
 class CancelReservation(BaseModel):
     reservation_id: int
@@ -88,13 +83,11 @@ def parse_dt(s: str) -> Optional[datetime]:
     except:
         return None
 
-
 def get_reservations():
     conn = get_db()
     rows = conn.execute("SELECT * FROM reservations ORDER BY datetime DESC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
-
 
 def get_analytics():
     conn = get_db()
@@ -141,7 +134,6 @@ def get_analytics():
 def home():
     return "<h3>✅ Backend Running</h3><p>Open <a href='/dashboard'>/dashboard</a></p>"
 
-
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     return templates.TemplateResponse(
@@ -156,56 +148,33 @@ async def dashboard(request: Request):
     )
 
 
-@app.post("/createReservation")
-async def create_reservation(request: Request):
-    data = await request.json()
-    party_size = int(data.get("party_size") or 0)
-
-    conn = get_db()
-    conn.execute("""
-      INSERT INTO reservations (
-        customer_name, customer_email, contact_phone,
-        datetime, party_size, table_number, notes, status
-      ) VALUES (?,?,?,?,?,?,?, 'confirmed')
-    """, (
-        data.get("customer_name"),
-        data.get("customer_email"),
-        data.get("contact_phone"),
-        data.get("datetime"),
-        party_size,
-        data.get("table_number"),
-        data.get("notes")
-    ))
-    conn.commit()
-    conn.close()
-
-    await notify({"type": "refresh"})
-    return {"message": "created"}
-
-
-# ---------------- WHATSAPP WEBHOOK ----------------
+# ---------------- WHATSAPP → AI → DB ----------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
     print("📩 Incoming WhatsApp:", Body)
 
-    # Strong JSON-only prompt
     prompt = """
-You are an AI reservation assistant.
-✅ ALWAYS reply ONLY with pure JSON. No explanations.
-✅ Format must be exactly:
+You are an AI restaurant reservation assistant.
+
+RULES:
+- ALWAYS return valid JSON.
+- NEVER repeat questions already answered.
+- If missing data, return ONLY: {"ask":"<question>"}.
+- KEEP previously inferred values unless overwritten.
+
+VALID JSON FORMAT:
 
 {
-  "customer_name": "",
-  "customer_email": "",
-  "contact_phone": "",
-  "party_size": "",
-  "datetime": "",
-  "table_number": "",
-  "notes": ""
+ "customer_name": "",
+ "customer_email": "",
+ "contact_phone": "",
+ "party_size": "",
+ "datetime": "",
+ "table_number": "",
+ "notes": ""
 }
 
-❗ If ANY required info is missing, reply ONLY:
-{"ask": "<short question>"}
+Fix common email mistakes (extra dots, missing @, etc.)
 """
 
     try:
@@ -220,7 +189,6 @@ You are an AI reservation assistant.
 
         output = resp.choices[0].message.content.strip()
 
-        # Strip code fences if present
         if output.startswith("```"):
             output = output.replace("```json", "").replace("```", "").strip()
 
@@ -228,20 +196,20 @@ You are an AI reservation assistant.
         data = json.loads(output)
 
     except Exception as e:
-        print("❌ JSON error:", e)
+        print("❌ Parsing error:", e)
         return Response(
-            content="<Response><Message>Sorry, I didn’t catch that. Can you repeat?</Message></Response>",
+            content="<Response><Message>Sorry, try again.</Message></Response>",
             media_type="application/xml"
         )
 
-    # Missing info? Ask for it.
+    # Missing information? Ask it.
     if "ask" in data:
         return Response(
             content=f"<Response><Message>{data['ask']}</Message></Response>",
             media_type="application/xml"
         )
 
-    # ✅ Insert reservation
+    # Save into DB
     conn = get_db()
     conn.execute("""
         INSERT INTO reservations (customer_name, customer_email, contact_phone,
@@ -266,9 +234,8 @@ You are an AI reservation assistant.
     )
 
 
-# ---------------- WEBSOCKET FOR DASHBOARD AUTO REFRESH ----------------
+# ---------------- DASHBOARD AUTO-REFRESH ----------------
 clients = []
-
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -279,7 +246,6 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except:
         clients.remove(websocket)
-
 
 async def notify(message: dict):
     for ws in clients:
