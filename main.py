@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, WebSocket, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,8 +36,7 @@ SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
-TABLE_LIMIT = 10  # ✅ 10 tables (T1–T10)
-
+TABLE_LIMIT = 10  # ✅ restaurant has 10 tables (T1–T10)
 
 # -------------------------------------------------
 # MODELS
@@ -55,15 +54,16 @@ class CreateReservation(BaseModel):
 # HELPERS
 # -------------------------------------------------
 def assign_table(res_date: str):
+    """Returns first available table number T1-T10 for the given datetime"""
     existing = supabase.table("reservations") \
         .select("table_number") \
         .eq("datetime", res_date).execute()
 
-    used = {row["table_number"] for row in existing.data}
+    used_tables = {row["table_number"] for row in existing.data}
 
     for i in range(1, TABLE_LIMIT + 1):
         table_name = f"T{i}"
-        if table_name not in used:
+        if table_name not in used_tables:
             return table_name
 
     return None  # fully booked
@@ -77,6 +77,7 @@ def format_datetime(dt_str: str):
 # -------------------------------------------------
 # ROUTES
 # -------------------------------------------------
+
 @app.get("/", response_class=HTMLResponse)
 def home():
     return "<h3>✅ Backend Running</h3><p>Open <a href='/dashboard'>/dashboard</a></p>"
@@ -85,9 +86,16 @@ def home():
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     result = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
+    reservations = result.data
+
     return templates.TemplateResponse(
         "dashboard.html",
-        {"request": request, "reservations": result.data, "parse_dt": datetime.fromisoformat}
+        {
+            "request": request,
+            "reservations": reservations,
+            "parse_dt": datetime.fromisoformat,
+            "timedelta": timedelta
+        },
     )
 
 
@@ -95,7 +103,6 @@ async def dashboard(request: Request):
 async def create_reservation(data: CreateReservation):
 
     table_assigned = assign_table(data.datetime)
-
     if not table_assigned:
         return JSONResponse({"message": "No tables available at that time 😞"})
 
@@ -112,13 +119,13 @@ async def create_reservation(data: CreateReservation):
 
     await notify({"type": "refresh"})
 
-    readable = format_datetime(data.datetime)
+    readable_date = format_datetime(data.datetime)
 
     reply = (
         f"✅ *Reservation confirmed!*\n"
         f"👤 *Name:* {data.customer_name}\n"
         f"👥 *People:* {data.party_size}\n"
-        f"🗓 *Date:* {readable}\n"
+        f"🗓 *Date:* {readable_date}\n"
         f"🍽 *Table:* {table_assigned}"
     )
 
@@ -126,7 +133,7 @@ async def create_reservation(data: CreateReservation):
 
 
 # -------------------------------------------------
-# ✅ FIXED WHATSAPP / CHATBASE ENDPOINT
+# ✅ FIXED WHATSAPP ENDPOINT (supports JSON + URLENCODED + sends TwiML XML reply)
 # -------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(request: Request):
@@ -135,40 +142,51 @@ async def whatsapp_webhook(request: Request):
 
     parsed = None
 
-    # 🔹 Case 1: JSON
+    # Try JSON (Chatbase)
     try:
         parsed = json.loads(body)
     except:
         pass
 
-    # 🔹 Case 2: x-www-form-urlencoded (Chatbase / Twilio style)
+    # Try x-www-form-urlencoded (Twilio/WhatsApp)
     if not parsed and "=" in body:
         form = urllib.parse.parse_qs(body)
-        if "data" in form:  # Chatbase uses a field named 'data'
+        if "data" in form:
             try:
                 parsed = json.loads(form["data"][0])
             except:
                 pass
 
-    # No JSON detected → fallback response
+    # IF STILL NOT JSON → Ask structured format
     if not parsed:
-        return JSONResponse({
-            "message": "✅ I can book your reservation.\nSend: Name, date (YYYY-MM-DD), time, people"
-        })
+        response = """
+        <Response>
+            <Message>
+                ✅ I can book your reservation.
 
-    # Now create reservation
+                Send:
+                Name, date (YYYY-MM-DD), time, people
+            </Message>
+        </Response>
+        """
+        return Response(content=response, media_type="application/xml")
+
+    # JSON recognized, create reservation
     data = CreateReservation(**parsed)
-    response = await create_reservation(data)
-    return JSONResponse(response)
+    result = await create_reservation(data)
+
+    # Send confirmation to WhatsApp
+    confirmation = f"<Response><Message>{result['message']}</Message></Response>"
+    return Response(content=confirmation, media_type="application/xml")
 
 
 # -------------------------------------------------
-# LIVE DASHBOARD UPDATE (Websocket)
+# WEBSOCKET REFRESH FOR DASHBOARD
 # -------------------------------------------------
 clients = []
 
 @app.websocket("/ws")
-async def ws(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     clients.append(websocket)
     try:
