@@ -13,201 +13,220 @@
       --border:#e5e7eb; --shadow:0 6px 18px rgba(31,41,55,0.06);
       --head:#1d4ed8;
     }
+    body{ margin:0;background:var(--bg);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Arial;color:var(--ink);}
+    .wrap{ max-width:1200px;margin:auto;padding:30px 16px; }
+    header{ display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;}
+    header h1{ font-size:26px;font-weight:700;margin:0;}
+    .sub{ margin-top:4px;font-size:14px;color:var(--muted); }
+    .toolbar{ display:flex;gap:10px; }
+    .btn{ padding:10px 14px;border-radius:10px;border:1px solid var(--border);font-weight:600;cursor:pointer;background:white;}
+    .btn.primary{ background:var(--primary);color:white;border:none;}
+    .cards{ display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:22px;}
+    .card{ background:white;border-radius:16px;padding:18px;border:1px solid var(--border);box-shadow:var(--shadow);}
+    .card h3{ margin:0;font-size:13px;color:var(--muted); }
+    .card p{ margin:0;font-size:28px;font-weight:800; }
 
-    body{ margin:0; background:var(--bg); font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Arial; color:var(--ink); }
-    .wrap{ max-width:1200px; margin:auto; padding:30px 16px; }
-    header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
-    header h1{ font-size:26px; font-weight:700; margin:0; }
-    .sub{ margin-top:4px; font-size:14px; color:var(--muted); }
-    .toolbar{ display:flex; gap:10px; }
+    .filters{ display:flex;align-items:center;gap:14px;background:white;padding:14px;
+      border-radius:14px;border:1px solid var(--border);box-shadow:var(--shadow);margin-bottom:22px; }
+    .filters input,.filters select{ height:38px;border-radius:10px;border:1px solid var(--border);padding:8px 12px;font-size:14px;}
 
-    .btn{ padding:10px 14px; border-radius:10px; border:1px solid var(--border); font-weight:600; cursor:pointer; background:white; }
-    .btn.primary{ background:var(--primary); color:white; border:none; }
+    .table-availability{ background:white;border:1px solid var(--border);border-radius:14px;
+      padding:16px;box-shadow:var(--shadow);margin-bottom:20px;}
+    .table-grid{ display:grid;grid-template-columns:repeat(5,1fr);gap:10px;}
+    .tcard{ background:white;border:1px solid var(--border);border-radius:12px;padding:10px;cursor:pointer;
+      transition:0.15s;display:flex;flex-direction:column;gap:4px;}
+    .tcard:hover{ background:#f9fbff;}
+    .free{ background:#ecfdf5;color:#01643f;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700;}
+    .occupied{ background:#fef2f2;color:#9b1c1c;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700;}
 
-    .cards{ display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:22px; }
-    .card{ background:white; border-radius:16px; padding:18px; border:1px solid var(--border); box-shadow:var(--shadow); }
-    .card h3{ margin:0; font-size:13px; color:var(--muted); }
-    .card p{ margin:0; font-size:28px; font-weight:800; }
+    .table-wrap{ border-radius:14px;background:white;border:1px solid var(--border);}
+    table{ width:100%;border-collapse:collapse;}
+    thead th{ padding:12px;background:var(--head);color:white;font-weight:600;font-size:13px;}
+    tbody td{ padding:12px;border-top:1px solid var(--border);font-size:14px;}
+    tbody tr:hover{ background:#f9fbff;}
 
-    .filters{
-      display:flex; align-items:center; gap:14px; background:white; padding:14px;
-      border-radius:14px; border:1px solid var(--border); box-shadow:var(--shadow);
-      margin-bottom:22px;
-    }
-    .filters input, .filters select{ height:38px; border-radius:10px; border:1px solid var(--border); padding:8px 12px; font-size:14px; }
+    .chip{ padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700;display:inline-block;}
+    .confirmed{ background:#dcfce7;color:#166534;}
+    .arrived{ background:#bbf7d0;color:#064e3b;}
+    .updated{ background:#fef9c3;color:#854d0e;}
+    .pending{ background:#eef2ff;color:#4338ca;}
+    .cancelled,.no_show{ background:#fee2e2;color:#b91c1c;}
+    .archived{ background:#d1d5db;color:#4b5563;}
 
-    .table-availability{
-      background:white; border:1px solid var(--border); border-radius:14px;
-      padding:16px; box-shadow:var(--shadow); margin-bottom:20px;
-    }
-    .table-grid{ display:grid; grid-template-columns: repeat(5, 1fr); gap:10px; }
-    .tcard{ background:white; border:1px solid var(--border); border-radius:12px; padding:10px; cursor:pointer; transition:0.15s; display:flex; flex-direction:column; gap:4px; }
-    .tcard:hover{ background:#f9fbff; }
-    .free{ background:#ecfdf5; color:#01643f; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700; }
-    .occupied{ background:#fef2f2; color:#9b1c1c; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700; }
+    .contact-actions{ display:flex;gap:4px;margin-top:4px;}
+    .icon-btn{ padding:4px 6px;font-size:13px;border-radius:6px;border:none;cursor:pointer;background:#eef2ff;}
 
-    .table-wrap{ border-radius:14px; background:white; border:1px solid var(--border); }
-    table{ width:100%; border-collapse:collapse; }
-    thead th{ padding:12px; background:var(--head); color:white; font-weight:600; font-size:13px; }
-    tbody td{ padding:12px; border-top:1px solid var(--border); font-size:14px; }
-    tbody tr:hover{ background:#f9fbff; }
+    .menu-wrapper{ position:relative;}
+    .menu-btn{ border:none;background:none;font-size:18px;cursor:pointer;}
+    .dropdown-menu{ display:none;position:absolute;right:0;top:22px;background:white;border:1px solid var(--border);
+      border-radius:8px;min-width:150px;box-shadow:var(--shadow);z-index:50;}
+    .dropdown-menu button{ width:100%;background:none;border:none;padding:8px 12px;text-align:left;font-size:13px;cursor:pointer;}
+    .dropdown-menu button:hover{ background:#eef2ff;}
 
-    .chip{ padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700; display:inline-block; }
-    .confirmed{ background:#dcfce7; color:#166534; }
-    .arrived{ background:#bbf7d0; color:#064e3b; }
-    .updated{ background:#fef9c3; color:#854d0e; }
-    .pending{ background:#eef2ff; color:#4338ca; }
-    .cancelled,.no_show{ background:#fee2e2; color:#b91c1c; }
-    .archived{ background:#d1d5db; color:#4b5563; }
-
-    .contact-actions{ display:flex; gap:4px; margin-top:4px; }
-    .icon-btn{ padding:4px 6px; font-size:13px; border-radius:6px; border:none; cursor:pointer; background:#eef2ff; }
-
-    .menu-wrapper{ position:relative; }
-    .menu-btn{ border:none; background:none; font-size:18px; cursor:pointer; }
-    .dropdown-menu{
-      display:none; position:absolute; right:0; top:22px; background:white;
-      border:1px solid var(--border); border-radius:8px; min-width:150px;
-      box-shadow:var(--shadow); z-index:50;
-    }
-    .dropdown-menu button{ width:100%; background:none; border:none; padding:8px 12px; text-align:left; font-size:13px; cursor:pointer; }
-    .dropdown-menu button:hover{ background:#eef2ff; }
-
-    .modal-backdrop{ position:fixed; inset:0; background:#0008; display:none; align-items:center; justify-content:center; z-index:100; }
-    .modal{ background:white; width:600px; max-width:90vw; border-radius:16px; padding:16px; border:1px solid var(--border); box-sizing:border-box; }
-    .modal header{ padding-bottom:12px; border-bottom:1px solid var(--border); }
-    .modal footer{ padding-top:12px; display:flex; justify-content:flex-end; gap:10px; }
-
-    .form-row{ display:flex; justify-content:space-between; gap:20px; margin-bottom:14px; }
-    .field{ width:48%; box-sizing:border-box; }
-    .field input,.field textarea{ width:100%; padding:10px; border-radius:10px; border:1px solid var(--border); }
+    .modal-backdrop{ position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center;z-index:100;}
+    .modal{ background:white;width:600px;max-width:90vw;border-radius:16px;padding:16px;border:1px solid var(--border);}
+    .form-row{ display:flex;gap:20px;margin-bottom:14px;}
+    .field{ width:48%; }
+    .field input,.field textarea{ width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);}
   </style>
 </head>
 
 <body>
 <div class="wrap">
 
-  <header>
-    <div>
-      <h1>🤖 AI Reservation Dashboard</h1>
-      <p class="sub">Manage bookings, analyze insights, and stay organized</p>
-    </div>
-    <div class="toolbar">
-      <button class="btn primary" id="newBtn">+ New Reservation</button>
-      <button class="btn" id="refreshBtn">Refresh</button>
-      <button class="btn" id="exportBtn">Export CSV</button>
-    </div>
-  </header>
-
-  <!-- KPI -->
-  <div class="cards">
-    <div class="card"><h3>Total</h3><p>{{ reservations|length }}</p></div>
-    <div class="card"><h3>Confirmed</h3><p>{{ reservations|selectattr('status','equalto','confirmed')|list|length }}</p></div>
-    <div class="card"><h3>Cancelled</h3><p>{{ reservations|selectattr('status','equalto','cancelled')|list|length }}</p></div>
-    <div class="card"><h3>This Week</h3><p>{{ weekly_count }}</p></div>
+<header>
+  <div>
+    <h1>🤖 AI Reservation Dashboard</h1>
+    <p class="sub">Manage bookings, analyze insights, and stay organized</p>
   </div>
-
-  <!-- ✅ FILTER BAR -->
-  <div class="filters">
-    <input id="q" placeholder="Search...">
-    <input id="dateFilter" type="date">
-    <select id="statusFilter">
-      <option value="active">Active</option>
-      <option value="archived">Archived</option>
-      <option value="all">All</option>
-      <option value="confirmed">Confirmed</option>
-      <option value="pending">Pending</option>
-      <option value="cancelled">Cancelled</option>
-      <option value="arrived">Arrived</option>
-      <option value="no_show">No-Show</option>
-    </select>
-    <button class="btn" id="todayBtn">Today</button>
+  <div class="toolbar">
+    <button class="btn primary" id="newBtn">+ New Reservation</button>
+    <button class="btn" id="refreshBtn">Refresh</button>
+    <button class="btn" id="exportBtn">Export CSV</button>
   </div>
+</header>
 
-  <!-- ✅ TABLE AVAILABILITY -->
-  <div class="table-availability">
-    <h2>🟩 Table Availability</h2>
-    <div id="tableGrid" class="table-grid"></div>
-  </div>
+<div class="cards">
+  <div class="card"><h3>Total</h3><p>{{ reservations|length }}</p></div>
+  <div class="card"><h3>Confirmed</h3><p>{{ reservations|selectattr('status','equalto','confirmed')|list|length }}</p></div>
+  <div class="card"><h3>Cancelled</h3><p>{{ reservations|selectattr('status','equalto','cancelled')|list|length }}</p></div>
+  <div class="card"><h3>This Week</h3><p>{{ weekly_count }}</p></div>
+</div>
 
-  <!-- ✅ MAIN TABLE -->
-  <div class="table-wrap">
-    <table>
-      <thead>
-      <tr>
-        <th>Date</th><th>Time</th><th>Customer</th><th>Contact</th>
-        <th>Party</th><th>Table</th><th>Notes</th><th>Status</th><th>Actions</th>
-      </tr>
-      </thead>
-      <tbody id="tbody">
+<div class="filters">
+  <input id="q" placeholder="Search...">
+  <input id="dateFilter" type="date">
+  <select id="statusFilter">
+    <option value="active">Active</option>
+    <option value="archived">Archived</option>
+    <option value="all">All</option>
+    <option value="confirmed">Confirmed</option>
+    <option value="pending">Pending</option>
+    <option value="cancelled">Cancelled</option>
+    <option value="arrived">Arrived</option>
+    <option value="no_show">No-Show</option>
+  </select>
+  <button class="btn" id="todayBtn">Today</button>
+</div>
 
-      {% for r in reservations %}
+<div class="table-availability">
+  <h2>🟩 Table Availability</h2>
+  <div id="tableGrid" class="table-grid"></div>
+</div>
 
-      <tr data-name="{{ (r.customer_name ~ ' ' ~ r.customer_email)|lower }}"
-          data-date="{{ r.datetime if r.datetime else '' }}"
-          data-status="{{ r.status }}"
-          data-table="{{ r.table_number or '' }}">
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th>Date</th><th>Time</th><th>Customer</th><th>Contact</th>
+      <th>Party</th><th>Table</th><th>Notes</th><th>Status</th><th>Actions</th>
+    </tr></thead>
 
-        <!-- ✅ SAFE DATE/TIME HANDLING -->
-        {% if r.datetime %}
-          {% if r.datetime and "T" in r.datetime %}
-    {% set dt = r.datetime.split('T') %}
-    <td>{{ dt[0] }}</td>
-    <td>{{ dt[1][:5] }}</td>
-{% else %}
-    <td>-</td>
-    <td>-</td>
-{% endif %}
-        {% else %}
-          <td>-</td>
-          <td>-</td>
-        {% endif %}
+    <tbody id="tbody">
 
-        <td>{{ r.customer_name }}</td>
+    {% for r in reservations %}
+    <tr data-name="{{ (r.customer_name ~ ' ' ~ r.customer_email)|lower }}"
+        data-date="{{ r.datetime.split('T')[0] if r.datetime else '' }}"
+        data-status="{{ r.status }}"
+        data-table="{{ r.table_number or '' }}">
 
-        <td>
-          {{ r.customer_email or r.contact_phone }}
-          <div class="contact-actions">
-            <button class="icon-btn" onclick="callCustomer(`{{ r.contact_phone or '' }}`)">📞</button>
-            <button class="icon-btn" onclick="sendWhatsApp(`{{ r.contact_phone or '' }}`, `{{ r.customer_name }}`, `{{ r.datetime }}`)">💬</button>
+      {% if r.datetime and "T" in r.datetime %}
+        {% set dt = r.datetime.split('T') %}
+        <td>{{ dt[0] }}</td>
+        <td>{{ dt[1][:5] }}</td>
+      {% else %}
+        <td>-</td><td>-</td>
+      {% endif %}
+
+      <td>{{ r.customer_name }}</td>
+
+      <td>
+        {{ r.customer_email or r.contact_phone }}
+        <div class="contact-actions">
+          <button class="icon-btn" onclick="callCustomer(`{{ r.contact_phone or '' }}`)">📞</button>
+          <button class="icon-btn" onclick="sendWhatsApp(`{{ r.contact_phone or '' }}`, `{{ r.customer_name }}`, `{{ r.datetime }}`)">💬</button>
+        </div>
+      </td>
+
+      <td>{{ r.party_size }}</td>
+      <td>{{ r.table_number or '-' }}</td>
+      <td>{{ r.notes or '-' }}</td>
+      <td><span class="chip {{ r.status }}">{{ r.status.replace("_"," ") }}</span></td>
+
+      <td>
+        <div class="menu-wrapper">
+          <button class="menu-btn" onclick="toggleMenu(this)">⋮</button>
+          <div class="dropdown-menu">
+            <button onclick="openEdit({{ r.reservation_id }}, `{{ r.datetime }}`, {{ r.party_size }}, `{{ r.table_number }}`, `{{ r.notes or '' }}`)">✏️ Edit</button>
+            <button onclick="markStatus({{ r.reservation_id }}, 'arrived')">✅ Arrived</button>
+            <button onclick="markStatus({{ r.reservation_id }}, 'no_show')">⚠️ No-Show</button>
+            <button onclick="doArchive({{ r.reservation_id }})">🗄️ Archive</button>
+            <button onclick="doCancel({{ r.reservation_id }})">❌ Cancel</button>
           </div>
-        </td>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
 
-        <td>{{ r.party_size }}</td>
-        <td>{{ r.table_number or '-' }}</td>
-        <td>{{ r.notes or '-' }}</td>
-        <td><span class="chip {{ r.status }}">{{ r.status.replace("_"," ") }}</span></td>
+    </tbody>
+  </table>
+</div>
 
-        <td>
-          <div class="menu-wrapper">
-            <button class="menu-btn" onclick="toggleMenu(this)">⋮</button>
-            <div class="dropdown-menu">
-              <button onclick="openEdit({{ r.reservation_id }}, `{{ r.datetime }}`, {{ r.party_size }}, `{{ r.table_number }}`, `{{ r.notes or '' }}`)">✏️ Edit</button>
-              <button onclick="markStatus({{ r.reservation_id }}, 'arrived')">✅ Arrived</button>
-              <button onclick="markStatus({{ r.reservation_id }}, 'no_show')">⚠️ No-Show</button>
-              <button onclick="doArchive({{ r.reservation_id }})">🗄️ Archive</button>
-              <button onclick="doCancel({{ r.reservation_id }})">❌ Cancel</button>
-            </div>
-          </div>
-        </td>
-      </tr>
-
-      {% endfor %}
-
-      </tbody>
-    </table>
-  </div>
-
-  <!-- ✅ INSIGHTS -->
-  <h2 style="margin-top:24px;">📊 Insights</h2>
-  <div class="cards" style="grid-template-columns:repeat(3,1fr);">
-    <div class="card"><h3>Avg Party</h3><p>{{ avg_party_size }}</p></div>
-    <div class="card"><h3>Peak Time</h3><p>{{ peak_time }}</p></div>
-    <div class="card"><h3>Cancel Rate</h3><p>{{ cancel_rate }}%</p></div>
-  </div>
+<h2 style="margin-top:24px;">📊 Insights</h2>
+<div class="cards" style="grid-template-columns:repeat(3,1fr);">
+  <div class="card"><h3>Avg Party</h3><p>{{ avg_party_size }}</p></div>
+  <div class="card"><h3>Peak Time</h3><p>{{ peak_time }}</p></div>
+  <div class="card"><h3>Cancel Rate</h3><p>{{ cancel_rate }}%</p></div>
+</div>
 
 </div>
-  
+
+<!-- ✅ EDIT MODAL -->
+<div class="modal-backdrop" id="editModal">
+  <div class="modal">
+    <header><h3>Edit Reservation</h3></header>
+    <div style="padding:16px;">
+      <div class="form-row">
+        <div class="field"><label>Date & Time</label><input id="dt" type="datetime-local"></div>
+        <div class="field"><label>Party</label><input id="ps" type="number" min="1"></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>Table</label><input id="table"></div>
+        <div class="field"><label>Notes</label><textarea id="notes"></textarea></div>
+      </div>
+    </div>
+    <footer>
+      <button class="btn" onclick="closeEdit()">Cancel</button>
+      <button class="btn primary" id="saveBtn">Save</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ✅ NEW RESERVATION MODAL -->
+<div class="modal-backdrop" id="newModal">
+  <div class="modal">
+    <header><h3>New Reservation</h3></header>
+    <div style="padding:16px;">
+      <div class="form-row">
+        <div class="field"><label>Name *</label><input id="new_name"></div>
+        <div class="field"><label>Email</label><input id="new_email" type="email"></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>Phone</label><input id="new_phone" type="tel"></div>
+        <div class="field"><label>Party *</label><input id="new_party" type="number" min="1" value="2"></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>Date & Time *</label><input id="new_dt" type="datetime-local"></div>
+        <div class="field"><label>Table</label><input id="new_table"></div>
+      </div>
+      <div class="field"><label>Notes</label><textarea id="new_notes"></textarea></div>
+    </div>
+    <footer>
+      <button class="btn" id="closeNewBtn">Cancel</button>
+      <button class="btn primary" id="createBtn">Create</button>
+    </footer>
+  </div>
+</div>
+
 <script>
 function toggleMenu(el){
   const menu = el.nextElementSibling;
@@ -250,7 +269,6 @@ document.getElementById("todayBtn").onclick=()=>{
   filter();
 };
 
-/* ✅ TABLE AVAILABILITY */
 const TABLE_IDS = ["T1","T2","T3","T4","T5","T6","T7","T8","T9","T10"];
 
 function buildTableGrid(){
@@ -281,7 +299,6 @@ function filterByTable(table){
   buildTableGrid();
 }
 
-/* ✅ Actions */
 async function markStatus(id,s){
   await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:s})});
   location.reload();
@@ -295,11 +312,7 @@ async function doCancel(id){
   location.reload();
 }
 
-/* ✅ Calling + WhatsApp */
-function callCustomer(phone){
-  if(!phone) return alert("No phone number.");
-  window.location.href = `tel:${phone}`;
-}
+function callCustomer(phone){ if(!phone) return alert("No phone number."); window.location.href = `tel:${phone}`; }
 function sendWhatsApp(phone,name,dt){
   if(!phone) return alert("No phone number.");
   const msg = `Hello ${name}, just confirming your reservation for ${dt}.`;
@@ -308,7 +321,6 @@ function sendWhatsApp(phone,name,dt){
 
 document.getElementById("refreshBtn").onclick=()=>location.reload();
 
-/* ✅ FIXED REAL-TIME REFRESH (Render compatible) */
 (function(){
   try{
     const ws=new WebSocket(`${location.protocol==="https:"?"wss":"ws"}://${location.host}/ws`);
@@ -316,20 +328,16 @@ document.getElementById("refreshBtn").onclick=()=>location.reload();
   }catch(e){}
 })();
 
-
-/* ✅ MODALS */
 let currentId=null;
 function openEdit(id,dt,ps,table,notes){
   currentId=id;
   document.getElementById("dt").value = dt && dt.includes("T") ? dt.slice(0,16) : "";
   document.getElementById("ps").value = ps || 1;
-  document.getElementById("table").value = table && table !== "null" ? table : "";
-  document.getElementById("notes").value = notes && notes !== "null" ? notes : "";
+  document.getElementById("table").value = table || "";
+  document.getElementById("notes").value = notes || "";
   document.getElementById("editModal").style.display="flex";
 }
-function closeEdit(){
-  document.getElementById("editModal").style.display="none";
-}
+function closeEdit(){ document.getElementById("editModal").style.display="none"; }
 
 document.getElementById("saveBtn").onclick=async ()=>{
   const payload={
@@ -344,7 +352,6 @@ document.getElementById("saveBtn").onclick=async ()=>{
   closeEdit(); location.reload();
 };
 
-/* ✅ NEW RESERVATION MODAL */
 document.getElementById("newBtn").onclick=()=>{ document.getElementById("newModal").style.display="flex"; };
 document.getElementById("closeNewBtn").onclick=()=>{ document.getElementById("newModal").style.display="none"; };
 
@@ -357,10 +364,7 @@ document.getElementById("createBtn").onclick=async ()=>{
   const table = document.getElementById("new_table").value.trim();
   const notes = document.getElementById("new_notes").value.trim();
 
-  if(!name || !dtVal){
-    alert("Name and Date/Time are required.");
-    return;
-  }
+  if(!name || !dtVal){ alert("Name and Date/Time are required."); return; }
 
   const payload={
     customer_name: name,
@@ -377,38 +381,8 @@ document.getElementById("createBtn").onclick=async ()=>{
   location.reload();
 };
 
-
-/* ✅ Export CSV */
-document.getElementById("exportBtn").onclick=()=>{
-  const header = ["Date","Time","Customer","Contact","Party","Table","Notes","Status"];
-  const rows = [header];
-
-  [...tbody.rows].forEach(r=>{
-    if(r.style.display==="none") return;
-    const cells = [...r.cells];
-    rows.push([
-      cells[0].innerText.trim(),
-      cells[1].innerText.trim(),
-      cells[2].innerText.trim(),
-      cells[3].innerText.trim(),
-      cells[4].innerText.trim(),
-      cells[5].innerText.trim(),
-      cells[6].innerText.trim(),
-      cells[7].innerText.trim(),
-    ]);
-  });
-
-  const csv = rows.map(r => r.map(v => `"${(v||"").replace(/"/g,'""')}"`).join(",")).join("\n");
-  const a = document.createElement("a");
-  a.href="data:text/csv;charset=utf-8," + encodeURIComponent(csv);
-  a.download="reservations.csv";
-  a.click();
-};
-
 buildTableGrid();
 </script>
 
 </body>
 </html>
-
-
