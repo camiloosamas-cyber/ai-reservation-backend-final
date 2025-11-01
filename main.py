@@ -10,6 +10,10 @@ from datetime import datetime, timedelta
 import json
 import os
 
+# --- OpenAI (for WhatsApp AI parsing) ---
+from openai import OpenAI
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 app = FastAPI()
 
 # ✅ Always work inside Backend folder
@@ -147,12 +151,12 @@ async def dashboard(request: Request):
     )
 
 
-# ✅ FIXED — Chatbase-friendly POST that accepts strings or numbers
+# ✅ /createReservation — accepts strings or numbers for party_size
 @app.post("/createReservation")
 async def create_reservation(request: Request):
     data = await request.json()
 
-    # Convert party_size safely (Chatbase may send "2")
+    # Convert party_size safely (may arrive as "2")
     party_size = data.get("party_size")
     try:
         party_size = int(party_size) if party_size is not None else None
@@ -233,6 +237,107 @@ async def reset_reservations():
     conn.commit()
     conn.close()
     return {"message": "✅ all reservations cleared"}
+
+
+# ---------------- WhatsApp webhook → OpenAI → DB ----------------
+@app.post("/whatsapp")
+async def whatsapp_webhook(Body: str = Form(...)):
+    """
+    Twilio Sandbox sends form-encoded fields including `Body`.
+    We send the text to OpenAI (gpt-4.1-mini) asking for a single JSON object.
+    If required fields are present → insert into DB and confirm.
+    Otherwise → ask the user for the missing piece.
+    """
+    print("📩 Incoming WhatsApp:", Body)
+
+    # Ask the model to output ONLY JSON with the fields we need
+    system_prompt = (
+        "You are an AI reservation assistant for a restaurant.\n"
+        "Extract a single reservation from the user's message and return ONLY a compact JSON object with keys:\n"
+        'customer_name (string), customer_email (string, optional), contact_phone (string, optional), '
+        'party_size (number), datetime (ISO8601 if possible or the user\'s phrasing), '
+        'table_number (string, optional), notes (string, optional).\n'
+        "If one of (customer_name, party_size, datetime) is missing, return a JSON with only "
+        '{"ask":"<one short question to get the missing info>"} and nothing else.'
+    )
+
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            temperature=0,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": Body}
+            ]
+        )
+        text = resp.choices[0].message.content.strip()
+        # Ensure we try to load a JSON object from the reply
+        # (some models may wrap it in code fences)
+        if text.startswith("```"):
+            text = text.strip("`")
+            # remove possible language hint like ```json
+            if "\n" in text:
+                text = "\n".join(text.split("\n")[1:])
+        data = json.loads(text)
+    except Exception as e:
+        print("❌ OpenAI parse error:", e)
+        return {"message": "Sorry, I didn’t catch that. Can you repeat the booking details?"}
+
+    # If the model asks a clarifying question
+    if isinstance(data, dict) and "ask" in data:
+        return {"message": data["ask"]}
+
+    # Validate required fields
+    required = ["customer_name", "party_size", "datetime"]
+    missing = [k for k in required if not data.get(k)]
+    if missing:
+        ask = "I just need " + ", ".join(missing) + "."
+        return {"message": ask}
+
+    # Build payload for /createReservation and coerce party_size
+    payload = {
+        "customer_name": data.get("customer_name"),
+        "customer_email": data.get("customer_email") or "",
+        "contact_phone": data.get("contact_phone") or "",
+        "party_size": data.get("party_size"),
+        "datetime": data.get("datetime"),
+        "table_number": data.get("table_number") or "",
+        "notes": data.get("notes") or ""
+    }
+
+    # Insert directly (reuse same logic as /createReservation)
+    try:
+        party_size = payload.get("party_size")
+        try:
+            party_size = int(party_size) if party_size is not None else None
+        except:
+            party_size = None
+
+        conn = get_db()
+        conn.execute("""
+          INSERT INTO reservations (
+            customer_name, customer_email, contact_phone,
+            datetime, party_size, table_number, notes, status
+          ) VALUES (?,?,?,?,?,?,?, 'confirmed')
+        """, (
+            payload["customer_name"],
+            payload["customer_email"],
+            payload["contact_phone"],
+            payload["datetime"],
+            party_size,
+            payload["table_number"],
+            payload["notes"]
+        ))
+        conn.commit()
+        conn.close()
+
+        await notify({"type": "refresh"})
+        return {
+            "message": f"✅ Reservation created for {payload['customer_name']} on {payload['datetime']} (party {party_size})."
+        }
+    except Exception as e:
+        print("❌ DB insert error:", e)
+        return {"message": "I had trouble saving that. Can you rephrase the details?"}
 
 
 # ---------------- WebSocket (auto-refresh dashboard) ----------------
