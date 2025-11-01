@@ -5,8 +5,8 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime, timedelta
-import json, os
+from datetime import datetime
+import json, os, asyncio
 
 # ✅ Supabase
 from supabase import create_client, Client
@@ -23,7 +23,6 @@ from twilio.twiml.messaging_response import MessagingResponse
 # APP INIT
 # ---------------------------------------------------------
 app = FastAPI()
-
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -44,11 +43,11 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_SERVICE_ROLE")
 )
 
-TABLE_LIMIT = 10  # number of tables in restaurant
+TABLE_LIMIT = 10  # restaurant tables
 
 
 def assign_table(date_str: str):
-    """Returns first free table number"""
+    """ Returns first free table at that datetime """
     booked = supabase.table("reservations") \
         .select("table_number") \
         .eq("datetime", date_str).execute()
@@ -56,15 +55,15 @@ def assign_table(date_str: str):
     taken = {row["table_number"] for row in booked.data}
 
     for i in range(1, TABLE_LIMIT + 1):
-        table_id = f"T{i}"
-        if table_id not in taken:
-            return table_id
+        t = f"T{i}"
+        if t not in taken:
+            return t
 
     return None
 
 
 def save_reservation(data):
-    """Insert into database"""
+    """ Insert record into Supabase """
     table = assign_table(data["datetime"])
     if not table:
         return "❌ No tables available at that time."
@@ -84,16 +83,15 @@ def save_reservation(data):
     formatted = dt.strftime("%A %I:%M %p")
 
     return (
-        f"✅ *Reservation confirmed!*\n"
+        f"✅ Reservation confirmed!\n"
         f"👤 {data['customer_name']}\n"
         f"👥 {data['party_size']} people\n"
         f"🗓 {formatted}\n"
         f"🍽 Table: {table}"
     )
 
-
 # ---------------------------------------------------------
-# DASHBOARD
+# DASHBOARD ROUTE
 # ---------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -102,11 +100,10 @@ def home():
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    reservations = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
-
+    res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
     return templates.TemplateResponse(
         "dashboard.html",
-        {"request": request, "reservations": reservations.data},
+        {"request": request, "reservations": res.data},
     )
 
 
@@ -117,16 +114,14 @@ async def dashboard(request: Request):
 async def whatsapp_webhook(Body: str = Form(...)):
 
     print("📩 Incoming:", Body)
-
     resp = MessagingResponse()
 
     prompt = """
-You are an AI that extracts reservation details from a WhatsApp message.
+You extract restaurant reservation details from WhatsApp.
 
-RETURN **ONLY VALID JSON**, no explanation.
+RETURN ONLY VALID JSON. No explanation.
 
-Example JSON response:
-
+Valid JSON structure:
 {
  "customer_name": "",
  "customer_email": "",
@@ -136,8 +131,8 @@ Example JSON response:
  "notes": ""
 }
 
-If missing details, respond ONLY with:
-{"ask":"What info is missing?"}
+If missing information:
+{"ask":"What detail is missing?"}
 """
 
     try:
@@ -146,7 +141,7 @@ If missing details, respond ONLY with:
             temperature=0,
             messages=[
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": Body}
+                {"role": "user", "content": Body},
             ]
         )
 
@@ -157,8 +152,9 @@ If missing details, respond ONLY with:
 
         data = json.loads(output)
 
-    except:
-        resp.message("❌ Error. Try again.")
+    except Exception as e:
+        print("❌ JSON Parse Error:", e)
+        resp.message("❌ Error, try again.")
         return Response(content=str(resp), media_type="application/xml")
 
     if "ask" in data:
@@ -168,13 +164,17 @@ If missing details, respond ONLY with:
     confirmation_msg = save_reservation(data)
     resp.message(confirmation_msg)
 
+    # 🔥 Auto-refresh dashboard (trigger websocket refresh)
+    asyncio.create_task(notify_refresh())
+
     return Response(content=str(resp), media_type="application/xml")
 
 
 # ---------------------------------------------------------
-# AUTO REFRESH DASHBOARD WEBSOCKET
+# WEBSOCKET AUTO REFRESH
 # ---------------------------------------------------------
 clients = []
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -188,6 +188,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 async def notify_refresh():
+    """ sends refresh ping to dashboard clients """
     for ws in clients:
         try:
             await ws.send_text("refresh")
