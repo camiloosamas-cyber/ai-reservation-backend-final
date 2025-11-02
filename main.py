@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import json, os, asyncio
 import dateparser  # natural language datetime parser
 
@@ -14,7 +15,7 @@ from supabase import create_client, Client
 from openai import OpenAI
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ✅ Twilio Reply
+# ✅ Twilio
 from twilio.twiml.messaging_response import MessagingResponse
 
 
@@ -35,6 +36,83 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------
+# TIMEZONE SETTINGS
+# ---------------------------------------------------------
+# Local timezone for display (WhatsApp + Dashboard)
+LOCAL_TZ_NAME = os.getenv("LOCAL_TZ", "America/Bogota")
+LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
+
+def _safe_fromiso(s: str) -> datetime | None:
+    """Parse ISO string robustly; handle 'Z' and offsets."""
+    try:
+        if not s:
+            return None
+        # Accept both "....Z" and "....+00:00"
+        if s.endswith("Z"):
+            s = s.replace("Z", "+00:00")
+        return datetime.fromisoformat(s)
+    except:
+        return None
+
+def _to_utc_iso(dt_str: str | None) -> str | None:
+    """
+    Parse any natural/ISO input and return UTC ISO string with 'Z'.
+    - If user typed 'tomorrow 8pm', we assume LOCAL_TZ then convert to UTC.
+    - If input already has timezone (like ISO from dashboard JS), we normalize to UTC.
+    """
+    if not dt_str:
+        return None
+
+    # If it looks like ISO already, try to parse as aware and convert to UTC
+    dti = _safe_fromiso(dt_str)
+    if dti:
+        # If naive → assume local tz
+        if dti.tzinfo is None:
+            dti = dti.replace(tzinfo=LOCAL_TZ)
+        dtu = dti.astimezone(timezone.utc)
+        return dtu.isoformat().replace("+00:00", "Z")
+
+    # Otherwise use dateparser (assume local tz if naive)
+    try:
+        parsed = dateparser.parse(
+            dt_str,
+            settings={
+                "RETURN_AS_TIMEZONE_AWARE": True,
+                "TIMEZONE": LOCAL_TZ_NAME,
+                "TO_TIMEZONE": "UTC",
+            },
+        )
+        if not parsed:
+            return None
+        # parsed is aware in UTC due to TO_TIMEZONE
+        return parsed.isoformat().replace("+00:00", "Z")
+    except:
+        return None
+
+def _utc_iso_to_local_iso(iso_utc: str | None) -> str | None:
+    """Convert UTC ISO ('Z' or +00:00) to LOCAL_TZ ISO (without crashing)."""
+    dtu = _safe_fromiso(iso_utc or "")
+    if not dtu:
+        return None
+    if dtu.tzinfo is None:
+        # Assume UTC if missing tz (safety)
+        dtu = dtu.replace(tzinfo=timezone.utc)
+    local_dt = dtu.astimezone(LOCAL_TZ)
+    # Keep as ISO (no 'Z' because it's local time with offset)
+    return local_dt.isoformat()
+
+def _readable_local(iso_utc: str | None) -> str:
+    """Nice readable local string for WhatsApp confirmation."""
+    dtu = _safe_fromiso(iso_utc or "")
+    if not dtu:
+        return "Invalid time"
+    if dtu.tzinfo is None:
+        dtu = dtu.replace(tzinfo=timezone.utc)
+    local_dt = dtu.astimezone(LOCAL_TZ)
+    return local_dt.strftime("%A %I:%M %p")
+
+
+# ---------------------------------------------------------
 # SUPABASE INIT
 # ---------------------------------------------------------
 supabase: Client = create_client(
@@ -42,65 +120,59 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_SERVICE_ROLE"),
 )
 
-TABLE_LIMIT = 10  # number of tables
+TABLE_LIMIT = 10
 
 
-def to_iso(dt_str: str):
-    """ Converts natural language datetime ('tomorrow at 8pm') → ISO string """
-    try:
-        parsed = dateparser.parse(dt_str)
-        return parsed.isoformat()
-    except:
-        return None
-
-
-def assign_table(date_str: str):
-    """ Auto chooses first available table at given datetime """
+def assign_table(iso_utc: str):
+    """ Returns first available table at that UTC datetime (exact match). """
     booked = supabase.table("reservations") \
         .select("table_number") \
-        .eq("datetime", date_str).execute()
+        .eq("datetime", iso_utc).execute()
 
-    taken = {row["table_number"] for row in booked.data}
+    taken = {row["table_number"] for row in (booked.data or [])}
 
     for i in range(1, TABLE_LIMIT + 1):
         t = f"T{i}"
         if t not in taken:
             return t
-
     return None
 
 
-def save_reservation(data):
-    """ Create reservation in DB with auto table assignment """
-    iso_dt = data.get("datetime")
+def save_reservation(data: dict) -> str:
+    """
+    Save to DB:
+      - Normalize input `datetime` -> UTC ISO 'Z'
+      - Auto table assignment
+      - Return readable confirmation using LOCAL_TZ
+    """
+    # Normalize to UTC
+    iso_utc = data.get("datetime")
+    iso_utc = _to_utc_iso(iso_utc)
 
-    if not iso_dt or "T" not in iso_dt:
-        iso_dt = to_iso(iso_dt)
-
-    if not iso_dt:
+    if not iso_utc:
         return "❌ Invalid date/time. Please specify date AND time."
 
-    table = assign_table(iso_dt)
+    table = assign_table(iso_utc)
     if not table:
         return "❌ No tables available at that time."
 
+    # Insert
     supabase.table("reservations").insert({
-        "customer_name": data["customer_name"],
-        "customer_email": data.get("customer_email", ""),
-        "contact_phone": data.get("contact_phone", ""),
-        "datetime": iso_dt,
-        "party_size": int(data["party_size"]),
+        "customer_name": data.get("customer_name", ""),
+        "customer_email": data.get("customer_email", "") or "",
+        "contact_phone": data.get("contact_phone", "") or "",
+        "datetime": iso_utc,  # stored in UTC
+        "party_size": int(data.get("party_size", 1)),
         "table_number": table,
-        "notes": data.get("notes", ""),
+        "notes": data.get("notes", "") or "",
         "status": "confirmed"
     }).execute()
 
-    readable = datetime.fromisoformat(iso_dt).strftime("%A %I:%M %p")
-
+    readable = _readable_local(iso_utc)
     return (
-        f"✅ Reservation confirmed!\n"
-        f"👤 {data['customer_name']}\n"
-        f"👥 {data['party_size']} people\n"
+        "✅ Reservation confirmed!\n"
+        f"👤 {data.get('customer_name','')}\n"
+        f"👥 {data.get('party_size', 1)} people\n"
         f"🗓 {readable}\n"
         f"🍽 Table: {table}"
     )
@@ -115,58 +187,67 @@ def home():
 
 
 # ---------------------------------------------------------
-# DASHBOARD (fixed timezone crash)
+# DASHBOARD (timezone-correct & crash-proof)
 # ---------------------------------------------------------
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    res = supabase.table("reservations") \
-        .select("*") \
-        .order("datetime", desc=True) \
-        .execute()
-
+    res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
     reservations = res.data or []
 
-    # Fix timezone mismatch issue (Render crash)
-    now = datetime.now(timezone.utc)
-    week_ago = now - timedelta(days=7)
+    # Build a view-model for the template with LOCAL time in the "datetime" field
+    view_rows = []
+    for r in reservations:
+        row = dict(r)
+        local_iso = _utc_iso_to_local_iso(r.get("datetime"))
+        # Fallback if something weird is stored
+        row["datetime"] = local_iso or r.get("datetime") or ""
+        view_rows.append(row)
+
+    # KPI analytics (safe)
+    total = len(view_rows)
+    cancelled = len([r for r in view_rows if (r.get("status") == "cancelled")])
+
+    # compute "this week" using LOCAL time
+    now_local = datetime.now(LOCAL_TZ)
+    week_ago_local = now_local - timedelta(days=7)
+
+    def _local_dt_or_none(r):
+        d = _safe_fromiso(r.get("datetime", ""))
+        # If template datetime is local with offset, great; if not, assume UTC then to local
+        if not d:
+            d = _safe_fromiso(r.get("datetime", "").replace("Z", "+00:00"))
+        if not d:
+            return None
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=LOCAL_TZ)  # assume local if naive
+        return d.astimezone(LOCAL_TZ)
 
     weekly_count = 0
-    for r in reservations:
-        dt = r.get("datetime")
-        if not dt:
-            continue
+    party_vals = []
+    times = []
 
-        try:
-            parsed = datetime.fromisoformat(dt)
-        except:
-            continue
+    for r in view_rows:
+        if r.get("party_size"):
+            try:
+                party_vals.append(int(r["party_size"]))
+            except:
+                pass
 
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
+        ldt = _local_dt_or_none(r)
+        if ldt:
+            if ldt > week_ago_local:
+                weekly_count += 1
+            times.append(ldt.strftime("%H:%M"))
 
-        if parsed > week_ago:
-            weekly_count += 1
-
-    party_sizes = [int(r["party_size"]) for r in reservations if r.get("party_size")]
-    avg_party_size = round(sum(party_sizes) / len(party_sizes), 1) if party_sizes else 0
-
-    cancelled = len([r for r in reservations if r.get("status") == "cancelled"])
-    cancel_rate = round((cancelled / len(reservations)) * 100, 1) if reservations else 0
-
-    peak_time = "—"
-    if reservations:
-        hours = [
-            datetime.fromisoformat(r["datetime"]).hour
-            for r in reservations if r.get("datetime")
-        ]
-        if hours:
-            peak_time = f"{max(set(hours), key=hours.count)}:00"
+    avg_party_size = round(sum(party_vals) / len(party_vals), 1) if party_vals else 0
+    peak_time = max(set(times), key=times.count) if times else "N/A"
+    cancel_rate = round((cancelled / total) * 100, 1) if total else 0
 
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
-            "reservations": reservations,
+            "reservations": view_rows,   # IMPORTANT: datetime already in LOCAL time ISO
             "weekly_count": weekly_count,
             "avg_party_size": avg_party_size,
             "peak_time": peak_time,
@@ -176,28 +257,29 @@ async def dashboard(request: Request):
 
 
 # ---------------------------------------------------------
-# WHATSAPP AI WEBHOOK
+# WHATSAPP AI WEBHOOK (time fixed)
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
-
+    print("📩 Incoming:", Body)
     resp = MessagingResponse()
 
-    prompt = """
-Extract reservation details from WhatsApp messages.
-Always reply ONLY with JSON.
+    prompt = f"""
+Extract reservation details and return valid JSON ONLY.
+Convert any natural language date → ISO 8601.
 
-{
+Expected JSON:
+{{
  "customer_name": "",
  "customer_email": "",
  "contact_phone": "",
  "party_size": "",
- "datetime": "",
+ "datetime": "",   // can be natural language; backend normalizes to UTC
  "notes": ""
-}
+}}
 
-If ANY detail is missing, reply ONLY:
-{"ask":"<question>"}
+If ANYTHING is missing → return ONLY:
+{{"ask":"<question>"}}
 """
 
     try:
@@ -211,18 +293,21 @@ If ANY detail is missing, reply ONLY:
         )
 
         output = result.choices[0].message.content.strip()
-        output = output.replace("```json", "").replace("```", "").strip()
+        if output.startswith("```"):
+            output = output.replace("```json", "").replace("```", "").strip()
 
         data = json.loads(output)
 
-    except:
-        resp.message("❌ I didn't get that, try again.")
+    except Exception as e:
+        print("❌ AI/JSON error:", e)
+        resp.message("❌ I couldn’t understand that. Try again.")
         return Response(content=str(resp), media_type="application/xml")
 
     if "ask" in data:
         resp.message(data["ask"])
         return Response(content=str(resp), media_type="application/xml")
 
+    # Save (this normalizes time to UTC and replies in LOCAL time)
     confirmation_msg = save_reservation(data)
     resp.message(confirmation_msg)
 
@@ -231,21 +316,24 @@ If ANY detail is missing, reply ONLY:
 
 
 # ---------------------------------------------------------
-# DASHBOARD API (edit / create / cancel)
+# DASHBOARD API (Edit, create, cancel) — unchanged behavior
 # ---------------------------------------------------------
 @app.post("/createReservation")
 async def create_reservation(payload: dict):
-    msg = save_reservation(payload)
+    msg = save_reservation(payload)  # normalizes time to UTC, returns readable LOCAL msg
     asyncio.create_task(notify_refresh())
     return {"success": True, "message": msg}
 
 
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
+    # If frontend passes ISO (usually UTC 'Z'), keep it; if local text, normalize to UTC.
+    new_dt = update.get("datetime")
+    normalized = _to_utc_iso(new_dt) if new_dt else None
 
     supabase.table("reservations") \
         .update({
-            "datetime": update.get("datetime"),
+            "datetime": normalized if normalized else new_dt,
             "party_size": update.get("party_size"),
             "table_number": update.get("table_number"),
             "notes": update.get("notes"),
@@ -270,7 +358,7 @@ async def cancel(update: dict):
 
 
 # ---------------------------------------------------------
-# WEBSOCKET AUTO REFRESH
+# WEBSOCKET LIVE REFRESH
 # ---------------------------------------------------------
 clients = []
 
