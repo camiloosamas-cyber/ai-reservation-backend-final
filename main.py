@@ -3,10 +3,9 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
-import json, os, asyncio, time
-import dateparser  # natural language datetime parser
+from datetime import datetime, timedelta
+import json, os, asyncio
+import dateparser
 
 # ✅ Supabase
 from supabase import create_client, Client
@@ -35,65 +34,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------
-# TIMEZONE SETTINGS
-# ---------------------------------------------------------
-LOCAL_TZ_NAME = os.getenv("LOCAL_TZ", "America/Bogota")
-LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
-
-def _safe_fromiso(s: str) -> datetime | None:
-    try:
-        if not s:
-            return None
-        if s.endswith("Z"):
-            s = s.replace("Z", "+00:00")
-        return datetime.fromisoformat(s)
-    except:
-        return None
-
-def _to_utc_iso(dt_str: str | None) -> str | None:
-    if not dt_str:
-        return None
-    dti = _safe_fromiso(dt_str)
-    if dti:
-        if dti.tzinfo is None:
-            dti = dti.replace(tzinfo=LOCAL_TZ)
-        dtu = dti.astimezone(timezone.utc)
-        return dtu.isoformat().replace("+00:00", "Z")
-    try:
-        parsed = dateparser.parse(
-            dt_str,
-            settings={
-                "RETURN_AS_TIMEZONE_AWARE": True,
-                "TIMEZONE": LOCAL_TZ_NAME,
-                "TO_TIMEZONE": "UTC",
-            },
-        )
-        if not parsed:
-            return None
-        return parsed.isoformat().replace("+00:00", "Z")
-    except:
-        return None
-
-def _utc_iso_to_local_iso(iso_utc: str | None) -> str | None:
-    dtu = _safe_fromiso(iso_utc or "")
-    if not dtu:
-        return None
-    if dtu.tzinfo is None:
-        dtu = dtu.replace(tzinfo=timezone.utc)
-    return dtu.astimezone(LOCAL_TZ).isoformat()
-
-def _readable_local(iso_utc: str | None) -> str:
-    dtu = _safe_fromiso(iso_utc or "")
-    if not dtu:
-        return "Invalid time"
-    if dtu.tzinfo is None:
-        dtu = dtu.replace(tzinfo=timezone.utc)
-    return dtu.astimezone(LOCAL_TZ).strftime("%A %I:%M %p")
-
-def _norm_name(name: str | None) -> str:
-    return (name or "").strip().casefold()
-
 
 # ---------------------------------------------------------
 # SUPABASE INIT
@@ -106,185 +46,112 @@ supabase: Client = create_client(
 TABLE_LIMIT = 10
 
 
-# ---------------------------------------------------------
-# DEDUPE: in-memory idempotency cache for 60s
-# ---------------------------------------------------------
-# key: f"{norm_name}|{utc_iso}" -> expires_at (epoch seconds)
-_recent_keys: dict[str, float] = {}
-IDEMPOTENCY_TTL = 60  # seconds
-
-def _cache_prune_now():
-    now = time.time()
-    to_del = [k for k, exp in _recent_keys.items() if exp <= now]
-    for k in to_del:
-        _recent_keys.pop(k, None)
-
-def _cache_check_and_add(key: str) -> bool:
-    """Return True if key already seen (dup), else add and return False."""
-    _cache_prune_now()
-    now = time.time()
-    exp = now + IDEMPOTENCY_TTL
-    if key in _recent_keys and _recent_keys[key] > now:
-        return True
-    _recent_keys[key] = exp
-    return False
+def to_iso(dt_str: str):
+    """ Converts natural language datetime ('tomorrow at 8pm') → ISO 8601 """
+    try:
+        parsed = dateparser.parse(dt_str)
+        return parsed.isoformat()
+    except:
+        return None
 
 
-# ---------------------------------------------------------
-# TABLE ASSIGN + SAVE
-# ---------------------------------------------------------
-def assign_table(iso_utc: str):
+def assign_table(date_str: str):
+    """ Returns first free table at that datetime """
     booked = supabase.table("reservations") \
         .select("table_number") \
-        .eq("datetime", iso_utc).execute()
-    taken = {row["table_number"] for row in (booked.data or [])}
+        .eq("datetime", date_str).execute()
+
+    taken = {row["table_number"] for row in booked.data}
+
     for i in range(1, TABLE_LIMIT + 1):
         t = f"T{i}"
         if t not in taken:
             return t
     return None
 
-def _find_existing(utc_iso: str, name: str):
-    """
-    Look for an active reservation with the same datetime and same name.
-    (status not in cancelled/archived)
-    """
-    # Pull a small set around that datetime to filter by name locally
-    result = supabase.table("reservations") \
-        .select("*") \
-        .eq("datetime", utc_iso) \
+
+def save_reservation(data):
+    """ Save reservation to DB with auto table selecting """
+
+    iso_dt = data.get("datetime")
+
+    if not iso_dt or "T" not in iso_dt:
+        iso_dt = to_iso(iso_dt)
+
+    if not iso_dt:
+        return "❌ Invalid date/time. Please specify a date AND time."
+
+    # ✅ prevent double insert (only insert if NOT exists)
+    existing = supabase.table("reservations") \
+        .select("reservation_id") \
+        .eq("customer_name", data["customer_name"]) \
+        .eq("datetime", iso_dt) \
+        .eq("party_size", data["party_size"]) \
         .execute()
-    rows = result.data or []
-    n = _norm_name(name)
-    for r in rows:
-        if _norm_name(r.get("customer_name")) == n and r.get("status") not in ("cancelled", "archived"):
-            return r
-    return None
 
-def save_reservation(data: dict) -> str:
-    """
-    Save to DB with:
-      - UTC normalization
-      - de-duplication (DB lookup + 60s idempotency cache)
-      - auto table assignment
-      - readable LOCAL confirmation
-    """
-    # Normalize to UTC
-    iso_utc = _to_utc_iso(data.get("datetime"))
-    if not iso_utc:
-        return "❌ Invalid date/time. Please specify date AND time."
+    if existing.data:
+        return "✅ Reservation already exists."
 
-    name = data.get("customer_name", "")
-    key = f"{_norm_name(name)}|{iso_utc}"
-
-    # Quick in-process dedupe (prevents double-click/webhook storms)
-    if _cache_check_and_add(key):
-        existing = _find_existing(iso_utc, name)
-        if existing:
-            readable = _readable_local(existing.get("datetime"))
-            table = existing.get("table_number") or "-"
-            return (
-                "ℹ️ Already booked (dedup).\n"
-                f"👤 {existing.get('customer_name','')}\n"
-                f"👥 {existing.get('party_size','') } people\n"
-                f"🗓 {readable}\n"
-                f"🍽 Table: {table}"
-            )
-
-    # DB-level dedupe (safe across processes)
-    existing = _find_existing(iso_utc, name)
-    if existing:
-        readable = _readable_local(existing.get("datetime"))
-        table = existing.get("table_number") or "-"
-        return (
-            "ℹ️ Already booked.\n"
-            f"👤 {existing.get('customer_name','')}\n"
-            f"👥 {existing.get('party_size','') } people\n"
-            f"🗓 {readable}\n"
-            f"🍽 Table: {table}"
-        )
-
-    # Assign table + insert
-    table = assign_table(iso_utc)
+    table = assign_table(iso_dt)
     if not table:
         return "❌ No tables available at that time."
 
     supabase.table("reservations").insert({
-        "customer_name": name,
-        "customer_email": data.get("customer_email", "") or "",
-        "contact_phone": data.get("contact_phone", "") or "",
-        "datetime": iso_utc,  # stored in UTC
-        "party_size": int(data.get("party_size", 1)),
+        "customer_name": data["customer_name"],
+        "customer_email": data.get("customer_email", ""),
+        "contact_phone": data.get("contact_phone", ""),
+        "datetime": iso_dt,
+        "party_size": int(data["party_size"]),
         "table_number": table,
-        "notes": data.get("notes", "") or "",
+        "notes": data.get("notes", ""),
         "status": "confirmed"
     }).execute()
 
-    readable = _readable_local(iso_utc)
+    readable = datetime.fromisoformat(iso_dt).strftime("%A %I:%M %p")
+
     return (
-        "✅ Reservation confirmed!\n"
-        f"👤 {name}\n"
-        f"👥 {data.get('party_size', 1)} people\n"
+        f"✅ Reservation confirmed!\n"
+        f"👤 {data['customer_name']}\n"
+        f"👥 {data['party_size']} people\n"
         f"🗓 {readable}\n"
         f"🍽 Table: {table}"
     )
 
 
 # ---------------------------------------------------------
-# HOMEPAGE
+# ROUTES
 # ---------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home():
     return "<h3>✅ Backend running</h3><p>Go to /dashboard</p>"
 
 
-# ---------------------------------------------------------
-# DASHBOARD (timezone-correct & crash-proof)
-# ---------------------------------------------------------
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
     reservations = res.data or []
 
-    view_rows = []
-    for r in reservations:
-        row = dict(r)
-        local_iso = _utc_iso_to_local_iso(r.get("datetime"))
-        row["datetime"] = local_iso or r.get("datetime") or ""
-        view_rows.append(row)
+    total = len(reservations)
+    cancelled = len([r for r in reservations if r.get("status") == "cancelled"])
+    week_ago = datetime.now() - timedelta(days=7)
 
-    total = len(view_rows)
-    cancelled = len([r for r in view_rows if (r.get("status") == "cancelled")])
-
-    now_local = datetime.now(LOCAL_TZ)
-    week_ago_local = now_local - timedelta(days=7)
-
-    def _local_dt_or_none(r):
-        d = _safe_fromiso(r.get("datetime", ""))
-        if not d:
-            d = _safe_fromiso(r.get("datetime", "").replace("Z", "+00:00"))
-        if not d:
+    def valid_dt(r):
+        try:
+            return datetime.fromisoformat(r["datetime"])
+        except:
             return None
-        if d.tzinfo is None:
-            d = d.replace(tzinfo=LOCAL_TZ)
-        return d.astimezone(LOCAL_TZ)
 
-    weekly_count = 0
-    party_vals, times = [], []
+    weekly_count = len([r for r in reservations if valid_dt(r) and valid_dt(r) > week_ago])
 
-    for r in view_rows:
-        if r.get("party_size"):
-            try:
-                party_vals.append(int(r["party_size"]))
-            except:
-                pass
-        ldt = _local_dt_or_none(r)
-        if ldt:
-            if ldt > week_ago_local:
-                weekly_count += 1
-            times.append(ldt.strftime("%H:%M"))
+    party_sizes = [int(r["party_size"]) for r in reservations if r.get("party_size")]
+    avg_party_size = round(sum(party_sizes) / len(party_sizes), 1) if party_sizes else 0
 
-    avg_party_size = round(sum(party_vals) / len(party_vals), 1) if party_vals else 0
+    times = []
+    for r in reservations:
+        dt = valid_dt(r)
+        if dt:
+            times.append(dt.strftime("%H:%M"))
+
     peak_time = max(set(times), key=times.count) if times else "N/A"
     cancel_rate = round((cancelled / total) * 100, 1) if total else 0
 
@@ -292,7 +159,7 @@ async def dashboard(request: Request):
         "dashboard.html",
         {
             "request": request,
-            "reservations": view_rows,   # datetime already LOCAL ISO
+            "reservations": reservations,
             "weekly_count": weekly_count,
             "avg_party_size": avg_party_size,
             "peak_time": peak_time,
@@ -302,28 +169,38 @@ async def dashboard(request: Request):
 
 
 # ---------------------------------------------------------
-# WHATSAPP AI WEBHOOK
+# WHATSAPP AI RESERVATION WEBHOOK  ✅ FIXED PROMPT
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
     print("📩 Incoming:", Body)
+
     resp = MessagingResponse()
 
     prompt = """
-Extract reservation details and return valid JSON ONLY.
-Convert any natural language date → ISO 8601.
+You are an information extractor. DO NOT be conversational.
 
+Your ONLY task:
+✅ Read user's message
+✅ Extract reservation info
+✅ Return ONE JSON object only
+
+FORMAT (ALWAYS):
 {
  "customer_name": "",
  "customer_email": "",
  "contact_phone": "",
  "party_size": "",
- "datetime": "",   // can be natural language; backend normalizes to UTC
+ "datetime": "",
  "notes": ""
 }
 
-If ANYTHING is missing → return ONLY:
-{"ask":"<question>"}
+Rules:
+- Convert natural language date/time → ISO 8601 ("2025-01-24T20:00:00")
+- If something is missing return ONLY:
+  {"ask":"What is your <missing field>?"}
+- NEVER ask for data that already exists
+- NEVER send anything other than JSON
 """
 
     try:
@@ -337,44 +214,44 @@ If ANYTHING is missing → return ONLY:
         )
 
         output = result.choices[0].message.content.strip()
+
         if output.startswith("```"):
             output = output.replace("```json", "").replace("```", "").strip()
 
         data = json.loads(output)
 
     except Exception as e:
-        print("❌ AI/JSON error:", e)
-        resp.message("❌ I couldn’t understand that. Try again.")
+        print("❌ JSON Parse Error:", e)
+        resp.message("❌ Try again, I couldn't understand.")
         return Response(content=str(resp), media_type="application/xml")
 
     if "ask" in data:
         resp.message(data["ask"])
         return Response(content=str(resp), media_type="application/xml")
 
-    msg = save_reservation(data)  # includes dedupe
-    resp.message(msg)
+    confirmation_msg = save_reservation(data)
+    resp.message(confirmation_msg)
 
     asyncio.create_task(notify_refresh())
     return Response(content=str(resp), media_type="application/xml")
 
 
 # ---------------------------------------------------------
-# DASHBOARD API (Create / Update / Cancel)
+# DASHBOARD API
 # ---------------------------------------------------------
 @app.post("/createReservation")
 async def create_reservation(payload: dict):
-    msg = save_reservation(payload)   # dedupe + time normalization
+    msg = save_reservation(payload)
     asyncio.create_task(notify_refresh())
     return {"success": True, "message": msg}
 
+
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
-    new_dt = update.get("datetime")
-    normalized = _to_utc_iso(new_dt) if new_dt else None
 
     supabase.table("reservations") \
         .update({
-            "datetime": normalized if normalized else new_dt,
+            "datetime": update.get("datetime"),
             "party_size": update.get("party_size"),
             "table_number": update.get("table_number"),
             "notes": update.get("notes"),
@@ -385,6 +262,7 @@ async def update_reservation(update: dict):
 
     asyncio.create_task(notify_refresh())
     return {"success": True}
+
 
 @app.post("/cancelReservation")
 async def cancel(update: dict):
@@ -398,9 +276,10 @@ async def cancel(update: dict):
 
 
 # ---------------------------------------------------------
-# WEBSOCKET LIVE REFRESH
+# WEBSOCKETS: LIVE AUTO REFRESH
 # ---------------------------------------------------------
 clients = []
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -411,6 +290,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except:
         clients.remove(websocket)
+
 
 async def notify_refresh():
     for ws in clients:
