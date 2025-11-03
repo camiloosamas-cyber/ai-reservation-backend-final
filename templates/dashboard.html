@@ -401,7 +401,7 @@ document.getElementById("createBtn").onclick = async () => {
     notes: document.getElementById("new_notes").value.trim() || null
   };
 
-  await fetch("https://ai-reservation-backend-final.onrender.com/whatsapp", {
+  await fetch("https://ai-reservation-backend-final.onrender.com/createReservation", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
@@ -444,5 +444,6 @@ buildTableGrid();
 
 </body>
 </html>
+
 
 
