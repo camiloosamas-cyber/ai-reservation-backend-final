@@ -5,8 +5,8 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-import json, os, asyncio, time, re
-import dateparser  # natural language datetime parser
+import json, os, asyncio, time
+import dateparser
 
 # ✅ Supabase
 from supabase import create_client, Client
@@ -144,11 +144,9 @@ def save_reservation(data: dict):
     if not iso_utc:
         return "❌ Invalid date/time. Please specify date AND time."
 
-    name = (data.get("customer_name") or "").strip()
-    if not name:
-        return "❌ Missing name."
-
+    name = data.get("customer_name", "").strip()
     dedupe_key = f"{name.lower()}|{iso_utc}"
+
     if dedupe(dedupe_key):
         return f"ℹ️ Already confirmed.\n👤 {name}"
 
@@ -177,7 +175,7 @@ def save_reservation(data: dict):
 
 
 # ---------------------------------------------------------
-# DASHBOARD
+# ROUTES
 # ---------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -233,64 +231,48 @@ async def dashboard(request: Request):
 
 
 # ---------------------------------------------------------
-# ✅ CONVERSATION MEMORY
+# ✅ WHATSAPP WITH MEMORY
 # ---------------------------------------------------------
-conversation_memory = {}  # key: sender (WaId or From), value: dict of fields
+sessions = {}  # phone -> partial data store
 
-
-# ---------------------------------------------------------
-# WHATSAPP WEBHOOK
-# ---------------------------------------------------------
 @app.post("/whatsapp")
-async def whatsapp_webhook(
-    Body: str = Form(...),
-    WaId: str = Form(None),
-    From_: str = Form(None, alias="From")  # Twilio sends 'From' (e.g., 'whatsapp:+57...')
-):
+async def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
     resp = MessagingResponse()
 
-    # Identify sender
-    sender = WaId or From_ or "unknown"
+    phone = From
 
-    # Initialize memory
-    if sender not in conversation_memory:
-        conversation_memory[sender] = {
-            "customer_name": None,
-            "party_size": None,
-            "datetime": None,
-            "notes": None,
-            "customer_email": None,
-            "contact_phone": None,
-        }
-    mem = conversation_memory[sender]
+    session = sessions.get(phone, {
+        "customer_name": "",
+        "customer_email": "",
+        "contact_phone": phone,
+        "party_size": "",
+        "datetime": "",
+        "notes": "",
+    })
 
-    # Extraction prompt
     extraction_prompt = f"""
-You are a reservation extractor. Update only the fields the user provides.
-Never delete previously known values.
+You are an AI reservation assistant. Extract structured reservation data.
 
-Known so far:
-- name: {mem['customer_name']}
-- party_size: {mem['party_size']}
-- datetime: {mem['datetime']}
-- notes: {mem['notes']}
+Already known (memory):
+{json.dumps(session)}
 
-Return ONLY raw JSON (no prose, no code fences). Example:
+RETURN ONLY JSON:
 {{
-  "customer_name": "",
-  "party_size": "",
-  "datetime": "",
-  "notes": "",
-  "ready": false
+ "customer_name": "",
+ "customer_email": "",
+ "contact_phone": "",
+ "party_size": "",
+ "datetime": "",
+ "notes": "",
+ "ask": ""
 }}
 
 Rules:
-- If the user states one or more of name / party_size / datetime / notes, put them in those fields.
-- If all of name + party_size + datetime are present (after combining with known values), set "ready": true. Otherwise false.
-- Keep strings simple (no extra commentary).
+- Only fill missing fields.
+- If a field is already known, DO NOT ask again.
+- Required: customer_name, party_size, datetime
 """
 
-    # Call model (stable name)
     try:
         result = client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -298,53 +280,43 @@ Rules:
             messages=[
                 {"role": "system", "content": extraction_prompt},
                 {"role": "user", "content": Body},
-            ],
+            ]
         )
-        raw = result.choices[0].message.content.strip()
-        # Unfence if needed
-        if raw.startswith("```"):
-            raw = raw.strip("`")
-            raw = raw.replace("json\n", "").replace("JSON\n", "")
-        # Fallback: extract first {...} block
-        if not raw.startswith("{"):
-            m = re.search(r"\{.*\}", raw, re.S)
-            raw = m.group(0) if m else "{}"
-        data = json.loads(raw)
+
+        output = result.choices[0].message.content.strip()
+        if output.startswith("```"):
+            output = output.replace("```json", "").replace("```", "").strip()
+
+        new_data = json.loads(output)
+
     except Exception as e:
         print("⚠️ JSON extraction error:", e)
-        resp.message("Sorry, could you repeat that?")
+        resp.message("❌ Sorry, could you repeat that?")
         return Response(content=str(resp), media_type="application/xml")
 
-    # Merge new values into memory (only if present and truthy)
-    for k in ("customer_name", "party_size", "datetime", "notes"):
-        v = data.get(k)
-        if v is not None and v != "":
-            mem[k] = v
+    for key, value in new_data.items():
+        if value not in ["", None]:
+            session[key] = value
 
-    # Decide next step
-    ready = data.get("ready") is True or (
-        bool(mem["customer_name"]) and bool(mem["party_size"]) and bool(mem["datetime"])
-    )
+    sessions[phone] = session
 
-    if ready:
-        # Optional: attach sender phone for storage
-        mem["contact_phone"] = sender.replace("whatsapp:", "") if isinstance(sender, str) else None
-        msg = save_reservation(mem)
-        # Clear memory after saving
-        conversation_memory.pop(sender, None)
-        resp.message(msg)
-        asyncio.create_task(notify_refresh())
-        return Response(content=str(resp), media_type="application/xml")
-
-    # Ask only for the next missing field
-    if not mem["customer_name"]:
+    if not session["customer_name"]:
         resp.message("May I have your name?")
-    elif not mem["party_size"]:
+        return Response(content=str(resp), media_type="application/xml")
+
+    if not session["party_size"]:
         resp.message("For how many people?")
-    elif not mem["datetime"]:
+        return Response(content=str(resp), media_type="application/xml")
+
+    if not session["datetime"]:
         resp.message("What date and time should I book it for?")
-    else:
-        resp.message("Any notes for the reservation?")
+        return Response(content=str(resp), media_type="application/xml")
+
+    msg = save_reservation(session)
+    resp.message(msg)
+
+    sessions.pop(phone, None)
+    asyncio.create_task(notify_refresh())
 
     return Response(content=str(resp), media_type="application/xml")
 
@@ -378,7 +350,7 @@ async def cancel_reservation(update: dict):
 
 
 # ---------------------------------------------------------
-# WEBSOCKET AUTO REFRESH
+# LIVE REFRESH WEBSOCKETS
 # ---------------------------------------------------------
 clients = []
 
