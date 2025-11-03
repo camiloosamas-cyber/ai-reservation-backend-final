@@ -383,4 +383,230 @@ function callCustomer(phone){
 }
 function sendWhatsApp(phone,name,dt){
   if(!phone) return alert("No phone number.");
-  const msg = `Hello ${name},
+  const msg = `Hello ${name}, just confirming your reservation for ${dt}.`;
+  window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
+}
+
+document.getElementById("refreshBtn").onclick=()=>location.reload();
+
+/* Real-time refresh (Render compatible) */
+(function(){
+  try{
+    const ws=new WebSocket(`${location.protocol==="https:"?"wss":"ws"}://${location.host}/ws`);
+    ws.onmessage=()=>location.reload();
+  }catch(e){}
+})();
+
+/* Modals */
+let currentId=null;
+function openEdit(id,dt,ps,table,notes){
+  currentId=id;
+  const dtField=document.getElementById("dt");
+  dtField.value = (dt && dt.includes("T")) ? dt.slice(0,16) : "";
+
+  document.getElementById("ps").value = (typeof ps==="number" && ps>0) ? ps : 1;
+  document.getElementById("table").value = (table && table!=="null") ? table : "";
+  document.getElementById("notes").value = (notes && notes!=="null") ? notes : "";
+
+  document.getElementById("editModal").style.display="flex";
+}
+function closeEdit(){ document.getElementById("editModal").style.display="none"; }
+
+/* Save Edit */
+document.getElementById("saveBtn").onclick=async ()=>{
+  const payload={
+    reservation_id:currentId,
+    datetime: document.getElementById("dt").value ? new Date(document.getElementById("dt").value).toISOString() : undefined,
+    party_size: Number(document.getElementById("ps").value||1),
+    table_number: document.getElementById("table").value || null,
+    notes: document.getElementById("notes").value || null,
+    status: "updated"
+  };
+  try{
+    await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    closeEdit(); location.reload();
+  }catch(e){ showToast('Error saving edit', false); }
+};
+
+/* --- NEW RESERVATION --- */
+const newModal=document.getElementById("newModal");
+const createBtn=document.getElementById("createBtn");
+document.getElementById("newBtn").onclick=()=>{ newModal.style.display="flex"; };
+document.getElementById("closeNewBtn").onclick=()=>{ newModal.style.display="none"; };
+
+function renderChip(status){
+  return `<span class="chip ${status}">${String(status||'confirmed').replace('_',' ')}</span>`;
+}
+
+function appendReservationRow(r){
+  // r: {reservation_id, customer_name, customer_email, contact_phone, datetime, party_size, table_number, notes, status}
+  const tr = document.createElement('tr');
+
+  const hasDT = r.datetime && r.datetime.includes('T');
+  const date = hasDT ? r.datetime.split('T')[0] : '-';
+  const time = hasDT ? r.datetime.split('T')[1].slice(0,5) : '-';
+  const status = r.status || 'confirmed';
+  const tableNumber = r.table_number || '-';
+  const notes = r.notes || '-';
+  const contact = r.customer_email || r.contact_phone || '-';
+  const dataName = `${r.customer_name||''} ${r.customer_email||''}`.toLowerCase();
+  const dataTable = r.table_number || '';
+
+  tr.setAttribute('data-name', dataName);
+  tr.setAttribute('data-date', hasDT ? date : '');
+  tr.setAttribute('data-status', status);
+  tr.setAttribute('data-table', dataTable);
+
+  tr.innerHTML = `
+    <td>${date}</td>
+    <td>${time}</td>
+    <td>${r.customer_name||''}</td>
+    <td>
+      ${contact}
+      <div class="contact-actions">
+        <button class="icon-btn" onclick="callCustomer(\`${r.contact_phone||''}\`)">📞</button>
+        <button class="icon-btn" onclick="sendWhatsApp(\`${r.contact_phone||''}\`, \`${r.customer_name||''}\`, \`${r.datetime||''}\`)">💬</button>
+      </div>
+    </td>
+    <td>${r.party_size||1}</td>
+    <td>${tableNumber}</td>
+    <td>${notes}</td>
+    <td>${renderChip(status)}</td>
+    <td>
+      <div class="menu-wrapper">
+        <button class="menu-btn" onclick="toggleMenu(this)">⋮</button>
+        <div class="dropdown-menu">
+          <button onclick="openEdit(${r.reservation_id||0}, \`${r.datetime||''}\`, ${Number(r.party_size||1)}, \`${r.table_number||''}\`, \`${r.notes||''}\`)">✏️ Edit</button>
+          <button onclick="markStatus(${r.reservation_id||0}, 'arrived')">✅ Arrived</button>
+          <button onclick="markStatus(${r.reservation_id||0}, 'no_show')">⚠️ No-Show</button>
+          <button onclick="doArchive(${r.reservation_id||0})">🗄️ Archive</button>
+          <button onclick="doCancel(${r.reservation_id||0})">❌ Cancel</button>
+        </div>
+      </div>
+    </td>
+  `;
+  tbody.prepend(tr); // show at the top
+  buildTableGrid();
+}
+
+/* Create Reservation (fixed) */
+createBtn.onclick = async ()=>{
+  const name = document.getElementById("new_name").value.trim();
+  const email = document.getElementById("new_email").value.trim();
+  const phone = document.getElementById("new_phone").value.trim();
+  const party = Number(document.getElementById("new_party").value||1);
+  const dtVal = document.getElementById("new_dt").value;
+  const table = document.getElementById("new_table").value.trim();
+  const notes = document.getElementById("new_notes").value.trim();
+
+  if(!name || !dtVal){
+    alert("Name and Date/Time are required.");
+    return;
+  }
+
+  const payload={
+    customer_name: name,
+    customer_email: email || null,
+    contact_phone: phone || null,
+    datetime: new Date(dtVal).toISOString(),
+    party_size: party,
+    table_number: table || null,
+    notes: notes || null,
+    status: "confirmed" // ensure default status
+  };
+
+  createBtn.disabled = true;
+  createBtn.textContent = "Creating...";
+
+  try{
+    const res = await fetch("/createReservation",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    });
+
+    if(!res.ok){
+      showToast("Create failed. Check server logs.", false);
+      createBtn.disabled = false;
+      createBtn.textContent = "Create";
+      return;
+    }
+
+    // Try to parse JSON (optimistic append). If backend doesn't return JSON, reload.
+    let created = null;
+    const ct = res.headers.get('content-type') || '';
+    if(ct.includes('application/json')){
+      try { created = await res.json(); } catch(_) {}
+    }
+
+    // Close modal
+    document.getElementById("newModal").style.display="none";
+
+    if(created && (created.reservation_id || created.id)){
+      // Normalize keys
+      const obj = {
+        reservation_id: created.reservation_id ?? created.id,
+        customer_name: created.customer_name ?? name,
+        customer_email: created.customer_email ?? email || null,
+        contact_phone: created.contact_phone ?? phone || null,
+        datetime: created.datetime ?? payload.datetime,
+        party_size: created.party_size ?? party,
+        table_number: created.table_number ?? (table || null),
+        notes: created.notes ?? (notes || null),
+        status: created.status ?? "confirmed"
+      };
+      appendReservationRow(obj);
+      showToast("Reservation created");
+      // reset fields
+      document.getElementById("new_name").value="";
+      document.getElementById("new_email").value="";
+      document.getElementById("new_phone").value="";
+      document.getElementById("new_party").value="2";
+      document.getElementById("new_dt").value="";
+      document.getElementById("new_table").value="";
+      document.getElementById("new_notes").value="";
+      createBtn.disabled = false;
+      createBtn.textContent = "Create";
+    } else {
+      // Fallback: backend didn’t send the object — reload to fetch latest list
+      location.reload();
+    }
+  }catch(e){
+    showToast("Network error creating reservation", false);
+    createBtn.disabled = false;
+    createBtn.textContent = "Create";
+  }
+};
+
+/* Export CSV */
+document.getElementById("exportBtn").onclick=()=>{
+  const header = ["Date","Time","Customer","Contact","Party","Table","Notes","Status"];
+  const rows = [header];
+
+  [...tbody.rows].forEach(r=>{
+    if(r.style.display==="none") return;
+    const cells = [...r.cells];
+    rows.push([
+      cells[0].innerText.trim(),
+      cells[1].innerText.trim(),
+      cells[2].innerText.trim(),
+      cells[3].innerText.trim(),
+      cells[4].innerText.trim(),
+      cells[5].innerText.trim(),
+      cells[6].innerText.trim(),
+      cells[7].innerText.trim(),
+    ]);
+  });
+
+  const csv = rows.map(r => r.map(v => `"${(v||"").replace(/"/g,'""')}"`).join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href="data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+  a.download="reservations.csv";
+  a.click();
+};
+
+buildTableGrid();
+</script>
+
+</body>
+</html>
