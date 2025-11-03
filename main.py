@@ -5,7 +5,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-import json, os, asyncio, time
+import json, os, asyncio, time, re
 import dateparser  # natural language datetime parser
 
 # ✅ Supabase
@@ -144,9 +144,11 @@ def save_reservation(data: dict):
     if not iso_utc:
         return "❌ Invalid date/time. Please specify date AND time."
 
-    name = data.get("customer_name", "").strip()
-    dedupe_key = f"{name.lower()}|{iso_utc}"
+    name = (data.get("customer_name") or "").strip()
+    if not name:
+        return "❌ Missing name."
 
+    dedupe_key = f"{name.lower()}|{iso_utc}"
     if dedupe(dedupe_key):
         return f"ℹ️ Already confirmed.\n👤 {name}"
 
@@ -175,7 +177,7 @@ def save_reservation(data: dict):
 
 
 # ---------------------------------------------------------
-# DASHBOARD ROUTE
+# DASHBOARD
 # ---------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -231,96 +233,110 @@ async def dashboard(request: Request):
 
 
 # ---------------------------------------------------------
-# ✅ MEMORY FOR CONVERSATION (WHATSAPP FIX)
+# ✅ CONVERSATION MEMORY
 # ---------------------------------------------------------
-conversation_memory = {}  # { phone_number: { fields... } }
+conversation_memory = {}  # key: sender (WaId or From), value: dict of fields
 
 
 # ---------------------------------------------------------
 # WHATSAPP WEBHOOK
 # ---------------------------------------------------------
 @app.post("/whatsapp")
-async def whatsapp_webhook(Body: str = Form(...)):
-    print("📩 Incoming:", Body)
+async def whatsapp_webhook(
+    Body: str = Form(...),
+    WaId: str = Form(None),
+    From_: str = Form(None, alias="From")  # Twilio sends 'From' (e.g., 'whatsapp:+57...')
+):
     resp = MessagingResponse()
 
-    # Extract sender phone (Twilio format)
-    sender = ""
-    try:
-        sender = Body.split("From:")[1].split("\n")[0].strip()
-    except:
-        sender = "unknown"
+    # Identify sender
+    sender = WaId or From_ or "unknown"
 
-    # Init memory for this user
+    # Initialize memory
     if sender not in conversation_memory:
         conversation_memory[sender] = {
             "customer_name": None,
             "party_size": None,
             "datetime": None,
             "notes": None,
+            "customer_email": None,
+            "contact_phone": None,
         }
-
     mem = conversation_memory[sender]
 
+    # Extraction prompt
     extraction_prompt = f"""
-You extract data the user provides about a reservation.
+You are a reservation extractor. Update only the fields the user provides.
+Never delete previously known values.
 
-Current known values:
-name: {mem['customer_name']}
-party_size: {mem['party_size']}
-datetime: {mem['datetime']}
-notes: {mem['notes']}
+Known so far:
+- name: {mem['customer_name']}
+- party_size: {mem['party_size']}
+- datetime: {mem['datetime']}
+- notes: {mem['notes']}
 
-Return ONLY JSON, no explanation.
-
-If user provides new data, fill it in.
-Do NOT erase previous values.
-
-Format:
+Return ONLY raw JSON (no prose, no code fences). Example:
 {{
- "customer_name": "",
- "party_size": "",
- "datetime": "",
- "notes": "",
- "ready": false
+  "customer_name": "",
+  "party_size": "",
+  "datetime": "",
+  "notes": "",
+  "ready": false
 }}
 
-If all 3 are filled (name, party_size, datetime),
-return:
-{{ "ready": true }}
+Rules:
+- If the user states one or more of name / party_size / datetime / notes, put them in those fields.
+- If all of name + party_size + datetime are present (after combining with known values), set "ready": true. Otherwise false.
+- Keep strings simple (no extra commentary).
 """
 
+    # Call model (stable name)
     try:
         result = client.chat.completions.create(
-            model="gpt-5",
+            model="gpt-4.1-mini",
             temperature=0,
             messages=[
                 {"role": "system", "content": extraction_prompt},
                 {"role": "user", "content": Body},
-            ]
+            ],
         )
-
-        data = json.loads(result.choices[0].message.content)
-
+        raw = result.choices[0].message.content.strip()
+        # Unfence if needed
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            raw = raw.replace("json\n", "").replace("JSON\n", "")
+        # Fallback: extract first {...} block
+        if not raw.startswith("{"):
+            m = re.search(r"\{.*\}", raw, re.S)
+            raw = m.group(0) if m else "{}"
+        data = json.loads(raw)
     except Exception as e:
-        print("❌ JSON ERROR:", e)
+        print("⚠️ JSON extraction error:", e)
         resp.message("Sorry, could you repeat that?")
         return Response(content=str(resp), media_type="application/xml")
 
-    # ✅ update memory only with values provided
-    for key in mem:
-        if key in data and data[key]:
-            mem[key] = data[key]
+    # Merge new values into memory (only if present and truthy)
+    for k in ("customer_name", "party_size", "datetime", "notes"):
+        v = data.get(k)
+        if v is not None and v != "":
+            mem[k] = v
 
-    # ✅ if ready → save reservation
-    if "ready" in data:
+    # Decide next step
+    ready = data.get("ready") is True or (
+        bool(mem["customer_name"]) and bool(mem["party_size"]) and bool(mem["datetime"])
+    )
+
+    if ready:
+        # Optional: attach sender phone for storage
+        mem["contact_phone"] = sender.replace("whatsapp:", "") if isinstance(sender, str) else None
         msg = save_reservation(mem)
-        del conversation_memory[sender]  # clear memory
+        # Clear memory after saving
+        conversation_memory.pop(sender, None)
         resp.message(msg)
         asyncio.create_task(notify_refresh())
         return Response(content=str(resp), media_type="application/xml")
 
-    # Otherwise → ask what's missing
+    # Ask only for the next missing field
     if not mem["customer_name"]:
         resp.message("May I have your name?")
     elif not mem["party_size"]:
@@ -328,7 +344,7 @@ return:
     elif not mem["datetime"]:
         resp.message("What date and time should I book it for?")
     else:
-        resp.message("Got it. Any notes for the reservation?")
+        resp.message("Any notes for the reservation?")
 
     return Response(content=str(resp), media_type="application/xml")
 
