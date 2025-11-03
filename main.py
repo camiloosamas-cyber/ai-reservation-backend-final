@@ -1,22 +1,23 @@
-from fastapi import FastAPI, Request, WebSocket, Form
-from fastapi.responses import HTMLResponse, Response
+from fastapi import FastAPI, Request, WebSocket, Form, Query
+from fastapi.responses import HTMLResponse, Response, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import json, os, asyncio, time
-import dateparser
+import dateparser  # natural language datetime parser
 
 # ✅ Supabase
 from supabase import create_client, Client
 
-# ✅ OpenAI
+# ✅ OpenAI (used for WhatsApp JSON extraction)
 from openai import OpenAI
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ✅ Twilio
+# ✅ Twilio (WhatsApp + Voice)
 from twilio.twiml.messaging_response import MessagingResponse
+from twilio.twiml.voice_response import VoiceResponse, Gather
 
 
 # ---------------------------------------------------------
@@ -126,7 +127,7 @@ def dedupe(key: str):
 
 
 # ---------------------------------------------------------
-# SAVE RESERVATION
+# SAVE RESERVATION (shared by WhatsApp + Voice)
 # ---------------------------------------------------------
 def assign_table(iso_utc: str) -> str | None:
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
@@ -144,7 +145,7 @@ def save_reservation(data: dict):
     if not iso_utc:
         return "❌ Invalid date/time. Please specify date AND time."
 
-    name = data.get("customer_name", "").strip()
+    name = data.get("customer_name", "").strip() or "Guest"
     dedupe_key = f"{name.lower()}|{iso_utc}"
 
     if dedupe(dedupe_key):
@@ -175,7 +176,7 @@ def save_reservation(data: dict):
 
 
 # ---------------------------------------------------------
-# ROUTES
+# ROUTES: HOME + DASHBOARD
 # ---------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -214,7 +215,14 @@ async def dashboard(request: Request):
             time_list.append(dt.strftime("%H:%M"))
 
     avg_party_size = round(sum(party_list) / len(party_list), 1) if party_list else 0
-    peak_time = max(set(time_list), key=time_list.count) if time_list else "N/A"
+    if time_list:
+        # find peak time by frequency
+        counts = {}
+        for t in time_list:
+            counts[t] = counts.get(t, 0) + 1
+        peak_time = max(counts, key=counts.get)
+    else:
+        peak_time = "N/A"
     cancel_rate = round((cancelled / total) * 100, 1) if total else 0
 
     return templates.TemplateResponse(
@@ -231,33 +239,18 @@ async def dashboard(request: Request):
 
 
 # ---------------------------------------------------------
-# ✅ WHATSAPP WITH MEMORY
+# WHATSAPP WEBHOOK (already working)
 # ---------------------------------------------------------
-sessions = {}  # phone -> partial data store
-
 @app.post("/whatsapp")
-async def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
+async def whatsapp_webhook(Body: str = Form(...)):
     resp = MessagingResponse()
 
-    phone = From
-
-    session = sessions.get(phone, {
-        "customer_name": "",
-        "customer_email": "",
-        "contact_phone": phone,
-        "party_size": "",
-        "datetime": "",
-        "notes": "",
-    })
-
-    extraction_prompt = f"""
+    extraction_prompt = """
 You are an AI reservation assistant. Extract structured reservation data.
 
-Already known (memory):
-{json.dumps(session)}
+⬇️ RETURN ONLY JSON (no text around it)
 
-RETURN ONLY JSON:
-{{
+{
  "customer_name": "",
  "customer_email": "",
  "contact_phone": "",
@@ -265,12 +258,17 @@ RETURN ONLY JSON:
  "datetime": "",
  "notes": "",
  "ask": ""
-}}
+}
 
 Rules:
-- Only fill missing fields.
-- If a field is already known, DO NOT ask again.
-- Required: customer_name, party_size, datetime
+1. Fill fields ONLY with what user said.
+2. Missing data stays "".
+3. Required fields: customer_name, party_size, datetime.
+4. If missing ANY required field, put ONE question into "ask".
+   - Missing name → "May I have your name?"
+   - Missing party_size → "For how many people?"
+   - Missing datetime → "What date and time should I book it for?"
+5. If all required fields exist, "ask" must be "".
 """
 
     try:
@@ -287,42 +285,174 @@ Rules:
         if output.startswith("```"):
             output = output.replace("```json", "").replace("```", "").strip()
 
-        new_data = json.loads(output)
+        data = json.loads(output)
 
     except Exception as e:
         print("⚠️ JSON extraction error:", e)
-        resp.message("❌ Sorry, could you repeat that?")
+        resp.message("❌ Sorry, I couldn't understand that. Try again.")
         return Response(content=str(resp), media_type="application/xml")
 
-    for key, value in new_data.items():
-        if value not in ["", None]:
-            session[key] = value
-
-    sessions[phone] = session
-
-    if not session["customer_name"]:
-        resp.message("May I have your name?")
+    if data.get("ask"):
+        resp.message(data["ask"])
         return Response(content=str(resp), media_type="application/xml")
 
-    if not session["party_size"]:
-        resp.message("For how many people?")
-        return Response(content=str(resp), media_type="application/xml")
-
-    if not session["datetime"]:
-        resp.message("What date and time should I book it for?")
-        return Response(content=str(resp), media_type="application/xml")
-
-    msg = save_reservation(session)
+    msg = save_reservation(data)
     resp.message(msg)
 
-    sessions.pop(phone, None)
     asyncio.create_task(notify_refresh())
-
     return Response(content=str(resp), media_type="application/xml")
 
 
 # ---------------------------------------------------------
-# UPDATE / CANCEL
+# VOICE CALL BOOKING (NEW)
+# ---------------------------------------------------------
+def _say_and_gather(step: str, prompt: str, carry: dict, timeout_sec: int = 6) -> str:
+    """
+    Returns TwiML that asks a question and gathers speech.
+    We carry previously collected fields as <Gather> action query params.
+    """
+    vr = VoiceResponse()
+    with vr.gather(
+        input="speech",
+        action=f"/voice/collect?step={step}"
+              f"&name={carry.get('name','')}"
+              f"&party={carry.get('party','')}"
+              f"&dt={carry.get('dt','')}"
+              f"&notes={carry.get('notes','')}",
+        method="POST",
+        timeout=timeout_sec
+    ) as g:
+        g.say(prompt, voice="alice", language="en-US")
+    # If no speech, repeat prompt
+    vr.redirect(f"/voice/retry?step={step}"
+                f"&name={carry.get('name','')}"
+                f"&party={carry.get('party','')}"
+                f"&dt={carry.get('dt','')}"
+                f"&notes={carry.get('notes','')}")
+    return str(vr)
+
+
+@app.post("/voice", response_class=PlainTextResponse)
+async def voice_welcome():
+    """
+    Twilio Voice webhook (Voice URL).
+    Starts the flow by asking for the customer's name.
+    """
+    carry = {"name": "", "party": "", "dt": "", "notes": ""}
+    twiml = _say_and_gather(
+        step="name",
+        prompt="Hi! I can book your table. What is your name?",
+        carry=carry
+    )
+    return Response(content=twiml, media_type="application/xml")
+
+
+@app.post("/voice/retry", response_class=PlainTextResponse)
+async def voice_retry(request: Request,
+                      step: str = Query("name"),
+                      name: str = Query(""),
+                      party: str = Query(""),
+                      dt: str = Query(""),
+                      notes: str = Query("")):
+    """
+    Fallback if Twilio didn't capture speech in time.
+    """
+    carry = {"name": name, "party": party, "dt": dt, "notes": notes}
+    prompts = {
+        "name": "Sorry, I didn't get that. What's your name?",
+        "party": "Sorry, how many people is the reservation for?",
+        "datetime": "Sorry, what date and time should I book it for?",
+        "notes": "Any notes or preferences? You can say none."
+    }
+    twiml = _say_and_gather(step=step, prompt=prompts.get(step, "Please repeat."), carry=carry)
+    return Response(content=twiml, media_type="application/xml")
+
+
+@app.post("/voice/collect", response_class=PlainTextResponse)
+async def voice_collect(
+    request: Request,
+    step: str = Query("name"),
+    name: str = Query(""),
+    party: str = Query(""),
+    dt: str = Query(""),
+    notes: str = Query("")
+):
+    """
+    Handles each step, reads SpeechResult, advances flow, and finally saves.
+    """
+    form = await request.form()
+    speech = (form.get("SpeechResult") or "").strip()
+    carry = {"name": name, "party": party, "dt": dt, "notes": notes}
+
+    # STEP LOGIC
+    if step == "name":
+        if not speech:
+            twiml = _say_and_gather("name", "Sorry, I missed that. What's your name?", carry)
+            return Response(content=twiml, media_type="application/xml")
+        carry["name"] = speech
+        twiml = _say_and_gather("party", f"Nice to meet you {carry['name']}. For how many people?", carry)
+        return Response(content=twiml, media_type="application/xml")
+
+    elif step == "party":
+        # Try to parse an integer from speech
+        parsed_party = None
+        for token in speech.replace("-", " ").split():
+            if token.isdigit():
+                parsed_party = int(token)
+                break
+        if parsed_party is None:
+            twiml = _say_and_gather("party", "Got it. Please say a number, like 2 or 4.", carry)
+            return Response(content=twiml, media_type="application/xml")
+        carry["party"] = str(max(1, parsed_party))
+        twiml = _say_and_gather("datetime",
+                                "Great. What date and time should I book? For example, Friday at 7 PM.",
+                                carry, timeout_sec=8)
+        return Response(content=twiml, media_type="application/xml")
+
+    elif step == "datetime":
+        # Validate with normalize_to_utc
+        if not speech or not normalize_to_utc(speech):
+            twiml = _say_and_gather("datetime",
+                                    "I didn't catch the date and time. Try something like, "
+                                    "Saturday, November 15th at 8 PM.",
+                                    carry, timeout_sec=8)
+            return Response(content=twiml, media_type="application/xml")
+        carry["dt"] = speech
+        twiml = _say_and_gather("notes",
+                                "Any notes or preferences? You can say none.",
+                                carry)
+        return Response(content=twiml, media_type="application/xml")
+
+    elif step == "notes":
+        carry["notes"] = "none" if (not speech or speech.lower() in ["no", "none", "nope"]) else speech
+
+        # Build payload and save
+        payload = {
+            "customer_name": carry["name"],
+            "customer_email": "",
+            "contact_phone": "",   # Twilio caller ID can be added if needed from request.form
+            "party_size": carry["party"],
+            "datetime": carry["dt"],
+            "notes": carry["notes"]
+        }
+        msg = save_reservation(payload)
+
+        vr = VoiceResponse()
+        vr.say(msg.replace("\n", ". "), voice="alice", language="en-US")
+        vr.say("Thank you! Goodbye.", voice="alice", language="en-US")
+        vr.hangup()
+
+        asyncio.create_task(notify_refresh())
+        return Response(content=str(vr), media_type="application/xml")
+
+    # Unknown step fallback
+    vr = VoiceResponse()
+    vr.redirect("/voice")
+    return Response(content=str(vr), media_type="application/xml")
+
+
+# ---------------------------------------------------------
+# UPDATE / CANCEL (Dashboard actions)
 # ---------------------------------------------------------
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
@@ -350,7 +480,7 @@ async def cancel_reservation(update: dict):
 
 
 # ---------------------------------------------------------
-# LIVE REFRESH WEBSOCKETS
+# WEBSOCKET AUTO REFRESH
 # ---------------------------------------------------------
 clients = []
 
@@ -363,12 +493,16 @@ async def ws(websocket: WebSocket):
         while True:
             await websocket.receive_text()
     except:
-        clients.remove(websocket)
+        if websocket in clients:
+            clients.remove(websocket)
 
 
 async def notify_refresh():
-    for ws in clients:
+    for ws in list(clients):
         try:
             await ws.send_text("refresh")
         except:
-            pass
+            try:
+                clients.remove(ws)
+            except:
+                pass
