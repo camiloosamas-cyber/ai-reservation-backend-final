@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import json, os, asyncio, time
-import dateparser
+import dateparser  # natural language datetime parser
 
 # ✅ Supabase
 from supabase import create_client, Client
@@ -17,7 +17,6 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ✅ Twilio
 from twilio.twiml.messaging_response import MessagingResponse
-
 
 
 # ---------------------------------------------------------
@@ -38,10 +37,11 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------
-# TIMEZONE SETTINGS
+# TIMEZONE
 # ---------------------------------------------------------
 LOCAL_TZ_NAME = os.getenv("LOCAL_TZ", "America/Bogota")
 LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
+
 
 def safe_fromiso(val: str):
     try:
@@ -52,6 +52,7 @@ def safe_fromiso(val: str):
         return datetime.fromisoformat(val)
     except:
         return None
+
 
 def normalize_to_utc(dt_str: str | None) -> str | None:
     if not dt_str:
@@ -93,9 +94,8 @@ def readable_local(iso_utc: str | None) -> str:
     return dtu.astimezone(LOCAL_TZ).strftime("%A %I:%M %p")
 
 
-
 # ---------------------------------------------------------
-# SUPABASE INIT
+# SUPABASE
 # ---------------------------------------------------------
 supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
@@ -105,12 +105,12 @@ supabase: Client = create_client(
 TABLE_LIMIT = 10
 
 
-
 # ---------------------------------------------------------
 # DEDUPE CACHE
 # ---------------------------------------------------------
 recent_keys = {}
 TTL = 60  # seconds
+
 
 def dedupe(key: str):
     now = time.time()
@@ -125,9 +125,8 @@ def dedupe(key: str):
     return False
 
 
-
 # ---------------------------------------------------------
-# SAVE RESERVATION (WHATSAPP)
+# SAVE RESERVATION
 # ---------------------------------------------------------
 def assign_table(iso_utc: str) -> str | None:
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
@@ -143,7 +142,7 @@ def assign_table(iso_utc: str) -> str | None:
 def save_reservation(data: dict):
     iso_utc = normalize_to_utc(data.get("datetime"))
     if not iso_utc:
-        return "❌ Invalid date/time. Please specify the date AND time."
+        return "❌ Invalid date/time. Please specify date AND time."
 
     name = data.get("customer_name", "").strip()
     dedupe_key = f"{name.lower()}|{iso_utc}"
@@ -173,7 +172,6 @@ def save_reservation(data: dict):
         f"🗓 {readable_local(iso_utc)}\n"
         f"🍽 Table: {table}"
     )
-
 
 
 # ---------------------------------------------------------
@@ -232,44 +230,17 @@ async def dashboard(request: Request):
     )
 
 
-
-# ---------------------------------------------------------
-# NEW ENDPOINT (FROM DASHBOARD)
-# ---------------------------------------------------------
-@app.post("/createReservation")
-async def create_reservation_from_dashboard(payload: dict):
-    iso_utc = normalize_to_utc(payload.get("datetime"))
-    if not iso_utc:
-        return {"error": "Invalid datetime"}
-
-    table = assign_table(iso_utc)
-
-    supabase.table("reservations").insert({
-        "customer_name": payload.get("customer_name"),
-        "customer_email": payload.get("customer_email"),
-        "contact_phone": payload.get("contact_phone"),
-        "datetime": iso_utc,
-        "party_size": int(payload.get("party_size", 1)),
-        "table_number": table,
-        "notes": payload.get("notes", ""),
-        "status": "confirmed"
-    }).execute()
-
-    asyncio.create_task(notify_refresh())
-    return {"success": True}
-
-
-
 # ---------------------------------------------------------
 # WHATSAPP WEBHOOK
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
-    print("📩 Incoming:", Body)
     resp = MessagingResponse()
 
     extraction_prompt = """
-Return ONLY valid JSON. NO text.
+You are an AI reservation assistant. Extract structured reservation data.
+
+⬇️ RETURN ONLY JSON (no text around it)
 
 {
  "customer_name": "",
@@ -277,11 +248,19 @@ Return ONLY valid JSON. NO text.
  "contact_phone": "",
  "party_size": "",
  "datetime": "",
- "notes": ""
+ "notes": "",
+ "ask": ""
 }
 
-If ANYTHING is missing return ONLY:
-{"ask":"<question>"}
+Rules:
+1. Fill fields ONLY with what user said.
+2. Missing data stays "".
+3. Required fields: name, party_size, datetime.
+4. If missing ANY required field, put ONE question into "ask".
+   - Missing name → "May I have your name?"
+   - Missing party_size → "For how many people?"
+   - Missing datetime → "What date and time should I book it for?"
+5. If all required fields exist, "ask" must be "".
 """
 
     try:
@@ -300,20 +279,22 @@ If ANYTHING is missing return ONLY:
 
         data = json.loads(output)
 
-    except:
-        resp.message("❌ Sorry, I couldn't understand. Try again.")
+    except Exception as e:
+        print("⚠️ JSON extraction error:", e)
+        resp.message("❌ Sorry, I couldn't understand that. Try again.")
         return Response(content=str(resp), media_type="application/xml")
 
-    if "ask" in data:
+    # If missing info, ask the question
+    if data.get("ask"):
         resp.message(data["ask"])
         return Response(content=str(resp), media_type="application/xml")
 
+    # Otherwise, save reservation
     msg = save_reservation(data)
     resp.message(msg)
 
     asyncio.create_task(notify_refresh())
     return Response(content=str(resp), media_type="application/xml")
-
 
 
 # ---------------------------------------------------------
@@ -344,11 +325,11 @@ async def cancel_reservation(update: dict):
     return {"success": True}
 
 
-
 # ---------------------------------------------------------
 # WEBSOCKET AUTO REFRESH
 # ---------------------------------------------------------
 clients = []
+
 
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
@@ -359,6 +340,7 @@ async def ws(websocket: WebSocket):
             await websocket.receive_text()
     except:
         clients.remove(websocket)
+
 
 async def notify_refresh():
     for ws in clients:
