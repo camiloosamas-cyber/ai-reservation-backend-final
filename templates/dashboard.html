@@ -382,9 +382,9 @@ document.getElementById("newBtn").onclick=()=>{ document.getElementById("newModa
 document.getElementById("closeNewBtn").onclick=()=>{ document.getElementById("newModal").style.display="none"; };
 
 document.getElementById("createBtn").onclick = async () => {
-  const name = new_name.value.trim();
-  const dtVal = new_dt.value;
-  const party = Number(new_party.value || 1);
+  const name = document.getElementById("new_name").value.trim();
+  const party = Number(document.getElementById("new_party").value || 1);
+  const dtVal = document.getElementById("new_dt").value;
 
   if (!name || !dtVal) {
     alert("Name and Date/Time are required.");
@@ -393,24 +393,24 @@ document.getElementById("createBtn").onclick = async () => {
 
   const payload = {
     customer_name: name,
+    customer_email: document.getElementById("new_email").value.trim() || null,
+    contact_phone: document.getElementById("new_phone").value.trim() || null,
     datetime: new Date(dtVal).toISOString(),
     party_size: party,
-    customer_email: new_email.value.trim() || null,
-    contact_phone: new_phone.value.trim() || null,
-    table_number: new_table.value.trim() || null,
-    notes: new_notes.value.trim() || null,
-    status: "confirmed"
+    table_number: document.getElementById("new_table").value.trim() || null,
+    notes: document.getElementById("new_notes").value.trim() || null
   };
 
-  await fetch("/create_reservation", {
+  await fetch("https://ai-reservation-backend-final.onrender.com/create_reservation", {
     method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(payload),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
   });
 
-  newModal.style.display = "none";
+  document.getElementById("newModal").style.display = "none";
   location.reload();
 };
+
 
 /* Export CSV */
 document.getElementById("exportBtn").onclick=()=>{
@@ -444,3 +444,4 @@ buildTableGrid();
 
 </body>
 </html>
+
