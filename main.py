@@ -35,6 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ---------------------------------------------------------
 # TIMEZONE SETTINGS
 # ---------------------------------------------------------
@@ -51,22 +52,14 @@ def safe_fromiso(val: str):
     except:
         return None
 
-
 def normalize_to_utc(dt_str: str | None) -> str | None:
-    """
-    ✅ Natural language → FUTURE date
-    ✅ Preserve hour (don't default to 00:00)
-    ✅ Always return ISO UTC ending with Z
-    """
-
     if not dt_str:
         return None
 
-    # ✅ Natural language parsing (always future)
     parsed = dateparser.parse(
         dt_str,
         settings={
-            "PREFER_DATES_FROM": "future",   # <-- forces NEXT date
+            "PREFER_DATES_FROM": "future",
             "RETURN_AS_TIMEZONE_AWARE": True,
             "TIMEZONE": LOCAL_TZ_NAME,
             "TO_TIMEZONE": "UTC"
@@ -74,7 +67,6 @@ def normalize_to_utc(dt_str: str | None) -> str | None:
     )
 
     if not parsed:
-        # Try strict ISO parsing
         iso_try = safe_fromiso(dt_str)
         if iso_try:
             parsed = iso_try
@@ -82,10 +74,7 @@ def normalize_to_utc(dt_str: str | None) -> str | None:
     if not parsed:
         return None
 
-    # ✅ Ensure UTC
     dtu = parsed.astimezone(timezone.utc)
-
-    # ✅ Return clean ISO format
     return dtu.isoformat().replace("+00:00", "Z")
 
 
@@ -115,19 +104,17 @@ TABLE_LIMIT = 10
 
 
 # ---------------------------------------------------------
-# IDENTITY + DEDUPE
+# DEDUPE CACHE
 # ---------------------------------------------------------
 recent_keys = {}
-TTL = 60  # 1 minute dedupe window
+TTL = 60  # seconds
 
 def dedupe(key: str):
     now = time.time()
-    # Remove expired keys
     for k in list(recent_keys.keys()):
         if recent_keys[k] <= now:
             del recent_keys[k]
 
-    # Duplicate detected
     if key in recent_keys and recent_keys[key] > now:
         return True
 
@@ -197,20 +184,52 @@ async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
     rows = res.data or []
 
+    view = []
     for r in rows:
         r["datetime"] = utc_to_local(r.get("datetime"))
+        view.append(r)
+
+    # ✅ FIXED INSIGHTS
+    total = len(view)
+    cancelled = len([r for r in view if r.get("status") == "cancelled"])
+
+    now = datetime.now(LOCAL_TZ)
+    week_ago = now - timedelta(days=7)
+
+    weekly_count = 0
+    party_list = []
+    time_list = []
+
+    for r in view:
+        if r.get("party_size"):
+            party_list.append(int(r["party_size"]))
+
+        dt = safe_fromiso(r.get("datetime"))
+        if dt:
+            dt = dt.astimezone(LOCAL_TZ)
+            if dt > week_ago:
+                weekly_count += 1
+            time_list.append(dt.strftime("%H:%M"))
+
+    avg_party_size = round(sum(party_list) / len(party_list), 1) if party_list else 0
+    peak_time = max(set(time_list), key=time_list.count) if time_list else "N/A"
+    cancel_rate = round((cancelled / total) * 100, 1) if total else 0
 
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
-            "reservations": rows,
+            "reservations": view,
+            "weekly_count": weekly_count,
+            "avg_party_size": avg_party_size,
+            "peak_time": peak_time,
+            "cancel_rate": cancel_rate,
         }
     )
 
 
 # ---------------------------------------------------------
-# WHATSAPP
+# WHATSAPP WEBHOOK
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
@@ -218,19 +237,18 @@ async def whatsapp_webhook(Body: str = Form(...)):
     resp = MessagingResponse()
 
     extraction_prompt = """
-Return ONLY valid JSON. NO text around it.
-Extract reservation details:
+Return ONLY valid JSON. NO text.
 
 {
  "customer_name": "",
  "customer_email": "",
  "contact_phone": "",
  "party_size": "",
- "datetime": "",     // natural language allowed (ex: "tomorrow at 8pm")
+ "datetime": "",
  "notes": ""
 }
 
-If missing details return:
+If ANYTHING is missing return ONLY:
 {"ask":"<question>"}
 """
 
@@ -294,7 +312,7 @@ async def cancel_reservation(update: dict):
 
 
 # ---------------------------------------------------------
-# WEBSOCKET AUTO-REFRESH
+# WEBSOCKET AUTO REFRESH
 # ---------------------------------------------------------
 clients = []
 
