@@ -175,7 +175,7 @@ def save_reservation(data: dict):
 
 
 # ---------------------------------------------------------
-# ROUTES
+# DASHBOARD ROUTE
 # ---------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -231,41 +231,68 @@ async def dashboard(request: Request):
 
 
 # ---------------------------------------------------------
+# ✅ MEMORY FOR CONVERSATION (WHATSAPP FIX)
+# ---------------------------------------------------------
+conversation_memory = {}  # { phone_number: { fields... } }
+
+
+# ---------------------------------------------------------
 # WHATSAPP WEBHOOK
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
+    print("📩 Incoming:", Body)
     resp = MessagingResponse()
 
-    extraction_prompt = """
-You are an AI reservation assistant. Extract structured reservation data.
+    # Extract sender phone (Twilio format)
+    sender = ""
+    try:
+        sender = Body.split("From:")[1].split("\n")[0].strip()
+    except:
+        sender = "unknown"
 
-⬇️ RETURN ONLY JSON (no text around it)
+    # Init memory for this user
+    if sender not in conversation_memory:
+        conversation_memory[sender] = {
+            "customer_name": None,
+            "party_size": None,
+            "datetime": None,
+            "notes": None,
+        }
 
-{
+    mem = conversation_memory[sender]
+
+    extraction_prompt = f"""
+You extract data the user provides about a reservation.
+
+Current known values:
+name: {mem['customer_name']}
+party_size: {mem['party_size']}
+datetime: {mem['datetime']}
+notes: {mem['notes']}
+
+Return ONLY JSON, no explanation.
+
+If user provides new data, fill it in.
+Do NOT erase previous values.
+
+Format:
+{{
  "customer_name": "",
- "customer_email": "",
- "contact_phone": "",
  "party_size": "",
  "datetime": "",
  "notes": "",
- "ask": ""
-}
+ "ready": false
+}}
 
-Rules:
-1. Fill fields ONLY with what user said.
-2. Missing data stays "".
-3. Required fields: name, party_size, datetime.
-4. If missing ANY required field, put ONE question into "ask".
-   - Missing name → "May I have your name?"
-   - Missing party_size → "For how many people?"
-   - Missing datetime → "What date and time should I book it for?"
-5. If all required fields exist, "ask" must be "".
+If all 3 are filled (name, party_size, datetime),
+return:
+{{ "ready": true }}
 """
 
     try:
         result = client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gpt-5",
             temperature=0,
             messages=[
                 {"role": "system", "content": extraction_prompt},
@@ -273,27 +300,36 @@ Rules:
             ]
         )
 
-        output = result.choices[0].message.content.strip()
-        if output.startswith("```"):
-            output = output.replace("```json", "").replace("```", "").strip()
-
-        data = json.loads(output)
+        data = json.loads(result.choices[0].message.content)
 
     except Exception as e:
-        print("⚠️ JSON extraction error:", e)
-        resp.message("❌ Sorry, I couldn't understand that. Try again.")
+        print("❌ JSON ERROR:", e)
+        resp.message("Sorry, could you repeat that?")
         return Response(content=str(resp), media_type="application/xml")
 
-    # If missing info, ask the question
-    if data.get("ask"):
-        resp.message(data["ask"])
+    # ✅ update memory only with values provided
+    for key in mem:
+        if key in data and data[key]:
+            mem[key] = data[key]
+
+    # ✅ if ready → save reservation
+    if "ready" in data:
+        msg = save_reservation(mem)
+        del conversation_memory[sender]  # clear memory
+        resp.message(msg)
+        asyncio.create_task(notify_refresh())
         return Response(content=str(resp), media_type="application/xml")
 
-    # Otherwise, save reservation
-    msg = save_reservation(data)
-    resp.message(msg)
+    # Otherwise → ask what's missing
+    if not mem["customer_name"]:
+        resp.message("May I have your name?")
+    elif not mem["party_size"]:
+        resp.message("For how many people?")
+    elif not mem["datetime"]:
+        resp.message("What date and time should I book it for?")
+    else:
+        resp.message("Got it. Any notes for the reservation?")
 
-    asyncio.create_task(notify_refresh())
     return Response(content=str(resp), media_type="application/xml")
 
 
