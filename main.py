@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import json, os, asyncio, time
-import dateparser  # natural language datetime parser
+import dateparser
 
 # ✅ Supabase
 from supabase import create_client, Client
@@ -17,6 +17,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ✅ Twilio
 from twilio.twiml.messaging_response import MessagingResponse
+
 
 
 # ---------------------------------------------------------
@@ -92,6 +93,7 @@ def readable_local(iso_utc: str | None) -> str:
     return dtu.astimezone(LOCAL_TZ).strftime("%A %I:%M %p")
 
 
+
 # ---------------------------------------------------------
 # SUPABASE INIT
 # ---------------------------------------------------------
@@ -101,6 +103,7 @@ supabase: Client = create_client(
 )
 
 TABLE_LIMIT = 10
+
 
 
 # ---------------------------------------------------------
@@ -122,8 +125,9 @@ def dedupe(key: str):
     return False
 
 
+
 # ---------------------------------------------------------
-# SAVE RESERVATION
+# SAVE RESERVATION (WHATSAPP)
 # ---------------------------------------------------------
 def assign_table(iso_utc: str) -> str | None:
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
@@ -171,6 +175,7 @@ def save_reservation(data: dict):
     )
 
 
+
 # ---------------------------------------------------------
 # ROUTES
 # ---------------------------------------------------------
@@ -189,7 +194,6 @@ async def dashboard(request: Request):
         r["datetime"] = utc_to_local(r.get("datetime"))
         view.append(r)
 
-    # ✅ FIXED INSIGHTS
     total = len(view)
     cancelled = len([r for r in view if r.get("status") == "cancelled"])
 
@@ -226,6 +230,34 @@ async def dashboard(request: Request):
             "cancel_rate": cancel_rate,
         }
     )
+
+
+
+# ---------------------------------------------------------
+# NEW ENDPOINT (FROM DASHBOARD)
+# ---------------------------------------------------------
+@app.post("/createReservation")
+async def create_reservation_from_dashboard(payload: dict):
+    iso_utc = normalize_to_utc(payload.get("datetime"))
+    if not iso_utc:
+        return {"error": "Invalid datetime"}
+
+    table = assign_table(iso_utc)
+
+    supabase.table("reservations").insert({
+        "customer_name": payload.get("customer_name"),
+        "customer_email": payload.get("customer_email"),
+        "contact_phone": payload.get("contact_phone"),
+        "datetime": iso_utc,
+        "party_size": int(payload.get("party_size", 1)),
+        "table_number": table,
+        "notes": payload.get("notes", ""),
+        "status": "confirmed"
+    }).execute()
+
+    asyncio.create_task(notify_refresh())
+    return {"success": True}
+
 
 
 # ---------------------------------------------------------
@@ -283,6 +315,7 @@ If ANYTHING is missing return ONLY:
     return Response(content=str(resp), media_type="application/xml")
 
 
+
 # ---------------------------------------------------------
 # UPDATE / CANCEL
 # ---------------------------------------------------------
@@ -309,6 +342,7 @@ async def cancel_reservation(update: dict):
 
     asyncio.create_task(notify_refresh())
     return {"success": True}
+
 
 
 # ---------------------------------------------------------
