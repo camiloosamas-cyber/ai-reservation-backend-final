@@ -73,7 +73,6 @@
     .dropdown-menu button{ width:100%; background:none; border:none; padding:8px 12px; text-align:left; font-size:13px; cursor:pointer; }
     .dropdown-menu button:hover{ background:#eef2ff; }
 
-    /* Modals */
     .modal-backdrop{ position:fixed; inset:0; background:#0008; display:none; align-items:center; justify-content:center; z-index:100; }
     .modal{ background:white; width:600px; max-width:90vw; border-radius:16px; padding:16px; border:1px solid var(--border); box-sizing:border-box; }
     .modal header{ padding-bottom:12px; border-bottom:1px solid var(--border); }
@@ -100,7 +99,6 @@
     </div>
   </header>
 
-  <!-- KPI -->
   <div class="cards">
     <div class="card"><h3>Total</h3><p>{{ reservations|length }}</p></div>
     <div class="card"><h3>Confirmed</h3><p>{{ reservations|selectattr('status','equalto','confirmed')|list|length }}</p></div>
@@ -108,7 +106,6 @@
     <div class="card"><h3>This Week</h3><p>{{ weekly_count }}</p></div>
   </div>
 
-  <!-- FILTER BAR -->
   <div class="filters">
     <input id="q" placeholder="Search...">
     <input id="dateFilter" type="date">
@@ -125,13 +122,11 @@
     <button class="btn" id="todayBtn">Today</button>
   </div>
 
-  <!-- TABLE AVAILABILITY -->
   <div class="table-availability">
     <h2>🟩 Table Availability</h2>
     <div id="tableGrid" class="table-grid"></div>
   </div>
 
-  <!-- MAIN TABLE -->
   <div class="table-wrap">
     <table>
       <thead>
@@ -143,7 +138,6 @@
       <tbody id="tbody">
 
       {% for r in reservations %}
-
       <tr
         data-name="{{ (r.customer_name ~ ' ' ~ r.customer_email)|lower }}"
         {% if r.datetime and 'T' in r.datetime %}
@@ -155,7 +149,6 @@
         data-table="{{ r.table_number or '' }}"
       >
 
-        <!-- SAFE DATE/TIME HANDLING -->
         {% if r.datetime and 'T' in r.datetime %}
           {% set dt = r.datetime.split('T') %}
           <td>{{ dt[0] }}</td>
@@ -193,14 +186,12 @@
           </div>
         </td>
       </tr>
-
       {% endfor %}
 
       </tbody>
     </table>
   </div>
 
-  <!-- INSIGHTS -->
   <h2 style="margin-top:24px;">📊 Insights</h2>
   <div class="cards" style="grid-template-columns:repeat(3,1fr);">
     <div class="card"><h3>Avg Party</h3><p>{{ avg_party_size }}</p></div>
@@ -210,7 +201,6 @@
 
 </div>
 
-<!-- EDIT MODAL -->
 <div class="modal-backdrop" id="editModal">
   <div class="modal">
     <header><h3>Edit Reservation</h3></header>
@@ -243,7 +233,6 @@
   </div>
 </div>
 
-<!-- NEW RESERVATION MODAL -->
 <div class="modal-backdrop" id="newModal">
   <div class="modal">
     <header><h3>New Reservation</h3></header>
@@ -258,7 +247,7 @@
       </div>
       <div class="form-row">
         <div class="field"><label for="new_dt">Date & Time *</label><input id="new_dt" type="datetime-local"></div>
-        <div class="field"><label for="new_table">Table</label><input id="new_table"></div>
+        <div class="field"><label for="new_table">Table</label><input id="new_table"></input></div>
       </div>
       <div class="field"><label for="new_notes">Notes</label><textarea id="new_notes"></textarea></div>
     </div>
@@ -311,7 +300,6 @@ document.getElementById("todayBtn").onclick=()=>{
   filter();
 };
 
-/* TABLE AVAILABILITY */
 const TABLE_IDS = ["T1","T2","T3","T4","T5","T6","T7","T8","T9","T10"];
 
 function buildTableGrid(){
@@ -342,7 +330,6 @@ function filterByTable(table){
   buildTableGrid();
 }
 
-/* Actions */
 async function markStatus(id,s){
   await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:s})});
   location.reload();
@@ -356,7 +343,6 @@ async function doCancel(id){
   location.reload();
 }
 
-/* Call + WhatsApp */
 function callCustomer(phone){
   if(!phone) return alert("No phone number.");
   window.location.href = `tel:${phone}`;
@@ -369,7 +355,6 @@ function sendWhatsApp(phone,name,dt){
 
 document.getElementById("refreshBtn").onclick=()=>location.reload();
 
-/* Real-time refresh (Render compatible) */
 (function(){
   try{
     const ws=new WebSocket(`${location.protocol==="https:"?"wss":"ws"}://${location.host}/ws`);
@@ -377,7 +362,7 @@ document.getElementById("refreshBtn").onclick=()=>location.reload();
   }catch(e){}
 })();
 
-/* NEW RESERVATION */
+/* ✅ CREATE RESERVATION */
 document.getElementById("newBtn").onclick=()=>{ document.getElementById("newModal").style.display="flex"; };
 document.getElementById("closeNewBtn").onclick=()=>{ document.getElementById("newModal").style.display="none"; };
 
@@ -411,8 +396,43 @@ document.getElementById("createBtn").onclick = async () => {
   location.reload();
 };
 
+/* ✅ FIXED EDIT RESERVATION */
+let currentId = null;
 
-/* Export CSV */
+function openEdit(id, dt, ps, table, notes){
+  currentId = id;
+  document.getElementById("dt").value = dt && dt.includes("T") ? dt.slice(0,16) : "";
+  document.getElementById("ps").value = ps || 1;
+  document.getElementById("table").value = table || "";
+  document.getElementById("notes").value = notes || "";
+  document.getElementById("editModal").style.display="flex";
+}
+
+function closeEdit(){ document.getElementById("editModal").style.display="none"; }
+
+document.getElementById("saveBtn").onclick = async () => {
+  const payload = {
+    reservation_id: currentId,
+    datetime: document.getElementById("dt").value
+      ? new Date(document.getElementById("dt").value).toISOString()
+      : undefined,
+    party_size: Number(document.getElementById("ps").value || 1),
+    table_number: document.getElementById("table").value || null,
+    notes: document.getElementById("notes").value || null,
+    status: "updated"
+  };
+
+  await fetch("https://ai-reservation-backend-final.onrender.com/updateReservation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  closeEdit();
+  location.reload();
+};
+
+/* CSV */
 document.getElementById("exportBtn").onclick=()=>{
   const header = ["Date","Time","Customer","Contact","Party","Table","Notes","Status"];
   const rows = [header];
@@ -444,6 +464,3 @@ buildTableGrid();
 
 </body>
 </html>
-
-
-
