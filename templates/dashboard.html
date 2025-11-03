@@ -23,6 +23,7 @@
 
     .btn{ padding:10px 14px; border-radius:10px; border:1px solid var(--border); font-weight:600; cursor:pointer; background:white; }
     .btn.primary{ background:var(--primary); color:white; border:none; }
+    .btn[disabled]{ opacity:.6; cursor:not-allowed; }
 
     .cards{ display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:22px; }
     .card{ background:white; border-radius:16px; padding:18px; border:1px solid var(--border); box-shadow:var(--shadow); }
@@ -82,6 +83,7 @@
     .form-row{ display:flex; justify-content:space-between; gap:20px; margin-bottom:14px; }
     .field{ width:48%; box-sizing:border-box; }
     .field input,.field textarea{ width:100%; padding:10px; border-radius:10px; border:1px solid var(--border); }
+    .toast{ position:fixed; right:16px; bottom:16px; background:#111; color:#fff; padding:10px 12px; border-radius:10px; font-size:13px; display:none; z-index:200; }
   </style>
 </head>
 
@@ -143,7 +145,6 @@
       <tbody id="tbody">
 
       {% for r in reservations %}
-
       <tr
         data-name="{{ (r.customer_name ~ ' ' ~ r.customer_email)|lower }}"
         {% if r.datetime and 'T' in r.datetime %}
@@ -154,8 +155,6 @@
         data-status="{{ r.status }}"
         data-table="{{ r.table_number or '' }}"
       >
-
-        <!-- SAFE DATE/TIME HANDLING -->
         {% if r.datetime and 'T' in r.datetime %}
           {% set dt = r.datetime.split('T') %}
           <td>{{ dt[0] }}</td>
@@ -193,7 +192,6 @@
           </div>
         </td>
       </tr>
-
       {% endfor %}
 
       </tbody>
@@ -269,12 +267,28 @@
   </div>
 </div>
 
+<div class="toast" id="toast"></div>
+
 <script>
+function showToast(msg, ok=true){
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.style.background = ok ? '#111' : '#b91c1c';
+  t.style.display='block';
+  setTimeout(()=>t.style.display='none', 2600);
+}
+
+/* Dropdowns */
 function toggleMenu(el){
   const menu = el.nextElementSibling;
   document.querySelectorAll(".dropdown-menu").forEach(m=>{ if(m!==menu) m.style.display="none"; });
   menu.style.display = menu.style.display==="block" ? "none" : "block";
 }
+document.addEventListener('click', (e)=>{
+  if(!e.target.closest('.menu-wrapper')) {
+    document.querySelectorAll(".dropdown-menu").forEach(m=>m.style.display="none");
+  }
+});
 
 const tbody=document.getElementById("tbody");
 const q=document.getElementById("q");
@@ -344,16 +358,22 @@ function filterByTable(table){
 
 /* Actions */
 async function markStatus(id,s){
-  await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:s})});
-  location.reload();
+  try{
+    await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:s})});
+    location.reload();
+  }catch(e){ showToast('Error updating status', false); }
 }
 async function doArchive(id){
-  await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:"archived"})});
-  location.reload();
+  try{
+    await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:"archived"})});
+    location.reload();
+  }catch(e){ showToast('Error archiving', false); }
 }
 async function doCancel(id){
-  await fetch("/cancelReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id})});
-  location.reload();
+  try{
+    await fetch("/cancelReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id})});
+    location.reload();
+  }catch(e){ showToast('Error cancelling', false); }
 }
 
 /* Call + WhatsApp */
@@ -363,110 +383,4 @@ function callCustomer(phone){
 }
 function sendWhatsApp(phone,name,dt){
   if(!phone) return alert("No phone number.");
-  const msg = `Hello ${name}, just confirming your reservation for ${dt}.`;
-  window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
-}
-
-document.getElementById("refreshBtn").onclick=()=>location.reload();
-
-/* Real-time refresh (Render compatible) */
-(function(){
-  try{
-    const ws=new WebSocket(`${location.protocol==="https:"?"wss":"ws"}://${location.host}/ws`);
-    ws.onmessage=()=>location.reload();
-  }catch(e){}
-})();
-
-/* Modals */
-let currentId=null;
-function openEdit(id,dt,ps,table,notes){
-  currentId=id;
-  const dtField=document.getElementById("dt");
-  dtField.value = (dt && dt.includes("T")) ? dt.slice(0,16) : "";
-
-  document.getElementById("ps").value = (typeof ps==="number" && ps>0) ? ps : 1;
-  document.getElementById("table").value = (table && table!=="null") ? table : "";
-  document.getElementById("notes").value = (notes && notes!=="null") ? notes : "";
-
-  document.getElementById("editModal").style.display="flex";
-}
-function closeEdit(){ document.getElementById("editModal").style.display="none"; }
-
-document.getElementById("saveBtn").onclick=async ()=>{
-  const payload={
-    reservation_id:currentId,
-    datetime: document.getElementById("dt").value ? new Date(document.getElementById("dt").value).toISOString() : undefined,
-    party_size: Number(document.getElementById("ps").value||1),
-    table_number: document.getElementById("table").value || null,
-    notes: document.getElementById("notes").value || null,
-    status: "updated"
-  };
-  await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-  closeEdit(); location.reload();
-};
-
-/* NEW RESERVATION */
-document.getElementById("newBtn").onclick=()=>{ document.getElementById("newModal").style.display="flex"; };
-document.getElementById("closeNewBtn").onclick=()=>{ document.getElementById("newModal").style.display="none"; };
-
-document.getElementById("createBtn").onclick=async ()=>{
-  const name = document.getElementById("new_name").value.trim();
-  const email = document.getElementById("new_email").value.trim();
-  const phone = document.getElementById("new_phone").value.trim();
-  const party = Number(document.getElementById("new_party").value||1);
-  const dtVal = document.getElementById("new_dt").value;
-  const table = document.getElementById("new_table").value.trim();
-  const notes = document.getElementById("new_notes").value.trim();
-
-  if(!name || !dtVal){
-    alert("Name and Date/Time are required.");
-    return;
-  }
-
-  const payload={
-    customer_name: name,
-    customer_email: email || null,
-    contact_phone: phone || null,
-    datetime: new Date(dtVal).toISOString(),
-    party_size: party,
-    table_number: table || null,
-    notes: notes || null
-  };
-
-  await fetch("/createReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-  document.getElementById("newModal").style.display="none";
-  location.reload();
-};
-
-/* Export CSV */
-document.getElementById("exportBtn").onclick=()=>{
-  const header = ["Date","Time","Customer","Contact","Party","Table","Notes","Status"];
-  const rows = [header];
-
-  [...tbody.rows].forEach(r=>{
-    if(r.style.display==="none") return;
-    const cells = [...r.cells];
-    rows.push([
-      cells[0].innerText.trim(),
-      cells[1].innerText.trim(),
-      cells[2].innerText.trim(),
-      cells[3].innerText.trim(),
-      cells[4].innerText.trim(),
-      cells[5].innerText.trim(),
-      cells[6].innerText.trim(),
-      cells[7].innerText.trim(),
-    ]);
-  });
-
-  const csv = rows.map(r => r.map(v => `"${(v||"").replace(/"/g,'""')}"`).join(",")).join("\n");
-  const a = document.createElement("a");
-  a.href="data:text/csv;charset=utf-8," + encodeURIComponent(csv);
-  a.download="reservations.csv";
-  a.click();
-};
-
-buildTableGrid();
-</script>
-
-</body>
-</html>
+  const msg = `Hello ${name},
