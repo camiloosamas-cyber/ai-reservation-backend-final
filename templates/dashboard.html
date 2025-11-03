@@ -377,64 +377,38 @@ document.getElementById("refreshBtn").onclick=()=>location.reload();
   }catch(e){}
 })();
 
-/* Modals */
-let currentId=null;
-function openEdit(id,dt,ps,table,notes){
-  currentId=id;
-  const dtField=document.getElementById("dt");
-  dtField.value = (dt && dt.includes("T")) ? dt.slice(0,16) : "";
-
-  document.getElementById("ps").value = (typeof ps==="number" && ps>0) ? ps : 1;
-  document.getElementById("table").value = (table && table!=="null") ? table : "";
-  document.getElementById("notes").value = (notes && notes!=="null") ? notes : "";
-
-  document.getElementById("editModal").style.display="flex";
-}
-function closeEdit(){ document.getElementById("editModal").style.display="none"; }
-
-document.getElementById("saveBtn").onclick=async ()=>{
-  const payload={
-    reservation_id:currentId,
-    datetime: document.getElementById("dt").value ? new Date(document.getElementById("dt").value).toISOString() : undefined,
-    party_size: Number(document.getElementById("ps").value||1),
-    table_number: document.getElementById("table").value || null,
-    notes: document.getElementById("notes").value || null,
-    status: "updated"
-  };
-  await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-  closeEdit(); location.reload();
-};
-
 /* NEW RESERVATION */
 document.getElementById("newBtn").onclick=()=>{ document.getElementById("newModal").style.display="flex"; };
 document.getElementById("closeNewBtn").onclick=()=>{ document.getElementById("newModal").style.display="none"; };
 
-document.getElementById("createBtn").onclick=async ()=>{
-  const name = document.getElementById("new_name").value.trim();
-  const email = document.getElementById("new_email").value.trim();
-  const phone = document.getElementById("new_phone").value.trim();
-  const party = Number(document.getElementById("new_party").value||1);
-  const dtVal = document.getElementById("new_dt").value;
-  const table = document.getElementById("new_table").value.trim();
-  const notes = document.getElementById("new_notes").value.trim();
+document.getElementById("createBtn").onclick = async () => {
+  const name = new_name.value.trim();
+  const dtVal = new_dt.value;
+  const party = Number(new_party.value || 1);
 
-  if(!name || !dtVal){
+  if (!name || !dtVal) {
     alert("Name and Date/Time are required.");
     return;
   }
 
-  const payload={
+  const payload = {
     customer_name: name,
-    customer_email: email || null,
-    contact_phone: phone || null,
     datetime: new Date(dtVal).toISOString(),
     party_size: party,
-    table_number: table || null,
-    notes: notes || null
+    customer_email: new_email.value.trim() || null,
+    contact_phone: new_phone.value.trim() || null,
+    table_number: new_table.value.trim() || null,
+    notes: new_notes.value.trim() || null,
+    status: "confirmed"
   };
 
-  await fetch("/createReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-  document.getElementById("newModal").style.display="none";
+  await fetch("/create_reservation", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload),
+  });
+
+  newModal.style.display = "none";
   location.reload();
 };
 
