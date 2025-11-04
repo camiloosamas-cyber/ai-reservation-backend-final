@@ -1,13 +1,13 @@
-from fastapi import FastAPI, Request, WebSocket, Form, Query, Body
-from fastapi.responses import HTMLResponse, Response, PlainTextResponse, JSONResponse
+from fastapi import FastAPI, Request, WebSocket, Form, Query
+from fastapi.responses import HTMLResponse, Response, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from urllib.parse import urlencode, quote
-import json, os, asyncio, time, logging
-import dateparser  # natural language datetime parser
+from urllib.parse import quote
+import json, os, asyncio, time
+import dateparser
 
 # ✅ Supabase
 from supabase import create_client, Client
@@ -23,7 +23,7 @@ from twilio.twiml.voice_response import VoiceResponse, Gather
 
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")  # Your purchased number
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://ai-reservation-backend-final.onrender.com")
 
 twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
@@ -44,9 +44,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("app")
-
 # ---------------------------------------------------------
 # TIMEZONE
 # ---------------------------------------------------------
@@ -66,7 +63,6 @@ def safe_fromiso(val: str):
 def normalize_to_utc(dt_str: str | None) -> str | None:
     if not dt_str:
         return None
-
     parsed = dateparser.parse(
         dt_str,
         settings={
@@ -76,12 +72,10 @@ def normalize_to_utc(dt_str: str | None) -> str | None:
             "TO_TIMEZONE": "UTC"
         }
     )
-
     if not parsed:
         iso_try = safe_fromiso(dt_str)
         if iso_try:
             parsed = iso_try
-
     if not parsed:
         return None
 
@@ -114,23 +108,21 @@ TABLE_LIMIT = 10
 # SAVE RESERVATION LOGIC
 # ---------------------------------------------------------
 recent_keys = {}
-TTL = 60  # seconds to avoid double booking
+TTL = 60  # avoid duplicates
 
 def dedupe(key: str):
     now = time.time()
     for k in list(recent_keys.keys()):
         if recent_keys[k] <= now:
             del recent_keys[k]
-
     if key in recent_keys and recent_keys[key] > now:
         return True
-
     recent_keys[key] = now + TTL
     return False
 
 def assign_table(iso_utc: str) -> str | None:
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
-    taken = {row["table_number"] for row in (booked.data or []) if row.get("table_number")}
+    taken = {row["table_number"] for row in (booked.data or [])}
     for i in range(1, TABLE_LIMIT + 1):
         t = f"T{i}"
         if t not in taken:
@@ -142,7 +134,7 @@ def save_reservation(data: dict):
     if not iso_utc:
         return "❌ Invalid date/time. Please specify date AND time."
 
-    name = (data.get("customer_name") or "").strip() or "Guest"
+    name = data.get("customer_name", "").strip() or "Guest"
     dedupe_key = f"{name.lower()}|{iso_utc}"
 
     if dedupe(dedupe_key):
@@ -152,61 +144,28 @@ def save_reservation(data: dict):
     if not table:
         return "❌ No tables available at that time."
 
-    payload = {
+    supabase.table("reservations").insert({
         "customer_name": name,
-        "customer_email": data.get("customer_email") or "",
-        "contact_phone": data.get("contact_phone") or "",
+        "customer_email": data.get("customer_email", ""),
+        "contact_phone": data.get("contact_phone", ""),
         "datetime": iso_utc,
-        "party_size": int(data.get("party_size") or 1),
-        "table_number": data.get("table_number") or table,
-        "notes": data.get("notes") or "",
-        "status": data.get("status") or "confirmed",
-    }
-
-    supabase.table("reservations").insert(payload).execute()
+        "party_size": int(data.get("party_size", 1)),
+        "table_number": table,
+        "notes": data.get("notes", ""),
+        "status": "confirmed"
+    }).execute()
 
     return (
         "✅ Reservation confirmed!\n"
         f"👤 {name}\n"
-        f"👥 {payload['party_size']} people\n"
+        f"👥 {data.get('party_size', 1)} people\n"
         f"🗓 {readable_local(iso_utc)}\n"
-        f"🍽 Table: {payload['table_number']}"
+        f"🍽 Table: {table}"
     )
-
-# ---------------------------------------------------------
-# HELPERS (Voice)
-# ---------------------------------------------------------
-def abs_action(path: str, **params) -> str:
-    """
-    Build absolute action URL for Twilio <Gather> (avoids relative URL issues).
-    """
-    base = PUBLIC_BASE_URL.rstrip("/")
-    if params:
-        return f"{base}{path}?{urlencode(params, doseq=True)}"
-    return f"{base}{path}"
-
-def gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=8):
-    """
-    Add a speech gather with faster UX. 'timeout' = wait for speech start.
-    'speech_timeout'='auto' ends when user pauses (keeps it snappy).
-    """
-    g: Gather = vr.gather(
-        input="speech",
-        speech_timeout="auto",
-        timeout=timeout_sec,
-        action=url,
-        method="POST"
-    )
-    g.say(prompt, voice="alice", language="en-US")
-    return vr
 
 # ---------------------------------------------------------
 # HOME + DASHBOARD
 # ---------------------------------------------------------
-@app.get("/health")
-def health():
-    return {"ok": True}
-
 @app.get("/", response_class=HTMLResponse)
 def home():
     return "<h3>✅ Backend running</h3><p>Go to /dashboard</p>"
@@ -218,54 +177,22 @@ async def dashboard(request: Request):
 
     view = []
     for r in rows:
-        r = dict(r)
         r["datetime"] = utc_to_local(r.get("datetime"))
         view.append(r)
 
     total = len(view)
+    cancelled = len([r for r in view if r.get("status") == "cancelled"])
+
     now = datetime.now(LOCAL_TZ)
     week_ago = now - timedelta(days=7)
 
-    def to_local_dt(s):
-        d = safe_fromiso(s or "")
-        return d.astimezone(LOCAL_TZ) if d else None
-
-    weekly_count = 0
-    party_sum = 0
-    party_n = 0
-
-    for r in view:
-        dtloc = to_local_dt(r.get("datetime"))
-        if dtloc and dtloc > week_ago:
-            weekly_count += 1
-        try:
-            party_sum += int(r.get("party_size") or 0)
-            party_n += 1
-        except:
-            pass
-
-    avg_party_size = round(party_sum / party_n, 1) if party_n else 0
+    weekly_count = len([r for r in view if safe_fromiso(r.get("datetime") or "").astimezone(LOCAL_TZ) > week_ago])
+    avg_party_size = round(sum(int(r.get("party_size", 0)) for r in view) / total, 1) if total else 0
 
     return templates.TemplateResponse(
         "dashboard.html",
         {"request": request, "reservations": view, "weekly_count": weekly_count, "avg_party_size": avg_party_size}
     )
-
-# ---------------------------------------------------------
-# ✅ DIRECT JSON CREATE (for dashboard modal)
-# ---------------------------------------------------------
-@app.post("/createReservation")
-async def create_reservation(payload: dict = Body(...)):
-    """
-    JSON body:
-    {
-      customer_name, customer_email?, contact_phone?,
-      party_size, datetime, table_number?, notes?
-    }
-    """
-    msg = save_reservation(payload)
-    asyncio.create_task(notify_refresh())
-    return {"message": msg}
 
 # ---------------------------------------------------------
 # ✅ WHATSAPP WEBHOOK
@@ -277,7 +204,7 @@ async def whatsapp_webhook(Body: str = Form(...)):
     extraction_prompt = """
 You are an AI reservation assistant. Extract structured reservation data.
 
-RETURN ONLY JSON (no backticks, no extra text):
+RETURN ONLY JSON:
 {
  "customer_name": "",
  "customer_email": "",
@@ -293,17 +220,17 @@ RETURN ONLY JSON (no backticks, no extra text):
         result = client.chat.completions.create(
             model="gpt-4.1-mini",
             temperature=0,
-            messages=[
-                {"role": "system", "content": extraction_prompt},
-                {"role": "user", "content": Body}
-            ]
+            messages=[{"role": "system", "content": extraction_prompt},
+                      {"role": "user", "content": Body}]
         )
+
         output = result.choices[0].message.content.strip()
         if output.startswith("```"):
             output = output.replace("```json", "").replace("```", "").strip()
+
         data = json.loads(output)
-    except Exception as e:
-        log.exception("WhatsApp JSON extraction error")
+
+    except:
         resp.message("❌ Sorry, I couldn't understand that. Try again.")
         return Response(content=str(resp), media_type="application/xml")
 
@@ -326,31 +253,42 @@ async def make_test_call(to: str):
         call = twilio_client.calls.create(
             to=to,
             from_=TWILIO_PHONE_NUMBER,
-            url=abs_action("/voice")
+            url=f"{PUBLIC_BASE_URL}/voice"
         )
         return {"status": "queued", "sid": call.sid}
     except Exception as e:
         return {"error": str(e)}
 
 # ---------------------------------------------------------
-# ✅ VOICE FLOW — BOOKING (fast + robust)
+# ✅ VOICE FLOW — BOOKING (fast + final + NO/NONE fixed)
 # ---------------------------------------------------------
-@app.post("/voice", response_class=PlainTextResponse)
+def gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=10):
+    g = vr.gather(
+        input="speech",
+        speech_timeout="auto",
+        timeout=timeout_sec,
+        action=url,
+        method="POST"
+    )
+    g.say(prompt, voice="alice", language="en-US")
+    return vr
+
+@app.post("/voice")
 async def voice_welcome():
     vr = VoiceResponse()
-    gather(vr, abs_action("/voice/name"), "Hi! I can book your table. What is your name?")
+    gather(vr, "/voice/name", "Hi! I can book your table. What is your name?")
     return Response(content=str(vr), media_type="application/xml")
 
-@app.post("/voice/name", response_class=PlainTextResponse)
+@app.post("/voice/name")
 async def voice_name(request: Request):
     form = await request.form()
     name = (form.get("SpeechResult") or "Guest").strip()
+
     vr = VoiceResponse()
-    prompt = f"Nice to meet you {name}. For how many people?"
-    gather(vr, abs_action("/voice/party", name=name), prompt)
+    gather(vr, f"/voice/party?name={quote(name)}", f"Nice to meet you {name}. For how many people?")
     return Response(content=str(vr), media_type="application/xml")
 
-@app.post("/voice/party", response_class=PlainTextResponse)
+@app.post("/voice/party")
 async def voice_party(request: Request, name: str):
     form = await request.form()
     speech = (form.get("SpeechResult") or "").lower().strip()
@@ -362,27 +300,30 @@ async def voice_party(request: Request, name: str):
     }
 
     party = None
+
     for token in speech.replace("-", " ").split():
         if token.isdigit():
             party = token
             break
+
     if party is None:
         for word, num in numbers.items():
             if word in speech:
                 party = num
                 break
+
     if party is None:
         party = "1"
 
     vr = VoiceResponse()
     gather(
         vr,
-        abs_action("/voice/datetime", name=name, party=party),
-        "What date and time should I book? For example, Friday at 7 PM."
+        f"/voice/datetime?name={quote(name)}&party={party}",
+        "What date and time should I book? Example: Friday at 7 PM."
     )
     return Response(content=str(vr), media_type="application/xml")
 
-@app.post("/voice/datetime", response_class=PlainTextResponse)
+@app.post("/voice/datetime")
 async def voice_datetime(request: Request, name: str, party: str):
     form = await request.form()
     spoken = (form.get("SpeechResult") or "").strip()
@@ -393,71 +334,53 @@ async def voice_datetime(request: Request, name: str, party: str):
     if not iso:
         gather(
             vr,
-            abs_action("/voice/datetime", name=name, party=party),
-            "Sorry, I didn't catch that. Try saying the full date, like Friday at 7 PM."
+            f"/voice/datetime?name={quote(name)}&party={party}",
+            "Sorry, I didn't catch that. Try saying: Friday at 7 PM."
         )
         return Response(content=str(vr), media_type="application/xml")
 
-    confirm = f"Great, I heard {spoken}. Any notes or preferences? Say none if you have no notes."
     gather(
         vr,
-        abs_action("/voice/notes", name=name, party=party, dt=spoken),
-        confirm
+        f"/voice/notes?name={quote(name)}&party={party}&dt={quote(spoken)}",
+        f"Great, I heard {spoken}. Any notes or preferences? Say none if no."
     )
     return Response(content=str(vr), media_type="application/xml")
 
-@app.post("/voice/notes", response_class=PlainTextResponse)
+
+@app.post("/voice/notes")
 async def voice_notes(request: Request, name: str, party: str, dt: str):
     form = await request.form()
     notes_speech = (form.get("SpeechResult") or "").strip()
-    notes = "none" if notes_speech.lower() in ["", "no", "none", "nope"] else notes_speech
+    text = notes_speech.lower().strip()
 
-    # Grab caller number if available
-    caller = (form.get("From") or "").strip()
+    if any(word in text for word in ["no", "none", "nope", "nothing", "that's it", "no thank"]):
+        notes = "none"
+    else:
+        notes = notes_speech
 
     payload = {
         "customer_name": name,
         "party_size": party,
         "datetime": dt,
         "notes": notes,
-        "customer_email": "",
-        "contact_phone": caller or ""
+        "contact_phone": ""
     }
-    msg = save_reservation(payload)
 
+    # FAST: don't slow call response
     vr = VoiceResponse()
-    vr.say(msg.replace("\n", ". "), voice="alice", language="en-US")
+    vr.say("Perfect, I'm booking your table now.", voice="alice", language="en-US")
     vr.say("Thank you. Goodbye.", voice="alice", language="en-US")
     vr.hangup()
 
-    asyncio.create_task(notify_refresh())
+    asyncio.create_task(async_save(payload))
     return Response(content=str(vr), media_type="application/xml")
 
-# ---------------------------------------------------------
-# UPDATE / CANCEL (Dashboard)
-# ---------------------------------------------------------
-@app.post("/updateReservation")
-async def update_reservation(update: dict):
-    normalized = normalize_to_utc(update.get("datetime"))
-    supabase.table("reservations").update({
-        "datetime": normalized if normalized else update.get("datetime"),
-        "party_size": update.get("party_size"),
-        "table_number": update.get("table_number"),
-        "notes": update.get("notes"),
-        "status": update.get("status", "updated"),
-    }).eq("reservation_id", update["reservation_id"]).execute()
 
-    asyncio.create_task(notify_refresh())
-    return {"success": True}
-
-@app.post("/cancelReservation")
-async def cancel_reservation(update: dict):
-    supabase.table("reservations").update({"status": "cancelled"}).eq(
-        "reservation_id", update["reservation_id"]
-    ).execute()
-
-    asyncio.create_task(notify_refresh())
-    return {"success": True}
+# async save (fast, avoid delay during call)
+async def async_save(payload):
+    await asyncio.sleep(2)
+    save_reservation(payload)
+    await notify_refresh()
 
 # ---------------------------------------------------------
 # REALTIME REFRESH
