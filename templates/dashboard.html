@@ -99,6 +99,7 @@
     </div>
   </header>
 
+  <!-- Top KPIs still rendered server-side -->
   <div class="cards">
     <div class="card"><h3>Total</h3><p>{{ reservations|length }}</p></div>
     <div class="card"><h3>Confirmed</h3><p>{{ reservations|selectattr('status','equalto','confirmed')|list|length }}</p></div>
@@ -106,6 +107,7 @@
     <div class="card"><h3>This Week</h3><p>{{ weekly_count }}</p></div>
   </div>
 
+  <!-- Filters -->
   <div class="filters">
     <input id="q" placeholder="Search...">
     <input id="dateFilter" type="date">
@@ -122,11 +124,13 @@
     <button class="btn" id="todayBtn">Today</button>
   </div>
 
+  <!-- Table availability -->
   <div class="table-availability">
     <h2>🟩 Table Availability</h2>
     <div id="tableGrid" class="table-grid"></div>
   </div>
 
+  <!-- Main table -->
   <div class="table-wrap">
     <table>
       <thead>
@@ -148,7 +152,6 @@
         data-status="{{ r.status }}"
         data-table="{{ r.table_number or '' }}"
       >
-
         {% if r.datetime and 'T' in r.datetime %}
           {% set dt = r.datetime.split('T') %}
           <td>{{ dt[0] }}</td>
@@ -174,9 +177,9 @@
         <td><span class="chip {{ r.status }}">{{ r.status.replace("_"," ") }}</span></td>
 
         <td>
-          <div class="menu-wrapper">
-            <button class="menu-btn" onclick="toggleMenu(this)">⋮</button>
-            <div class="dropdown-menu">
+          <div class="menu-wrapper" onclick="event.stopPropagation()">
+            <button class="menu-btn" onclick="toggleMenu(this);event.stopPropagation()">⋮</button>
+            <div class="dropdown-menu" onclick="event.stopPropagation()">
               <button onclick="openEdit({{ r.reservation_id }}, `{{ r.datetime or '' }}`, {{ r.party_size or 1 }}, `{{ r.table_number or '' }}`, `{{ r.notes or '' }}`)">✏️ Edit</button>
               <button onclick="markStatus({{ r.reservation_id }}, 'arrived')">✅ Arrived</button>
               <button onclick="markStatus({{ r.reservation_id }}, 'no_show')">⚠️ No-Show</button>
@@ -192,15 +195,17 @@
     </table>
   </div>
 
+  <!-- Insights (we’ll fill these with JS, so they never break) -->
   <h2 style="margin-top:24px;">📊 Insights</h2>
   <div class="cards" style="grid-template-columns:repeat(3,1fr);">
-    <div class="card"><h3>Avg Party</h3><p>{{ avg_party_size }}</p></div>
-    <div class="card"><h3>Peak Time</h3><p>{{ peak_time }}</p></div>
-    <div class="card"><h3>Cancel Rate</h3><p>{{ cancel_rate }}%</p></div>
+    <div class="card"><h3>Avg Party</h3><p id="avgParty">–</p></div>
+    <div class="card"><h3>Peak Time</h3><p id="peakTime">–</p></div>
+    <div class="card"><h3>Cancel Rate</h3><p id="cancelRate">–</p></div>
   </div>
 
 </div>
 
+<!-- Edit modal -->
 <div class="modal-backdrop" id="editModal">
   <div class="modal">
     <header><h3>Edit Reservation</h3></header>
@@ -233,6 +238,7 @@
   </div>
 </div>
 
+<!-- New reservation modal -->
 <div class="modal-backdrop" id="newModal">
   <div class="modal">
     <header><h3>New Reservation</h3></header>
@@ -259,12 +265,17 @@
 </div>
 
 <script>
+/* Menu */
 function toggleMenu(el){
   const menu = el.nextElementSibling;
   document.querySelectorAll(".dropdown-menu").forEach(m=>{ if(m!==menu) m.style.display="none"; });
   menu.style.display = menu.style.display==="block" ? "none" : "block";
 }
+document.body.addEventListener("click", ()=> {
+  document.querySelectorAll(".dropdown-menu").forEach(m=> m.style.display="none");
+});
 
+/* Filters */
 const tbody=document.getElementById("tbody");
 const q=document.getElementById("q");
 const dateF=document.getElementById("dateFilter");
@@ -289,6 +300,7 @@ function filter(){
   });
 
   buildTableGrid();
+  computeInsights(); // keep insights fresh
 }
 
 q.oninput=filter;
@@ -300,6 +312,7 @@ document.getElementById("todayBtn").onclick=()=>{
   filter();
 };
 
+/* Table availability */
 const TABLE_IDS = ["T1","T2","T3","T4","T5","T6","T7","T8","T9","T10"];
 
 function buildTableGrid(){
@@ -328,8 +341,10 @@ function filterByTable(table){
     r.style.display = (r.dataset.table === table) ? "" : "none";
   });
   buildTableGrid();
+  computeInsights();
 }
 
+/* Actions (use same-origin URLs to avoid CORS issues) */
 async function markStatus(id,s){
   await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:s})});
   location.reload();
@@ -343,6 +358,7 @@ async function doCancel(id){
   location.reload();
 }
 
+/* Call + WhatsApp */
 function callCustomer(phone){
   if(!phone) return alert("No phone number.");
   window.location.href = `tel:${phone}`;
@@ -353,8 +369,8 @@ function sendWhatsApp(phone,name,dt){
   window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
 }
 
+/* Refresh & WS */
 document.getElementById("refreshBtn").onclick=()=>location.reload();
-
 (function(){
   try{
     const ws=new WebSocket(`${location.protocol==="https:"?"wss":"ws"}://${location.host}/ws`);
@@ -362,7 +378,7 @@ document.getElementById("refreshBtn").onclick=()=>location.reload();
   }catch(e){}
 })();
 
-/* ✅ CREATE RESERVATION */
+/* Create Reservation (same-origin POST; backend endpoint below) */
 document.getElementById("newBtn").onclick=()=>{ document.getElementById("newModal").style.display="flex"; };
 document.getElementById("closeNewBtn").onclick=()=>{ document.getElementById("newModal").style.display="none"; };
 
@@ -386,7 +402,7 @@ document.getElementById("createBtn").onclick = async () => {
     notes: document.getElementById("new_notes").value.trim() || null
   };
 
-  await fetch("https://ai-reservation-backend-final.onrender.com/createReservation", {
+  await fetch("/createReservation", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
@@ -396,7 +412,7 @@ document.getElementById("createBtn").onclick = async () => {
   location.reload();
 };
 
-/* ✅ FIXED EDIT RESERVATION */
+/* Edit reservation */
 let currentId = null;
 
 function openEdit(id, dt, ps, table, notes){
@@ -407,22 +423,20 @@ function openEdit(id, dt, ps, table, notes){
   document.getElementById("notes").value = notes || "";
   document.getElementById("editModal").style.display="flex";
 }
-
 function closeEdit(){ document.getElementById("editModal").style.display="none"; }
 
 document.getElementById("saveBtn").onclick = async () => {
   const payload = {
     reservation_id: currentId,
-    datetime: document.getElementById("dt").value
-      ? new Date(document.getElementById("dt").value).toISOString()
-      : undefined,
-    party_size: Number(document.getElementById("ps").value || 1),
-    table_number: document.getElementById("table").value || null,
-    notes: document.getElementById("notes").value || null,
+    // Only send fields that user changed; undefined fields won't overwrite DB
+    datetime: document.getElementById("dt").value ? new Date(document.getElementById("dt").value).toISOString() : undefined,
+    party_size: document.getElementById("ps").value ? Number(document.getElementById("ps").value) : undefined,
+    table_number: document.getElementById("table").value || undefined,
+    notes: document.getElementById("notes").value || undefined,
     status: "updated"
   };
 
-  await fetch("https://ai-reservation-backend-final.onrender.com/updateReservation", {
+  await fetch("/updateReservation", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
@@ -432,7 +446,7 @@ document.getElementById("saveBtn").onclick = async () => {
   location.reload();
 };
 
-/* CSV */
+/* CSV export */
 document.getElementById("exportBtn").onclick=()=>{
   const header = ["Date","Time","Customer","Contact","Party","Table","Notes","Status"];
   const rows = [header];
@@ -459,7 +473,56 @@ document.getElementById("exportBtn").onclick=()=>{
   a.click();
 };
 
-buildTableGrid();
+/* Client-side Insights (never depend on backend vars) */
+function computeInsights(){
+  const rows = [...tbody.rows];
+
+  const total = rows.length;
+  if (!total){
+    document.getElementById("avgParty").innerText = "0";
+    document.getElementById("peakTime").innerText = "N/A";
+    document.getElementById("cancelRate").innerText = "0%";
+    return;
+  }
+
+  // Avg party
+  let sumParty = 0, countParty = 0;
+  const timeFreq = {};
+  let cancelled = 0;
+
+  rows.forEach(r=>{
+    // party
+    const p = parseInt(r.cells[4].innerText.trim() || "0", 10);
+    if (!isNaN(p) && p>0){ sumParty += p; countParty++; }
+
+    // time
+    const t = r.cells[1].innerText.trim();
+    if (t && t !== "-"){ timeFreq[t] = (timeFreq[t]||0) + 1; }
+
+    // status
+    const s = r.dataset.status || "";
+    if (s === "cancelled") cancelled += 1;
+  });
+
+  const avg = countParty ? (sumParty / countParty) : 0;
+  let peak = "N/A";
+  let best = 0;
+  Object.entries(timeFreq).forEach(([t,c])=>{
+    if (c > best){ best = c; peak = t; }
+  });
+
+  const cancelRate = total ? ((cancelled/total)*100) : 0;
+
+  document.getElementById("avgParty").innerText = avg.toFixed(1);
+  document.getElementById("peakTime").innerText = peak;
+  document.getElementById("cancelRate").innerText = cancelRate.toFixed(1) + "%";
+}
+
+/* Init */
+document.addEventListener("DOMContentLoaded", ()=>{
+  buildTableGrid();
+  computeInsights();
+});
 </script>
 
 </body>
