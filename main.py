@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+from urllib.parse import quote
 import json, os, asyncio, time
 import dateparser  # natural language datetime parser
 
@@ -15,7 +16,7 @@ from supabase import create_client, Client
 from openai import OpenAI
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ✅ Twilio (WhatsApp + Voice + Outbound Calls)
+# ✅ Twilio (WhatsApp + Voice + Calls)
 from twilio.rest import Client as TwilioClient
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.twiml.voice_response import VoiceResponse, Gather
@@ -64,9 +65,6 @@ def safe_fromiso(val: str):
 
 
 def normalize_to_utc(dt_str: str | None) -> str | None:
-    """
-    Parse many kinds of natural language date/times and return ISO UTC.
-    """
     if not dt_str:
         return None
 
@@ -121,7 +119,7 @@ TABLE_LIMIT = 10
 # SAVE RESERVATION LOGIC
 # ---------------------------------------------------------
 recent_keys = {}
-TTL = 60  # seconds
+TTL = 60  # seconds to avoid double booking
 
 
 def dedupe(key: str):
@@ -217,7 +215,7 @@ async def dashboard(request: Request):
 
 
 # ---------------------------------------------------------
-# WHATSApp WEBHOOK
+# ✅ WHATSAPP WEBHOOK
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
@@ -226,7 +224,7 @@ async def whatsapp_webhook(Body: str = Form(...)):
     extraction_prompt = """
 You are an AI reservation assistant. Extract structured reservation data.
 
-⬇️ RETURN ONLY JSON (no text around it)
+RETURN ONLY JSON:
 {
  "customer_name": "",
  "customer_email": "",
@@ -272,7 +270,6 @@ You are an AI reservation assistant. Extract structured reservation data.
 # ---------------------------------------------------------
 @app.get("/call")
 async def make_test_call(to: str):
-    """Trigger a call from your Twilio number to a given number."""
     try:
         call = twilio_client.calls.create(
             to=to,
@@ -285,27 +282,24 @@ async def make_test_call(to: str):
 
 
 # ---------------------------------------------------------
-# VOICE FLOW — BOOKING (improved: confirmations + longer timeouts)
+# ✅ VOICE FLOW — BOOKING (fixed + fast)
 # ---------------------------------------------------------
-def gather_speech(vr: VoiceResponse, action_url: str, prompt: str, timeout_sec: int = 10):
-    """
-    Helper to add a speech gather with a reasonable timeout and automatic speechTimeout handling.
-    """
-    g: Gather = vr.gather(
+def gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=10):
+    g = vr.gather(
         input="speech",
-        action=action_url,
-        method="POST",
+        speech_timeout="auto",
         timeout=timeout_sec,
-        speech_timeout="auto"
+        action=url,
+        method="POST"
     )
     g.say(prompt, voice="alice", language="en-US")
     return vr
 
 
-@app.post("/voice", response_class=PlainTextResponse)
+@app.post("/voice")
 async def voice_welcome():
     vr = VoiceResponse()
-    gather_speech(vr, "/voice/name", "Hi! I can book your table. What is your name?", timeout_sec=10)
+    gather(vr, "/voice/name", "Hi! I can book your table. What is your name?")
     return Response(content=str(vr), media_type="application/xml")
 
 
@@ -314,49 +308,71 @@ async def voice_name(request: Request):
     form = await request.form()
     name = (form.get("SpeechResult") or "Guest").strip()
     vr = VoiceResponse()
-    prompt = f"Nice to meet you {name}. For how many people?"
-    gather_speech(vr, f"/voice/party?name={name}", prompt, timeout_sec=10)
+
+    gather(vr, f"/voice/party?name={quote(name)}", f"Nice to meet you {name}. For how many people?")
     return Response(content=str(vr), media_type="application/xml")
 
 
 @app.post("/voice/party")
 async def voice_party(request: Request, name: str):
     form = await request.form()
-    speech = (form.get("SpeechResult") or "").strip()
+    speech = (form.get("SpeechResult") or "").lower().strip()
 
-    # Try to pull an int from speech like "for 3 people"
+    # convert spoken number words → digit
+    numbers = {
+        "one": "1", "two": "2", "three": "3", "four": "4", "for": "4",
+        "five": "5", "six": "6", "seven": "7", "eight": "8",
+        "nine": "9", "ten": "10"
+    }
+
     party = None
+
+    # digit case (e.g., "5 people")
     for token in speech.replace("-", " ").split():
         if token.isdigit():
             party = token
             break
-    if not party:
-        party = "1"
+
+    # word case (e.g., "four people")
+    if party is None:
+        for word, num in numbers.items():
+            if word in speech:
+                party = num
+                break
+
+    if party is None:
+        party = "1"  # fallback but not break flow
 
     vr = VoiceResponse()
-    prompt = "What date and time should I book? For example, Friday, November twenty second at 7 PM."
-    gather_speech(vr, f"/voice/datetime?name={name}&party={party}", prompt, timeout_sec=12)
+    gather(
+        vr,
+        f"/voice/datetime?name={quote(name)}&party={party}",
+        "What date and time should I book? Example: Friday at 7 PM."
+    )
     return Response(content=str(vr), media_type="application/xml")
 
 
 @app.post("/voice/datetime")
 async def voice_datetime(request: Request, name: str, party: str):
     form = await request.form()
-    dt_spoken = (form.get("SpeechResult") or "").strip()
+    spoken = (form.get("SpeechResult") or "").strip()
 
-    parsed_iso_utc = normalize_to_utc(dt_spoken)
+    iso = normalize_to_utc(spoken)
     vr = VoiceResponse()
 
-    if not parsed_iso_utc:
-        # Could not understand → ask again with clearer instruction, longer timeout
-        prompt = ("Sorry, I could not understand the date. "
-                  "Please say the full date like: Friday, January twenty fourth at 8 PM.")
-        gather_speech(vr, f"/voice/datetime?name={name}&party={party}", prompt, timeout_sec=12)
+    if not iso:
+        gather(
+            vr,
+            f"/voice/datetime?name={quote(name)}&party={party}",
+            "Sorry, I didn't catch that. Try saying the full date, like Friday at 7 PM."
+        )
         return Response(content=str(vr), media_type="application/xml")
 
-    # Confirm what we heard, then ask for notes
-    confirm = f"Great, I heard {dt_spoken}. Any notes or preferences? You can say none."
-    gather_speech(vr, f"/voice/notes?name={name}&party={party}&dt={dt_spoken}", confirm, timeout_sec=8)
+    gather(
+        vr,
+        f"/voice/notes?name={quote(name)}&party={party}&dt={quote(spoken)}",
+        f"Great, I heard {spoken}. Any notes or preferences? Say none if no."
+    )
     return Response(content=str(vr), media_type="application/xml")
 
 
@@ -371,7 +387,7 @@ async def voice_notes(request: Request, name: str, party: str, dt: str):
         "party_size": party,
         "datetime": dt,
         "notes": notes,
-        "contact_phone": ""  # could be filled from Twilio webhook if needed
+        "contact_phone": ""
     }
     msg = save_reservation(payload)
 
@@ -382,34 +398,6 @@ async def voice_notes(request: Request, name: str, party: str, dt: str):
 
     asyncio.create_task(notify_refresh())
     return Response(content=str(vr), media_type="application/xml")
-
-
-# ---------------------------------------------------------
-# UPDATE / CANCEL (Dashboard)
-# ---------------------------------------------------------
-@app.post("/updateReservation")
-async def update_reservation(update: dict):
-    normalized = normalize_to_utc(update.get("datetime"))
-    supabase.table("reservations").update({
-        "datetime": normalized if normalized else update.get("datetime"),
-        "party_size": update.get("party_size"),
-        "table_number": update.get("table_number"),
-        "notes": update.get("notes"),
-        "status": update.get("status", "updated"),
-    }).eq("reservation_id", update["reservation_id"]).execute()
-
-    asyncio.create_task(notify_refresh())
-    return {"success": True}
-
-
-@app.post("/cancelReservation")
-async def cancel_reservation(update: dict):
-    supabase.table("reservations").update({"status": "cancelled"}).eq(
-        "reservation_id", update["reservation_id"]
-    ).execute()
-
-    asyncio.create_task(notify_refresh())
-    return {"success": True}
 
 
 # ---------------------------------------------------------
