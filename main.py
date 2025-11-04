@@ -108,7 +108,7 @@ TABLE_LIMIT = 10
 # SAVE RESERVATION LOGIC
 # ---------------------------------------------------------
 recent_keys = {}
-TTL = 60  # avoid duplicates
+TTL = 60
 
 def dedupe(key: str):
     now = time.time()
@@ -185,7 +185,6 @@ async def dashboard(request: Request):
 
     now = datetime.now(LOCAL_TZ)
     week_ago = now - timedelta(days=7)
-
     weekly_count = len([r for r in view if safe_fromiso(r.get("datetime") or "").astimezone(LOCAL_TZ) > week_ago])
     avg_party_size = round(sum(int(r.get("party_size", 0)) for r in view) / total, 1) if total else 0
 
@@ -260,7 +259,7 @@ async def make_test_call(to: str):
         return {"error": str(e)}
 
 # ---------------------------------------------------------
-# ✅ VOICE FLOW — BOOKING (fast + final + NO/NONE fixed)
+# ✅ VOICE FLOW (NO/NONE fixed)
 # ---------------------------------------------------------
 def gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=10):
     g = vr.gather(
@@ -346,7 +345,6 @@ async def voice_datetime(request: Request, name: str, party: str):
     )
     return Response(content=str(vr), media_type="application/xml")
 
-
 @app.post("/voice/notes")
 async def voice_notes(request: Request, name: str, party: str, dt: str):
     form = await request.form()
@@ -366,7 +364,6 @@ async def voice_notes(request: Request, name: str, party: str, dt: str):
         "contact_phone": ""
     }
 
-    # FAST: don't slow call response
     vr = VoiceResponse()
     vr.say("Perfect, I'm booking your table now.", voice="alice", language="en-US")
     vr.say("Thank you. Goodbye.", voice="alice", language="en-US")
@@ -376,11 +373,54 @@ async def voice_notes(request: Request, name: str, party: str, dt: str):
     return Response(content=str(vr), media_type="application/xml")
 
 
-# async save (fast, avoid delay during call)
 async def async_save(payload):
     await asyncio.sleep(2)
     save_reservation(payload)
     await notify_refresh()
+
+# ---------------------------------------------------------
+# ✅ DASHBOARD API ENDPOINTS
+# ---------------------------------------------------------
+
+@app.post("/createReservation")
+async def create_reservation(payload: dict):
+    """ Manual create from dashboard modal """
+    msg = save_reservation(payload)
+    asyncio.create_task(notify_refresh())
+    return {"ok": True, "message": msg}
+
+
+@app.post("/updateReservation")
+async def update_reservation(update: dict):
+    """ Edit reservation without overwriting unchanged fields """
+    reservation_id = update.get("reservation_id")
+    if not reservation_id:
+        return {"success": False, "error": "reservation_id required"}
+
+    patch = {}
+
+    if "datetime" in update and update["datetime"]:
+        norm = normalize_to_utc(update["datetime"])
+        if norm:
+            patch["datetime"] = norm
+
+    for key in ["party_size", "table_number", "notes", "status"]:
+        if key in update and update[key] not in [None, "", "undefined"]:
+            patch[key] = update[key]
+
+    if not patch:
+        return {"success": False, "error": "no fields to update"}
+
+    supabase.table("reservations").update(patch).eq("reservation_id", reservation_id).execute()
+    asyncio.create_task(notify_refresh())
+    return {"success": True}
+
+@app.post("/cancelReservation")
+async def cancel_reservation(update: dict):
+    reservation_id = update.get("reservation_id")
+    supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", reservation_id).execute()
+    asyncio.create_task(notify_refresh())
+    return {"success": True}
 
 # ---------------------------------------------------------
 # REALTIME REFRESH
