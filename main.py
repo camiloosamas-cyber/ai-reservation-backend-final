@@ -18,14 +18,14 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # ✅ Twilio (WhatsApp + Voice + Outbound Calls)
 from twilio.rest import Client as TwilioClient
 from twilio.twiml.messaging_response import MessagingResponse
-from twilio.twiml.voice_response import VoiceResponse
+from twilio.twiml.voice_response import VoiceResponse, Gather
 
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")  # The number you bought
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")  # Your purchased number
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://ai-reservation-backend-final.onrender.com")
 
 twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-
 
 
 # ---------------------------------------------------------
@@ -43,7 +43,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 
 # ---------------------------------------------------------
@@ -65,6 +64,9 @@ def safe_fromiso(val: str):
 
 
 def normalize_to_utc(dt_str: str | None) -> str | None:
+    """
+    Parse many kinds of natural language date/times and return ISO UTC.
+    """
     if not dt_str:
         return None
 
@@ -104,7 +106,6 @@ def readable_local(iso_utc: str | None) -> str:
     return dtu.astimezone(LOCAL_TZ).strftime("%A %I:%M %p")
 
 
-
 # ---------------------------------------------------------
 # SUPABASE
 # ---------------------------------------------------------
@@ -114,7 +115,6 @@ supabase: Client = create_client(
 )
 
 TABLE_LIMIT = 10
-
 
 
 # ---------------------------------------------------------
@@ -183,7 +183,6 @@ def save_reservation(data: dict):
     )
 
 
-
 # ---------------------------------------------------------
 # HOME + DASHBOARD
 # ---------------------------------------------------------
@@ -217,9 +216,8 @@ async def dashboard(request: Request):
     )
 
 
-
 # ---------------------------------------------------------
-# WHATSAPP WEBHOOK (working)
+# WHATSApp WEBHOOK
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
@@ -269,9 +267,8 @@ You are an AI reservation assistant. Extract structured reservation data.
     return Response(content=str(resp), media_type="application/xml")
 
 
-
 # ---------------------------------------------------------
-# ✅ OUTBOUND CALL TRIGGER (NEW)
+# ✅ OUTBOUND CALL TRIGGER
 # ---------------------------------------------------------
 @app.get("/call")
 async def make_test_call(to: str):
@@ -280,63 +277,111 @@ async def make_test_call(to: str):
         call = twilio_client.calls.create(
             to=to,
             from_=TWILIO_PHONE_NUMBER,
-            url="https://ai-reservation-backend-final.onrender.com/voice"
+            url=f"{PUBLIC_BASE_URL}/voice"
         )
         return {"status": "queued", "sid": call.sid}
-
     except Exception as e:
         return {"error": str(e)}
 
 
+# ---------------------------------------------------------
+# VOICE FLOW — BOOKING (improved: confirmations + longer timeouts)
+# ---------------------------------------------------------
+def gather_speech(vr: VoiceResponse, action_url: str, prompt: str, timeout_sec: int = 10):
+    """
+    Helper to add a speech gather with a reasonable timeout and automatic speechTimeout handling.
+    """
+    g: Gather = vr.gather(
+        input="speech",
+        action=action_url,
+        method="POST",
+        timeout=timeout_sec,
+        speech_timeout="auto"
+    )
+    g.say(prompt, voice="alice", language="en-US")
+    return vr
 
-# ---------------------------------------------------------
-# VOICE FLOW — CALL BOOKING
-# ---------------------------------------------------------
+
 @app.post("/voice", response_class=PlainTextResponse)
 async def voice_welcome():
     vr = VoiceResponse()
-    vr.say("Hi! I can book your table. What is your name?", voice="alice", language="en-US")
-    vr.gather(input="speech", action="/voice/name", method="POST")
+    gather_speech(vr, "/voice/name", "Hi! I can book your table. What is your name?", timeout_sec=10)
     return Response(content=str(vr), media_type="application/xml")
 
 
 @app.post("/voice/name")
 async def voice_name(request: Request):
     form = await request.form()
-    name = form.get("SpeechResult", "Guest")
+    name = (form.get("SpeechResult") or "Guest").strip()
     vr = VoiceResponse()
-    vr.gather(input="speech",
-              action=f"/voice/party?name={name}",
-              method="POST").say(f"Nice to meet you {name}. For how many people?")
+    prompt = f"Nice to meet you {name}. For how many people?"
+    gather_speech(vr, f"/voice/party?name={name}", prompt, timeout_sec=10)
     return Response(content=str(vr), media_type="application/xml")
 
 
 @app.post("/voice/party")
 async def voice_party(request: Request, name: str):
     form = await request.form()
-    party = form.get("SpeechResult", "1")
+    speech = (form.get("SpeechResult") or "").strip()
+
+    # Try to pull an int from speech like "for 3 people"
+    party = None
+    for token in speech.replace("-", " ").split():
+        if token.isdigit():
+            party = token
+            break
+    if not party:
+        party = "1"
+
     vr = VoiceResponse()
-    vr.gather(input="speech",
-              action=f"/voice/datetime?name={name}&party={party}",
-              method="POST").say("What date and time should I book?")
+    prompt = "What date and time should I book? For example, Friday, November twenty second at 7 PM."
+    gather_speech(vr, f"/voice/datetime?name={name}&party={party}", prompt, timeout_sec=12)
     return Response(content=str(vr), media_type="application/xml")
 
 
 @app.post("/voice/datetime")
 async def voice_datetime(request: Request, name: str, party: str):
     form = await request.form()
-    dt = form.get("SpeechResult", "")
-    payload = {"customer_name": name, "party_size": party, "datetime": dt}
+    dt_spoken = (form.get("SpeechResult") or "").strip()
+
+    parsed_iso_utc = normalize_to_utc(dt_spoken)
+    vr = VoiceResponse()
+
+    if not parsed_iso_utc:
+        # Could not understand → ask again with clearer instruction, longer timeout
+        prompt = ("Sorry, I could not understand the date. "
+                  "Please say the full date like: Friday, January twenty fourth at 8 PM.")
+        gather_speech(vr, f"/voice/datetime?name={name}&party={party}", prompt, timeout_sec=12)
+        return Response(content=str(vr), media_type="application/xml")
+
+    # Confirm what we heard, then ask for notes
+    confirm = f"Great, I heard {dt_spoken}. Any notes or preferences? You can say none."
+    gather_speech(vr, f"/voice/notes?name={name}&party={party}&dt={dt_spoken}", confirm, timeout_sec=8)
+    return Response(content=str(vr), media_type="application/xml")
+
+
+@app.post("/voice/notes")
+async def voice_notes(request: Request, name: str, party: str, dt: str):
+    form = await request.form()
+    notes_speech = (form.get("SpeechResult") or "").strip()
+    notes = "none" if notes_speech.lower() in ["", "no", "none", "nope"] else notes_speech
+
+    payload = {
+        "customer_name": name,
+        "party_size": party,
+        "datetime": dt,
+        "notes": notes,
+        "contact_phone": ""  # could be filled from Twilio webhook if needed
+    }
     msg = save_reservation(payload)
 
     vr = VoiceResponse()
-    vr.say(msg.replace("\n", ". "))
-    vr.say("Thanks, goodbye.")
+    vr.say(msg.replace("\n", ". "), voice="alice", language="en-US")
+    vr.say("Thank you. Goodbye.", voice="alice", language="en-US")
     vr.hangup()
 
     asyncio.create_task(notify_refresh())
     return Response(content=str(vr), media_type="application/xml")
-
 
 
 # ---------------------------------------------------------
@@ -365,7 +410,6 @@ async def cancel_reservation(update: dict):
 
     asyncio.create_task(notify_refresh())
     return {"success": True}
-
 
 
 # ---------------------------------------------------------
