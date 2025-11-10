@@ -28,9 +28,9 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://ai-reservation-backend-f
 
 twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-# --------------------------------------------------------------------
+# ---------------------------------------------------------
 # APP INIT
-# --------------------------------------------------------------------
+# ---------------------------------------------------------
 app = FastAPI()
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -44,9 +44,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --------------------------------------------------------------------
-# TIMEZONE + DATE HELPERS
-# --------------------------------------------------------------------
+# ---------------------------------------------------------
+# TIMEZONE HELPERS
+# ---------------------------------------------------------
 LOCAL_TZ_NAME = os.getenv("LOCAL_TZ", "America/Bogota")
 LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
 
@@ -60,16 +60,28 @@ def safe_fromiso(val: str):
     except:
         return None
 
-# ✅ NEW: Clean up filler speech before parsing
+# ✅ CLEAN NAME INPUT (NEW)
+def clean_name_input(text: str) -> str:
+    text = text.lower()
+    remove = ["my name is", "i am", "i'm", "its", "it's", "this is", "name is"]
+    for r in remove:
+        text = text.replace(r, " ")
+    text = re.sub(r"[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ ]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text.title()
+
+# ✅ CLEAN DATETIME INPUT (NEW)
 def clean_datetime_input(text: str) -> str:
     text = text.lower()
-    fillers = ["mmm", "uh", "uhh", "uhhh", "let's do", "i think", "maybe", "like", "go ahead with"]
+    fillers = ["around", "ish", "maybe", "let's do", "lets do", "mmm", "uh", "uhh", "uhhh"]
     for f in fillers:
         text = text.replace(f, " ")
+    # remove "at about", "at around" etc.
+    text = re.sub(r"\bat\b", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
-# ✅ NEW: GPT datetime fallback
+# ✅ GPT DATETIME PARSER (fallback)
 def gpt_extract_datetime(spoken: str) -> str | None:
     try:
         result = client.chat.completions.create(
@@ -77,7 +89,8 @@ def gpt_extract_datetime(spoken: str) -> str | None:
             temperature=0,
             messages=[
                 {"role": "system", "content":
-                    "Extract ONLY the date and time. Return in format like: 'Friday at 7 PM', 'Tomorrow at 9 PM'."},
+                    "Extract ONLY the date and time. "
+                    "Return format like: 'Friday at 7 PM' or 'Tomorrow at 9 PM'."},
                 {"role": "user", "content": spoken}
             ],
         )
@@ -88,7 +101,6 @@ def gpt_extract_datetime(spoken: str) -> str | None:
 def normalize_to_utc(dt_str: str | None) -> str | None:
     if not dt_str:
         return None
-
     parsed = dateparser.parse(
         dt_str,
         settings={
@@ -100,9 +112,7 @@ def normalize_to_utc(dt_str: str | None) -> str | None:
     )
     if not parsed:
         return None
-
-    dtu = parsed.astimezone(timezone.utc)
-    return dtu.isoformat().replace("+00:00", "Z")
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 def utc_to_local(iso_utc: str | None) -> str:
     dtu = safe_fromiso(iso_utc or "")
@@ -116,9 +126,9 @@ def readable_local(iso_utc: str | None) -> str:
         return "Invalid time"
     return dtu.astimezone(LOCAL_TZ).strftime("%A %I:%M %p")
 
-# --------------------------------------------------------------------
-# SUPABASE STORAGE
-# --------------------------------------------------------------------
+# ---------------------------------------------------------
+# SUPABASE
+# ---------------------------------------------------------
 supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
     os.getenv("SUPABASE_SERVICE_ROLE"),
@@ -126,9 +136,9 @@ supabase: Client = create_client(
 
 TABLE_LIMIT = 10
 
-# --------------------------------------------------------------------
+# ---------------------------------------------------------
 # SAVE RESERVATION
-# --------------------------------------------------------------------
+# ---------------------------------------------------------
 recent_keys = {}
 TTL = 60
 
@@ -155,18 +165,10 @@ def save_reservation(data: dict):
     iso_utc = normalize_to_utc(data.get("datetime"))
     if not iso_utc:
         return "❌ Invalid date/time. Please specify date AND time."
-
     name = data.get("customer_name", "").strip() or "Guest"
-    dedupe_key = f"{name.lower()}|{iso_utc}"
-
-    if dedupe(dedupe_key):
-        return f"ℹ️ Already confirmed.\n👤 {name}"
-
     table = data.get("table_number") or assign_table(iso_utc)
-
     if not table:
         return "❌ No tables available at that time."
-
     supabase.table("reservations").insert({
         "customer_name": name,
         "customer_email": data.get("customer_email", ""),
@@ -177,7 +179,6 @@ def save_reservation(data: dict):
         "notes": data.get("notes", ""),
         "status": "confirmed",
     }).execute()
-
     return (
         "✅ Reservation confirmed!\n"
         f"👤 {name}\n"
@@ -186,9 +187,9 @@ def save_reservation(data: dict):
         f"🍽 Table: {table}"
     )
 
-# --------------------------------------------------------------------
-# DASHBOARD + HOME
-# --------------------------------------------------------------------
+# ---------------------------------------------------------
+# ROUTES
+# ---------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home():
     return "<h3>✅ Backend running</h3><p>Go to /dashboard</p>"
@@ -197,31 +198,21 @@ def home():
 async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
     rows = res.data or []
-
     for r in rows:
         r["datetime"] = utc_to_local(r.get("datetime"))
-
-    total = len(rows)
-    now = datetime.now(LOCAL_TZ)
-    week_ago = now - timedelta(days=7)
-
-    weekly_count = len([r for r in rows if safe_fromiso(r.get("datetime") or "").astimezone(LOCAL_TZ) > week_ago])
-    avg_party_size = round(sum(int(r.get("party_size", 0)) for r in rows) / total, 1) if total else 0
-
     return templates.TemplateResponse(
         "dashboard.html",
-        {"request": request, "reservations": rows, "weekly_count": weekly_count, "avg_party_size": avg_party_size},
+        {"request": request, "reservations": rows},
     )
 
-# --------------------------------------------------------------------
+# ---------------------------------------------------------
 # ✅ WHATSAPP WEBHOOK
-# --------------------------------------------------------------------
+# ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
     resp = MessagingResponse()
-
     extraction_prompt = """
-You are an AI reservation assistant. Extract structured reservation data.
+Extract structured reservation data.
 
 RETURN ONLY JSON:
 {
@@ -234,7 +225,6 @@ RETURN ONLY JSON:
  "ask": ""
 }
 """
-
     try:
         result = client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -242,12 +232,9 @@ RETURN ONLY JSON:
             messages=[{"role": "system", "content": extraction_prompt},
                       {"role": "user", "content": Body}],
         )
-
-        output = result.choices[0].message.content.strip().replace("```json", "").replace("```", "").strip()
-        data = json.loads(output)
-
+        data = json.loads(result.choices[0].message.content.strip().replace("```json","").replace("```",""))
     except:
-        resp.message("❌ Sorry, I couldn't understand that. Try again.")
+        resp.message("❌ Sorry, I couldn't understand that.")
         return Response(content=str(resp), media_type="application/xml")
 
     if data.get("ask"):
@@ -256,13 +243,12 @@ RETURN ONLY JSON:
 
     msg = save_reservation(data)
     resp.message(msg)
-
     asyncio.create_task(notify_refresh())
     return Response(content=str(resp), media_type="application/xml")
 
-# --------------------------------------------------------------------
+# ---------------------------------------------------------
 # ✅ CALL FLOW (voice booking)
-# --------------------------------------------------------------------
+# ---------------------------------------------------------
 @app.get("/call")
 async def make_test_call(to: str):
     try:
@@ -275,7 +261,6 @@ async def make_test_call(to: str):
     except Exception as e:
         return {"error": str(e)}
 
-# ✅ Faster gather + partial speech + human voice
 def gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=6):
     g = vr.gather(
         input="speech",
@@ -299,7 +284,8 @@ async def voice_welcome():
 @app.post("/voice/name")
 async def voice_name(request: Request):
     form = await request.form()
-    name = (form.get("SpeechResult") or "Guest").strip()
+    name_raw = (form.get("SpeechResult") or "").strip()
+    name = clean_name_input(name_raw)
 
     vr = VoiceResponse()
     gather(vr, f"/voice/party?name={quote(name)}", f"Nice to meet you {name}. For how many people?")
@@ -322,26 +308,31 @@ async def voice_party(request: Request, name: str):
 @app.post("/voice/datetime")
 async def voice_datetime(request: Request, name: str, party: str):
     form = await request.form()
-
     raw = (form.get("SpeechResult") or "").strip()
     cleaned = clean_datetime_input(raw)
 
-    iso = normalize_to_utc(cleaned)
+    # If user gives day only ("Friday night"), ask for time
+    contains_time = bool(re.search(r"\d|pm|am", cleaned))
+    if not contains_time:
+        vr = VoiceResponse()
+        gather(vr, f"/voice/datetime?name={quote(name)}&party={party}",
+               "What time exactly?")
+        return Response(content=str(vr), media_type="application/xml")
 
+    # Parse datetime (auto-fixes “around 7pm” → 7PM)
+    iso = normalize_to_utc(cleaned)
     if not iso:
         cleaned_gpt = gpt_extract_datetime(raw)
         if cleaned_gpt:
             iso = normalize_to_utc(cleaned_gpt)
-            cleaned = cleaned_gpt  # ✅ FIX: pass GPT-cleaned value forward
+            cleaned = cleaned_gpt
 
     vr = VoiceResponse()
-
     if not iso:
         gather(vr, f"/voice/datetime?name={quote(name)}&party={party}",
                "Sorry, I didn't catch that. Try saying Friday at 7 PM.")
         return Response(content=str(vr), media_type="application/xml")
 
-    # ✅ FIXED — pass only validated/cleaned datetime to next step
     gather(vr, f"/voice/notes?name={quote(name)}&party={party}&dt={quote(cleaned)}",
            "Any notes or preferences? Say none if no.")
     return Response(content=str(vr), media_type="application/xml")
@@ -350,7 +341,6 @@ async def voice_datetime(request: Request, name: str, party: str):
 async def voice_notes(request: Request, name: str, party: str, dt: str):
     form = await request.form()
     notes_speech = (form.get("SpeechResult") or "").strip()
-
     notes = "none" if any(x in notes_speech.lower() for x in ["none", "no", "nothing"]) else notes_speech
 
     payload = {"customer_name": name, "party_size": party, "datetime": dt, "notes": notes, "contact_phone": ""}
@@ -363,13 +353,10 @@ async def voice_notes(request: Request, name: str, party: str, dt: str):
     asyncio.create_task(async_save(payload))
     return Response(content=str(vr), media_type="application/xml")
 
-# ✅ For partial speech streaming (latency improvement)
 @app.post("/voice/stream")
 async def voice_stream(request: Request):
-    try:
-        _ = await request.form()
-    except:
-        pass
+    try: await request.form()
+    except: pass
     return Response(content="OK", media_type="text/plain")
 
 async def async_save(payload):
@@ -377,48 +364,9 @@ async def async_save(payload):
     save_reservation(payload)
     await notify_refresh()
 
-# --------------------------------------------------------------------
-# DASHBOARD ACTIONS
-# --------------------------------------------------------------------
-@app.post("/createReservation")
-async def create_reservation(payload: dict):
-    msg = save_reservation(payload)
-    asyncio.create_task(notify_refresh())
-    return {"ok": True, "message": msg}
-
-@app.post("/updateReservation")
-async def update_reservation(update: dict):
-    reservation_id = update.get("reservation_id")
-    if not reservation_id:
-        return {"success": False, "error": "reservation_id required"}
-
-    patch = {}
-
-    if "datetime" in update and update["datetime"]:
-        norm = normalize_to_utc(update["datetime"])
-        if norm:
-            patch["datetime"] = norm
-
-    for key in ["party_size", "table_number", "notes", "status"]:
-        if update.get(key) not in [None, "", "undefined"]:
-            patch[key] = update[key]
-
-    if not patch:
-        return {"success": False, "error": "no fields to update"}
-
-    supabase.table("reservations").update(patch).eq("reservation_id", reservation_id).execute()
-    asyncio.create_task(notify_refresh())
-    return {"success": True}
-
-@app.post("/cancelReservation")
-async def cancel_reservation(update: dict):
-    supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", update.get("reservation_id")).execute()
-    asyncio.create_task(notify_refresh())
-    return {"success": True}
-
-# --------------------------------------------------------------------
-# REALTIME DASHBOARD WS PUSH
-# --------------------------------------------------------------------
+# ---------------------------------------------------------
+# WS REFRESH TO DASHBOARD
+# ---------------------------------------------------------
 clients = []
 
 @app.websocket("/ws")
@@ -429,15 +377,9 @@ async def ws(websocket: WebSocket):
         while True:
             await websocket.receive_text()
     except:
-        if websocket in clients:
-            clients.remove(websocket)
+        clients.remove(websocket)
 
 async def notify_refresh():
     for ws in list(clients):
-        try:
-            await ws.send_text("refresh")
-        except:
-            try:
-                clients.remove(ws)
-            except:
-                pass
+        try: await ws.send_text("refresh")
+        except: clients.remove(ws)
