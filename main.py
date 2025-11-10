@@ -263,10 +263,14 @@ async def make_test_call(to: str):
     except Exception as e:
         return {"error": str(e)}
 
-def gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=10):
+# ✅ Faster gather: enables partial speech and faster response
+def gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=6):
     g = vr.gather(
         input="speech",
+        speech_model="default",
         speech_timeout="auto",
+        partial_results_callback="/voice/stream",   # ✅ NEW: enables partial recognition
+        profanity_filter="false",
         timeout=timeout_sec,
         action=url,
         method="POST",
@@ -350,6 +354,18 @@ async def voice_notes(request: Request, name: str, party: str, dt: str):
 
     asyncio.create_task(async_save(payload))
     return Response(content=str(vr), media_type="application/xml")
+
+# ✅ NEW: receives partial speech transcripts for lower latency
+@app.post("/voice/stream")
+async def voice_stream(request: Request):
+    # Twilio will POST partial transcripts here while the caller is speaking.
+    # We don't need to do anything with them yet—just ACK quickly for speed.
+    # (Keeping this hook allows us to implement advanced streaming later.)
+    try:
+        _ = await request.form()  # contains fields like 'SpeechResult' for partials on some carriers
+    except:
+        pass
+    return Response(content="OK", media_type="text/plain")
 
 async def async_save(payload):
     await asyncio.sleep(2)
