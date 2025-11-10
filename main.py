@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from urllib.parse import quote
 import json, os, asyncio, time, re
-import dateparser
+import dateparser  # natural language datetime parser
 
 # ✅ Supabase
 from supabase import create_client, Client
@@ -25,7 +25,6 @@ TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://ai-reservation-backend-final.onrender.com")
-
 twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 # ---------------------------------------------------------
@@ -45,52 +44,101 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------
-# TIMEZONE HELPERS
+# TIMEZONE SETTINGS
 # ---------------------------------------------------------
 LOCAL_TZ_NAME = os.getenv("LOCAL_TZ", "America/Bogota")
 LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
 
-def safe_fromiso(val: str):
+def _safe_fromiso(s: str) -> datetime | None:
     try:
-        if not val:
+        if not s:
             return None
-        if val.endswith("Z"):
-            val = val.replace("Z", "+00:00")
-        return datetime.fromisoformat(val)
+        if s.endswith("Z"):
+            s = s.replace("Z", "+00:00")
+        return datetime.fromisoformat(s)
     except:
         return None
 
-# ✅ CLEAN NAME INPUT (NEW)
+def _to_utc_iso(dt_str: str | None) -> str | None:
+    """Normalize various inputs (ISO or natural language) to UTC ISO Z."""
+    if not dt_str:
+        return None
+    dti = _safe_fromiso(dt_str)
+    if dti:
+        if dti.tzinfo is None:
+            dti = dti.replace(tzinfo=LOCAL_TZ)
+        dtu = dti.astimezone(timezone.utc)
+        return dtu.isoformat().replace("+00:00", "Z")
+    try:
+        parsed = dateparser.parse(
+            dt_str,
+            settings={
+                "PREFER_DATES_FROM": "future",
+                "RETURN_AS_TIMEZONE_AWARE": True,
+                "TIMEZONE": LOCAL_TZ_NAME,
+                "TO_TIMEZONE": "UTC",
+            },
+        )
+        if not parsed:
+            return None
+        return parsed.isoformat().replace("+00:00", "Z")
+    except:
+        return None
+
+def _utc_iso_to_local_iso(iso_utc: str | None) -> str | None:
+    dtu = _safe_fromiso(iso_utc or "")
+    if not dtu:
+        return None
+    if dtu.tzinfo is None:
+        dtu = dtu.replace(tzinfo=timezone.utc)
+    return dtu.astimezone(LOCAL_TZ).isoformat()
+
+def _readable_local(iso_utc: str | None) -> str:
+    dtu = _safe_fromiso(iso_utc or "")
+    if not dtu:
+        return "Invalid time"
+    if dtu.tzinfo is None:
+        dtu = dtu.replace(tzinfo=timezone.utc)
+    return dtu.astimezone(LOCAL_TZ).strftime("%A %I:%M %p")
+
+def _norm_name(name: str | None) -> str:
+    return (name or "").strip().casefold()
+
+# ---------------------------------------------------------
+# NEW: Natural language helpers (name + datetime)
+# ---------------------------------------------------------
 def clean_name_input(text: str) -> str:
+    """Extract a clean full name: 'My name is David Martinez' -> 'David Martinez'."""
     text = text.lower()
     remove = ["my name is", "i am", "i'm", "its", "it's", "this is", "name is"]
     for r in remove:
         text = text.replace(r, " ")
+    # keep letters and spaces (allow ñ/accents)
     text = re.sub(r"[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ ]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text.title()
 
-# ✅ CLEAN DATETIME INPUT (NEW)
 def clean_datetime_input(text: str) -> str:
+    """Tolerate vague phrasing: 'around 7-ish Friday' -> 'friday 7 pm' (dateparser handles it)."""
     text = text.lower()
     fillers = ["around", "ish", "maybe", "let's do", "lets do", "mmm", "uh", "uhh", "uhhh"]
     for f in fillers:
         text = text.replace(f, " ")
-    # remove "at about", "at around" etc.
-    text = re.sub(r"\bat\b", "", text)
+    # soften strict 'at'
+    text = re.sub(r"\bat\b", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
-# ✅ GPT DATETIME PARSER (fallback)
 def gpt_extract_datetime(spoken: str) -> str | None:
+    """Fallback to GPT to clean ambiguous datetime when dateparser fails."""
     try:
         result = client.chat.completions.create(
             model="gpt-4.1-mini",
             temperature=0,
             messages=[
                 {"role": "system", "content":
-                    "Extract ONLY the date and time. "
-                    "Return format like: 'Friday at 7 PM' or 'Tomorrow at 9 PM'."},
+                    "Extract ONLY the date and time mentioned. "
+                    "Return like 'Friday at 7 PM' or 'Tomorrow at 9 PM'. No extra text."},
                 {"role": "user", "content": spoken}
             ],
         )
@@ -98,36 +146,8 @@ def gpt_extract_datetime(spoken: str) -> str | None:
     except:
         return None
 
-def normalize_to_utc(dt_str: str | None) -> str | None:
-    if not dt_str:
-        return None
-    parsed = dateparser.parse(
-        dt_str,
-        settings={
-            "PREFER_DATES_FROM": "future",
-            "RETURN_AS_TIMEZONE_AWARE": True,
-            "TIMEZONE": LOCAL_TZ_NAME,
-            "TO_TIMEZONE": "UTC",
-        },
-    )
-    if not parsed:
-        return None
-    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-def utc_to_local(iso_utc: str | None) -> str:
-    dtu = safe_fromiso(iso_utc or "")
-    if not dtu:
-        return ""
-    return dtu.astimezone(LOCAL_TZ).isoformat()
-
-def readable_local(iso_utc: str | None) -> str:
-    dtu = safe_fromiso(iso_utc or "")
-    if not dtu:
-        return "Invalid time"
-    return dtu.astimezone(LOCAL_TZ).strftime("%A %I:%M %p")
-
 # ---------------------------------------------------------
-# SUPABASE
+# SUPABASE INIT
 # ---------------------------------------------------------
 supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
@@ -137,23 +157,35 @@ supabase: Client = create_client(
 TABLE_LIMIT = 10
 
 # ---------------------------------------------------------
-# SAVE RESERVATION
+# DEDUPE: in-memory idempotency cache for 60s
 # ---------------------------------------------------------
-recent_keys = {}
-TTL = 60
+# key: f"{norm_name}|{utc_iso}" -> expires_at (epoch seconds)
+_recent_keys: dict[str, float] = {}
+IDEMPOTENCY_TTL = 60  # seconds
 
-def dedupe(key: str):
+def _cache_prune_now():
     now = time.time()
-    for k in list(recent_keys.keys()):
-        if recent_keys[k] <= now:
-            del recent_keys[k]
-    if key in recent_keys and recent_keys[key] > now:
+    to_del = [k for k, exp in _recent_keys.items() if exp <= now]
+    for k in to_del:
+        _recent_keys.pop(k, None)
+
+def _cache_check_and_add(key: str) -> bool:
+    """Return True if key already seen (dup), else add and return False."""
+    _cache_prune_now()
+    now = time.time()
+    exp = now + IDEMPOTENCY_TTL
+    if key in _recent_keys and _recent_keys[key] > now:
         return True
-    recent_keys[key] = now + TTL
+    _recent_keys[key] = exp
     return False
 
-def assign_table(iso_utc: str) -> str | None:
-    booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
+# ---------------------------------------------------------
+# TABLE ASSIGN + SAVE
+# ---------------------------------------------------------
+def assign_table(iso_utc: str):
+    booked = supabase.table("reservations") \
+        .select("table_number") \
+        .eq("datetime", iso_utc).execute()
     taken = {row["table_number"] for row in (booked.data or [])}
     for i in range(1, TABLE_LIMIT + 1):
         t = f"T{i}"
@@ -161,93 +193,252 @@ def assign_table(iso_utc: str) -> str | None:
             return t
     return None
 
-def save_reservation(data: dict):
-    iso_utc = normalize_to_utc(data.get("datetime"))
+def _find_existing(utc_iso: str, name: str):
+    """Look for an active reservation with the same datetime and same name."""
+    result = supabase.table("reservations") \
+        .select("*") \
+        .eq("datetime", utc_iso) \
+        .execute()
+    rows = result.data or []
+    n = _norm_name(name)
+    for r in rows:
+        if _norm_name(r.get("customer_name")) == n and r.get("status") not in ("cancelled", "archived"):
+            return r
+    return None
+
+def save_reservation(data: dict) -> str:
+    """
+    Save to DB with:
+      - UTC normalization
+      - de-duplication (DB lookup + 60s idempotency cache)
+      - auto table assignment
+      - readable LOCAL confirmation
+    """
+    # Normalize to UTC
+    iso_utc = _to_utc_iso(data.get("datetime"))
     if not iso_utc:
         return "❌ Invalid date/time. Please specify date AND time."
-    name = data.get("customer_name", "").strip() or "Guest"
-    table = data.get("table_number") or assign_table(iso_utc)
+
+    name = data.get("customer_name", "")
+    key = f"{_norm_name(name)}|{iso_utc}"
+
+    # Quick in-process dedupe
+    if _cache_check_and_add(key):
+        existing = _find_existing(iso_utc, name)
+        if existing:
+            readable = _readable_local(existing.get("datetime"))
+            table = existing.get("table_number") or "-"
+            return (
+                "ℹ️ Already booked (dedup).\n"
+                f"👤 {existing.get('customer_name','')}\n"
+                f"👥 {existing.get('party_size','') } people\n"
+                f"🗓 {readable}\n"
+                f"🍽 Table: {table}"
+            )
+
+    # DB-level dedupe
+    existing = _find_existing(iso_utc, name)
+    if existing:
+        readable = _readable_local(existing.get("datetime"))
+        table = existing.get("table_number") or "-"
+        return (
+            "ℹ️ Already booked.\n"
+            f"👤 {existing.get('customer_name','')}\n"
+            f"👥 {existing.get('party_size','') } people\n"
+            f"🗓 {readable}\n"
+            f"🍽 Table: {table}"
+        )
+
+    # Assign table + insert
+    table = assign_table(iso_utc)
     if not table:
         return "❌ No tables available at that time."
+
     supabase.table("reservations").insert({
         "customer_name": name,
-        "customer_email": data.get("customer_email", ""),
-        "contact_phone": data.get("contact_phone", ""),
-        "datetime": iso_utc,
+        "customer_email": data.get("customer_email", "") or "",
+        "contact_phone": data.get("contact_phone", "") or "",
+        "datetime": iso_utc,  # stored in UTC
         "party_size": int(data.get("party_size", 1)),
         "table_number": table,
-        "notes": data.get("notes", ""),
-        "status": "confirmed",
+        "notes": data.get("notes", "") or "",
+        "status": "confirmed"
     }).execute()
+
+    readable = _readable_local(iso_utc)
     return (
         "✅ Reservation confirmed!\n"
         f"👤 {name}\n"
         f"👥 {data.get('party_size', 1)} people\n"
-        f"🗓 {readable_local(iso_utc)}\n"
+        f"🗓 {readable}\n"
         f"🍽 Table: {table}"
     )
 
 # ---------------------------------------------------------
-# ROUTES
+# HOMEPAGE
 # ---------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home():
     return "<h3>✅ Backend running</h3><p>Go to /dashboard</p>"
 
+# ---------------------------------------------------------
+# DASHBOARD (timezone-correct & crash-proof)
+# ---------------------------------------------------------
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
-    rows = res.data or []
-    for r in rows:
-        r["datetime"] = utc_to_local(r.get("datetime"))
+    reservations = res.data or []
+
+    view_rows = []
+    for r in reservations:
+        row = dict(r)
+        local_iso = _utc_iso_to_local_iso(r.get("datetime"))
+        row["datetime"] = local_iso or r.get("datetime") or ""
+        view_rows.append(row)
+
+    total = len(view_rows)
+    cancelled = len([r for r in view_rows if (r.get("status") == "cancelled")])
+
+    now_local = datetime.now(LOCAL_TZ)
+    week_ago_local = now_local - timedelta(days=7)
+
+    def _local_dt_or_none(r):
+        d = _safe_fromiso(r.get("datetime", ""))
+        if not d:
+            d = _safe_fromiso(r.get("datetime", "").replace("Z", "+00:00"))
+        if not d:
+            return None
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=LOCAL_TZ)
+        return d.astimezone(LOCAL_TZ)
+
+    weekly_count = 0
+    party_vals, times = [], []
+
+    for r in view_rows:
+        if r.get("party_size"):
+            try:
+                party_vals.append(int(r["party_size"]))
+            except:
+                pass
+        ldt = _local_dt_or_none(r)
+        if ldt:
+            if ldt > week_ago_local:
+                weekly_count += 1
+            times.append(ldt.strftime("%H:%M"))
+
+    avg_party_size = round(sum(party_vals) / len(party_vals), 1) if party_vals else 0
+    peak_time = max(set(times), key=times.count) if times else "N/A"
+    cancel_rate = round((cancelled / total) * 100, 1) if total else 0
+
     return templates.TemplateResponse(
         "dashboard.html",
-        {"request": request, "reservations": rows},
+        {
+            "request": request,
+            "reservations": view_rows,   # datetime already LOCAL ISO
+            "weekly_count": weekly_count,
+            "avg_party_size": avg_party_size,
+            "peak_time": peak_time,
+            "cancel_rate": cancel_rate,
+        },
     )
 
 # ---------------------------------------------------------
-# ✅ WHATSAPP WEBHOOK
+# WHATSAPP AI WEBHOOK
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...)):
+    print("📩 Incoming:", Body)
     resp = MessagingResponse()
-    extraction_prompt = """
-Extract structured reservation data.
 
-RETURN ONLY JSON:
+    prompt = """
+Extract reservation details and return valid JSON ONLY.
+Convert any natural language date → ISO 8601.
+
 {
  "customer_name": "",
  "customer_email": "",
  "contact_phone": "",
  "party_size": "",
- "datetime": "",
- "notes": "",
- "ask": ""
+ "datetime": "",   // can be natural language; backend normalizes to UTC
+ "notes": ""
 }
+
+If ANYTHING is missing → return ONLY:
+{"ask":"<question>"}
 """
+
     try:
         result = client.chat.completions.create(
             model="gpt-4.1-mini",
             temperature=0,
-            messages=[{"role": "system", "content": extraction_prompt},
-                      {"role": "user", "content": Body}],
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": Body},
+            ]
         )
-        data = json.loads(result.choices[0].message.content.strip().replace("```json","").replace("```",""))
-    except:
-        resp.message("❌ Sorry, I couldn't understand that.")
+
+        output = result.choices[0].message.content.strip()
+        if output.startswith("```"):
+            output = output.replace("```json", "").replace("```", "").strip()
+
+        data = json.loads(output)
+
+    except Exception as e:
+        print("❌ AI/JSON error:", e)
+        resp.message("❌ I couldn’t understand that. Try again.")
         return Response(content=str(resp), media_type="application/xml")
 
-    if data.get("ask"):
+    if "ask" in data:
         resp.message(data["ask"])
         return Response(content=str(resp), media_type="application/xml")
 
-    msg = save_reservation(data)
+    msg = save_reservation(data)  # includes dedupe
     resp.message(msg)
+
     asyncio.create_task(notify_refresh())
     return Response(content=str(resp), media_type="application/xml")
 
 # ---------------------------------------------------------
-# ✅ CALL FLOW (voice booking)
+# DASHBOARD API (Create / Update / Cancel) — shapes unchanged
+# ---------------------------------------------------------
+@app.post("/createReservation")
+async def create_reservation(payload: dict):
+    msg = save_reservation(payload)   # dedupe + time normalization
+    asyncio.create_task(notify_refresh())
+    return {"success": True, "message": msg}
+
+@app.post("/updateReservation")
+async def update_reservation(update: dict):
+    new_dt = update.get("datetime")
+    normalized = _to_utc_iso(new_dt) if new_dt else None
+
+    supabase.table("reservations") \
+        .update({
+            "datetime": normalized if normalized else new_dt,
+            "party_size": update.get("party_size"),
+            "table_number": update.get("table_number"),
+            "notes": update.get("notes"),
+            "status": update.get("status", "updated"),
+        }) \
+        .eq("reservation_id", update["reservation_id"]) \
+        .execute()
+
+    asyncio.create_task(notify_refresh())
+    return {"success": True}
+
+@app.post("/cancelReservation")
+async def cancel(update: dict):
+    supabase.table("reservations") \
+        .update({"status": "cancelled"}) \
+        .eq("reservation_id", update["reservation_id"]) \
+        .execute()
+
+    asyncio.create_task(notify_refresh())
+    return {"success": True}
+
+# ---------------------------------------------------------
+# ✅ VOICE CALL FLOW (Twilio) — natural voice + fast + smarter NLU
 # ---------------------------------------------------------
 @app.get("/call")
 async def make_test_call(to: str):
@@ -261,7 +452,7 @@ async def make_test_call(to: str):
     except Exception as e:
         return {"error": str(e)}
 
-def gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=6):
+def _gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=6):
     g = vr.gather(
         input="speech",
         speech_model="default",
@@ -278,7 +469,7 @@ def gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=6):
 @app.post("/voice")
 async def voice_welcome():
     vr = VoiceResponse()
-    gather(vr, "/voice/name", "Hi! I can book your table. What is your name?")
+    _gather(vr, "/voice/name", "Hi! I can book your table. What is your name?")
     return Response(content=str(vr), media_type="application/xml")
 
 @app.post("/voice/name")
@@ -288,7 +479,7 @@ async def voice_name(request: Request):
     name = clean_name_input(name_raw)
 
     vr = VoiceResponse()
-    gather(vr, f"/voice/party?name={quote(name)}", f"Nice to meet you {name}. For how many people?")
+    _gather(vr, f"/voice/party?name={quote(name)}", f"Nice to meet you {name}. For how many people?")
     return Response(content=str(vr), media_type="application/xml")
 
 @app.post("/voice/party")
@@ -297,12 +488,12 @@ async def voice_party(request: Request, name: str):
     speech = (form.get("SpeechResult") or "").lower().strip()
 
     numbers = {"one":"1","two":"2","three":"3","four":"4","for":"4","five":"5","six":"6","seven":"7","eight":"8","nine":"9","ten":"10"}
-    party = next((token for token in speech.split() if token.isdigit()), None)
+    party = next((token for token in speech.replace("-", " ").split() if token.isdigit()), None)
     if party is None:
         party = next((num for word, num in numbers.items() if word in speech), "1")
 
     vr = VoiceResponse()
-    gather(vr, f"/voice/datetime?name={quote(name)}&party={party}", "What date and time should I book?")
+    _gather(vr, f"/voice/datetime?name={quote(name)}&party={party}", "What date and time should I book?")
     return Response(content=str(vr), media_type="application/xml")
 
 @app.post("/voice/datetime")
@@ -315,26 +506,26 @@ async def voice_datetime(request: Request, name: str, party: str):
     contains_time = bool(re.search(r"\d|pm|am", cleaned))
     if not contains_time:
         vr = VoiceResponse()
-        gather(vr, f"/voice/datetime?name={quote(name)}&party={party}",
-               "What time exactly?")
+        _gather(vr, f"/voice/datetime?name={quote(name)}&party={party}",
+                "What time exactly?")
         return Response(content=str(vr), media_type="application/xml")
 
     # Parse datetime (auto-fixes “around 7pm” → 7PM)
-    iso = normalize_to_utc(cleaned)
+    iso = _to_utc_iso(cleaned)
     if not iso:
         cleaned_gpt = gpt_extract_datetime(raw)
         if cleaned_gpt:
-            iso = normalize_to_utc(cleaned_gpt)
+            iso = _to_utc_iso(cleaned_gpt)
             cleaned = cleaned_gpt
 
     vr = VoiceResponse()
     if not iso:
-        gather(vr, f"/voice/datetime?name={quote(name)}&party={party}",
-               "Sorry, I didn't catch that. Try saying Friday at 7 PM.")
+        _gather(vr, f"/voice/datetime?name={quote(name)}&party={party}",
+                "Sorry, I didn't catch that. Try saying Friday at 7 PM.")
         return Response(content=str(vr), media_type="application/xml")
 
-    gather(vr, f"/voice/notes?name={quote(name)}&party={party}&dt={quote(cleaned)}",
-           "Any notes or preferences? Say none if no.")
+    _gather(vr, f"/voice/notes?name={quote(name)}&party={party}&dt={quote(cleaned)}",
+            "Any notes or preferences? Say none if no.")
     return Response(content=str(vr), media_type="application/xml")
 
 @app.post("/voice/notes")
@@ -350,13 +541,17 @@ async def voice_notes(request: Request, name: str, party: str, dt: str):
     vr.say("Thank you. Goodbye.", voice="Polly.Joanna-Neural", language="en-US")
     vr.hangup()
 
+    # async save (non-blocking for the call)
     asyncio.create_task(async_save(payload))
     return Response(content=str(vr), media_type="application/xml")
 
+# Twilio partial speech hook (we just ACK for speed; keeps latency low)
 @app.post("/voice/stream")
 async def voice_stream(request: Request):
-    try: await request.form()
-    except: pass
+    try:
+        _ = await request.form()
+    except:
+        pass
     return Response(content="OK", media_type="text/plain")
 
 async def async_save(payload):
@@ -365,12 +560,12 @@ async def async_save(payload):
     await notify_refresh()
 
 # ---------------------------------------------------------
-# WS REFRESH TO DASHBOARD
+# WEBSOCKET LIVE REFRESH
 # ---------------------------------------------------------
 clients = []
 
 @app.websocket("/ws")
-async def ws(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     clients.append(websocket)
     try:
@@ -381,5 +576,10 @@ async def ws(websocket: WebSocket):
 
 async def notify_refresh():
     for ws in list(clients):
-        try: await ws.send_text("refresh")
-        except: clients.remove(ws)
+        try:
+            await ws.send_text("refresh")
+        except:
+            try:
+                clients.remove(ws)
+            except:
+                pass
