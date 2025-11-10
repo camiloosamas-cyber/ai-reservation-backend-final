@@ -140,7 +140,6 @@ def save_reservation(data: dict):
     if dedupe(dedupe_key):
         return f"ℹ️ Already confirmed.\n👤 {name}"
 
-    # ✅ FIXED: Manual table selection (dashboard)
     table = data.get("table_number")
     if table:
         table = table.strip()
@@ -169,8 +168,9 @@ def save_reservation(data: dict):
         f"🍽 Table: {table}"
     )
 
+
 # ---------------------------------------------------------
-# ROUTES
+# DASHBOARD + HOME
 # ---------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -249,7 +249,7 @@ RETURN ONLY JSON:
     return Response(content=str(resp), media_type="application/xml")
 
 # ---------------------------------------------------------
-# ✅ CALL FLOW (voice booking)
+# ✅ CALL FLOW (voice booking with faster response & human voice)
 # ---------------------------------------------------------
 @app.get("/call")
 async def make_test_call(to: str):
@@ -263,19 +263,19 @@ async def make_test_call(to: str):
     except Exception as e:
         return {"error": str(e)}
 
-# ✅ Faster gather: enables partial speech and faster response
+# ✅ Faster gather with partial speech detection
 def gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=6):
     g = vr.gather(
         input="speech",
         speech_model="default",
         speech_timeout="auto",
-        partial_results_callback="/voice/stream",   # ✅ NEW: enables partial recognition
+        partial_results_callback="/voice/stream",
         profanity_filter="false",
         timeout=timeout_sec,
         action=url,
         method="POST",
     )
-    g.say(prompt, voice="alice", language="en-US")
+    g.say(prompt, voice="Polly.Joanna-Neural", language="en-US")
     return vr
 
 @app.post("/voice")
@@ -340,32 +340,27 @@ async def voice_notes(request: Request, name: str, party: str, dt: str):
     notes_speech = (form.get("SpeechResult") or "").strip()
     text = notes_speech.lower()
 
-    if any(word in text for word in ["no", "none", "nope", "nothing", "that's it", "no thank"]):
-        notes = "none"
-    else:
-        notes = notes_speech
+    notes = "none" if any(word in text for word in ["no", "none", "nope", "nothing", "that's it", "no thank"]) else notes_speech
 
     payload = {"customer_name": name, "party_size": party, "datetime": dt, "notes": notes, "contact_phone": ""}
 
     vr = VoiceResponse()
-    vr.say("Perfect, I’m booking your table now.", voice="alice", language="en-US")
-    vr.say("Thank you. Goodbye.", voice="alice", language="en-US")
+    vr.say("Perfect, I’m booking your table now.", voice="Polly.Joanna-Neural", language="en-US")
+    vr.say("Thank you. Goodbye.", voice="Polly.Joanna-Neural", language="en-US")
     vr.hangup()
 
     asyncio.create_task(async_save(payload))
     return Response(content=str(vr), media_type="application/xml")
 
-# ✅ NEW: receives partial speech transcripts for lower latency
+# ✅ NEW ✅ partial transcripts (lower latency)
 @app.post("/voice/stream")
 async def voice_stream(request: Request):
-    # Twilio will POST partial transcripts here while the caller is speaking.
-    # We don't need to do anything with them yet—just ACK quickly for speed.
-    # (Keeping this hook allows us to implement advanced streaming later.)
     try:
-        _ = await request.form()  # contains fields like 'SpeechResult' for partials on some carriers
+        _ = await request.form()
     except:
         pass
     return Response(content="OK", media_type="text/plain")
+
 
 async def async_save(payload):
     await asyncio.sleep(2)
@@ -373,7 +368,7 @@ async def async_save(payload):
     await notify_refresh()
 
 # ---------------------------------------------------------
-# DASHBOARD ENDPOINTS
+# DASHBOARD ACTIONS (edit/cancel)
 # ---------------------------------------------------------
 @app.post("/createReservation")
 async def create_reservation(payload: dict):
