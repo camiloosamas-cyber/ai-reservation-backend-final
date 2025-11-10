@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from urllib.parse import quote
-import json, os, asyncio, time
+import json, os, asyncio, time, re
 import dateparser
 
 # ✅ Supabase
@@ -60,9 +60,45 @@ def safe_fromiso(val: str):
     except:
         return None
 
+
+# ✅ NEW: clean filler speech ("mmm let's do sunday at 7")
+def clean_datetime_input(text: str) -> str:
+    text = text.lower()
+
+    fillers = ["mmm", "uh", "uhh", "uhhh", "let's do", "i think", "maybe", "like", "go ahead with"]
+    for f in fillers:
+        text = text.replace(f, " ")
+
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+# ✅ NEW: GPT datetime fallback if dateparser fails
+def gpt_extract_datetime(spoken: str) -> str | None:
+    try:
+        result = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            temperature=0,
+            messages=[
+                {"role": "system", "content":
+                    "Extract ONLY the date and time from the user's message.\n"
+                    "Return it in this exact style: 'Friday at 7 PM' or 'Tomorrow at 9 PM'.\n"
+                    "Do not add extra text."
+                },
+                {"role": "user", "content": spoken}
+            ],
+        )
+        cleaned = result.choices[0].message.content.strip()
+        return cleaned
+    except:
+        return None
+
+
 def normalize_to_utc(dt_str: str | None) -> str | None:
     if not dt_str:
         return None
+
+    # ✅ Dateparser handles “Friday at 7”, “tomorrow at 9”
     parsed = dateparser.parse(
         dt_str,
         settings={
@@ -72,15 +108,13 @@ def normalize_to_utc(dt_str: str | None) -> str | None:
             "TO_TIMEZONE": "UTC",
         },
     )
-    if not parsed:
-        iso_try = safe_fromiso(dt_str)
-        if iso_try:
-            parsed = iso_try
+
     if not parsed:
         return None
 
     dtu = parsed.astimezone(timezone.utc)
     return dtu.isoformat().replace("+00:00", "Z")
+
 
 def utc_to_local(iso_utc: str | None) -> str:
     dtu = safe_fromiso(iso_utc or "")
@@ -88,11 +122,13 @@ def utc_to_local(iso_utc: str | None) -> str:
         return ""
     return dtu.astimezone(LOCAL_TZ).isoformat()
 
+
 def readable_local(iso_utc: str | None) -> str:
     dtu = safe_fromiso(iso_utc or "")
     if not dtu:
         return "Invalid time"
     return dtu.astimezone(LOCAL_TZ).strftime("%A %I:%M %p")
+
 
 # ---------------------------------------------------------
 # SUPABASE
@@ -120,6 +156,7 @@ def dedupe(key: str):
     recent_keys[key] = now + TTL
     return False
 
+
 def assign_table(iso_utc: str) -> str | None:
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
     taken = {row["table_number"] for row in (booked.data or [])}
@@ -128,6 +165,7 @@ def assign_table(iso_utc: str) -> str | None:
         if t not in taken:
             return t
     return None
+
 
 def save_reservation(data: dict):
     iso_utc = normalize_to_utc(data.get("datetime"))
@@ -140,11 +178,7 @@ def save_reservation(data: dict):
     if dedupe(dedupe_key):
         return f"ℹ️ Already confirmed.\n👤 {name}"
 
-    table = data.get("table_number")
-    if table:
-        table = table.strip()
-    else:
-        table = assign_table(iso_utc)
+    table = data.get("table_number") or assign_table(iso_utc)
 
     if not table:
         return "❌ No tables available at that time."
@@ -176,6 +210,7 @@ def save_reservation(data: dict):
 def home():
     return "<h3>✅ Backend running</h3><p>Go to /dashboard</p>"
 
+
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
@@ -197,6 +232,7 @@ async def dashboard(request: Request):
         "dashboard.html",
         {"request": request, "reservations": view, "weekly_count": weekly_count, "avg_party_size": avg_party_size},
     )
+
 
 # ---------------------------------------------------------
 # ✅ WHATSAPP WEBHOOK
@@ -248,8 +284,9 @@ RETURN ONLY JSON:
     asyncio.create_task(notify_refresh())
     return Response(content=str(resp), media_type="application/xml")
 
+
 # ---------------------------------------------------------
-# ✅ CALL FLOW (voice booking with faster response & human voice)
+# ✅ CALL FLOW (voice booking)
 # ---------------------------------------------------------
 @app.get("/call")
 async def make_test_call(to: str):
@@ -263,7 +300,8 @@ async def make_test_call(to: str):
     except Exception as e:
         return {"error": str(e)}
 
-# ✅ Faster gather with partial speech detection
+
+# ✅ Faster gather with partial speech detection + human voice
 def gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=6):
     g = vr.gather(
         input="speech",
@@ -278,11 +316,13 @@ def gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=6):
     g.say(prompt, voice="Polly.Joanna-Neural", language="en-US")
     return vr
 
+
 @app.post("/voice")
 async def voice_welcome():
     vr = VoiceResponse()
     gather(vr, "/voice/name", "Hi! I can book your table. What is your name?")
     return Response(content=str(vr), media_type="application/xml")
+
 
 @app.post("/voice/name")
 async def voice_name(request: Request):
@@ -292,6 +332,7 @@ async def voice_name(request: Request):
     vr = VoiceResponse()
     gather(vr, f"/voice/party?name={quote(name)}", f"Nice to meet you {name}. For how many people?")
     return Response(content=str(vr), media_type="application/xml")
+
 
 @app.post("/voice/party")
 async def voice_party(request: Request, name: str):
@@ -319,20 +360,33 @@ async def voice_party(request: Request, name: str):
     gather(vr, f"/voice/datetime?name={quote(name)}&party={party}", "What date and time should I book?")
     return Response(content=str(vr), media_type="application/xml")
 
+
 @app.post("/voice/datetime")
 async def voice_datetime(request: Request, name: str, party: str):
     form = await request.form()
-    spoken = (form.get("SpeechResult") or "").strip()
 
-    iso = normalize_to_utc(spoken)
+    raw = (form.get("SpeechResult") or "").strip()
+    cleaned = clean_datetime_input(raw)
+
+    iso = normalize_to_utc(cleaned)
+
+    # ✅ Fallback to GPT if dateparser fails
+    if not iso:
+        cleaned_gpt = gpt_extract_datetime(raw)
+        if cleaned_gpt:
+            iso = normalize_to_utc(cleaned_gpt)
+
     vr = VoiceResponse()
 
     if not iso:
-        gather(vr, f"/voice/datetime?name={quote(name)}&party={party}", "Sorry, I didn't catch that. Try saying Friday at 7 PM.")
+        gather(vr, f"/voice/datetime?name={quote(name)}&party={party}",
+               "Sorry, I didn't catch that. Try saying something like: Friday at 7 PM.")
         return Response(content=str(vr), media_type="application/xml")
 
-    gather(vr, f"/voice/notes?name={quote(name)}&party={party}&dt={quote(spoken)}", "Any notes or preferences? Say none if no.")
+    gather(vr, f"/voice/notes?name={quote(name)}&party={party}&dt={quote(raw)}",
+           "Any notes or preferences? Say none if no.")
     return Response(content=str(vr), media_type="application/xml")
+
 
 @app.post("/voice/notes")
 async def voice_notes(request: Request, name: str, party: str, dt: str):
@@ -352,7 +406,7 @@ async def voice_notes(request: Request, name: str, party: str, dt: str):
     asyncio.create_task(async_save(payload))
     return Response(content=str(vr), media_type="application/xml")
 
-# ✅ NEW ✅ partial transcripts (lower latency)
+
 @app.post("/voice/stream")
 async def voice_stream(request: Request):
     try:
@@ -367,6 +421,7 @@ async def async_save(payload):
     save_reservation(payload)
     await notify_refresh()
 
+
 # ---------------------------------------------------------
 # DASHBOARD ACTIONS (edit/cancel)
 # ---------------------------------------------------------
@@ -375,6 +430,7 @@ async def create_reservation(payload: dict):
     msg = save_reservation(payload)
     asyncio.create_task(notify_refresh())
     return {"ok": True, "message": msg}
+
 
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
@@ -400,11 +456,13 @@ async def update_reservation(update: dict):
     asyncio.create_task(notify_refresh())
     return {"success": True}
 
+
 @app.post("/cancelReservation")
 async def cancel_reservation(update: dict):
     supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", update.get("reservation_id")).execute()
     asyncio.create_task(notify_refresh())
     return {"success": True}
+
 
 # ---------------------------------------------------------
 # REALTIME REFRESH
