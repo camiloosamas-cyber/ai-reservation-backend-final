@@ -1,7 +1,3 @@
-# ---------------------------------------------------------
-# ✅ AI RESERVATION SYSTEM — FINAL | EMAIL OPTIONAL | WHATSAPP FIXED
-# ---------------------------------------------------------
-
 from fastapi import FastAPI, Request, WebSocket, Form
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -11,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from urllib.parse import quote
 import json, os, asyncio, time, re
-import dateparser
+import dateparser  # natural language datetime parser
 
 # ✅ Supabase
 from supabase import create_client, Client
@@ -29,13 +25,13 @@ TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://ai-reservation-backend-final.onrender.com")
-
 twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM") or (f"whatsapp:{TWILIO_PHONE_NUMBER}" if TWILIO_PHONE_NUMBER else None)
 
+# 🔔 Reminder config
 REMINDER_HOURS = float(os.getenv("REMINDER_HOURS", "2"))
-REMINDER_GRACE_SEC = int(os.getenv("REMINDER_GRACE_SEC", "300"))  # 5 min window
+REMINDER_GRACE_SEC = int(os.getenv("REMINDER_GRACE_SEC", "300"))  # ±5 min
 
 # ---------------------------------------------------------
 # APP INIT
@@ -70,19 +66,24 @@ def _safe_fromiso(s: str):
         return None
 
 def _to_utc_iso(dt_str: str | None):
+    """Normalize various inputs (ISO or natural language) to UTC ISO Z."""
     if not dt_str:
         return None
+    # If it already looks like ISO, try that path first
     dti = _safe_fromiso(dt_str)
     if dti:
-        if not dti.tzinfo:
+        if dti.tzinfo is None:
             dti = dti.replace(tzinfo=LOCAL_TZ)
         dtu = dti.astimezone(timezone.utc)
         return dtu.isoformat().replace("+00:00", "Z")
+    # Natural language with an explicit relative base = NOW in local tz
     try:
         parsed = dateparser.parse(
             dt_str,
             settings={
                 "PREFER_DATES_FROM": "future",
+                "PREFER_DAY_OF_MONTH": "current",
+                "RELATIVE_BASE": datetime.now(LOCAL_TZ),  # 👈 anchor to NOW
                 "RETURN_AS_TIMEZONE_AWARE": True,
                 "TIMEZONE": LOCAL_TZ_NAME,
                 "TO_TIMEZONE": "UTC",
@@ -98,7 +99,7 @@ def _utc_iso_to_local_iso(iso_utc: str | None):
     dtu = _safe_fromiso(iso_utc or "")
     if not dtu:
         return None
-    if not dtu.tzinfo:
+    if dtu.tzinfo is None:
         dtu = dtu.replace(tzinfo=timezone.utc)
     return dtu.astimezone(LOCAL_TZ).isoformat()
 
@@ -106,7 +107,7 @@ def _readable_local(iso_utc: str | None) -> str:
     dtu = _safe_fromiso(iso_utc or "")
     if not dtu:
         return "Invalid time"
-    if not dtu.tzinfo:
+    if dtu.tzinfo is None:
         dtu = dtu.replace(tzinfo=timezone.utc)
     return dtu.astimezone(LOCAL_TZ).strftime("%A %I:%M %p")
 
@@ -123,20 +124,31 @@ def clean_name_input(text: str) -> str:
 
 def clean_datetime_input(text: str) -> str:
     text = text.lower()
-    for f in ["around", "ish", "maybe", "let's do", "lets do", "mmm", "uh"]:
-        text = text.replace(f, "")
+    for f in ["around", "ish", "maybe", "let's do", "lets do", "mmm", "uh", "uhh", "uhhh"]:
+        text = text.replace(f, " ")
     text = re.sub(r"\bat\b", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
 def gpt_extract_datetime(spoken: str) -> str | None:
+    """Fallback to GPT to clean ambiguous datetime when dateparser fails."""
     try:
         result = client.chat.completions.create(
             model="gpt-4.1-mini",
             temperature=0,
             messages=[
-                {"role": "system", "content": "Extract clean date & time only. Example: Friday at 7 PM"},
-                {"role": "user", "content": spoken}
+                {
+                    "role": "system",
+                    "content": (
+                        "Extract ONLY the date/time PHRASE the user said.\n"
+                        "VERY IMPORTANT:\n"
+                        "- Preserve words like 'today', 'tomorrow', 'tonight', 'mañana'.\n"
+                        "- Do NOT convert them to a weekday name.\n"
+                        "- Do NOT invent a year.\n"
+                        "Return a short phrase like 'today at 11 am', 'tomorrow 7 pm', 'friday 8 pm'."
+                    ),
+                },
+                {"role": "user", "content": spoken},
             ],
         )
         return result.choices[0].message.content.strip()
@@ -177,11 +189,14 @@ def save_reservation(data: dict) -> str:
     if not iso_utc:
         return "❌ Invalid time. Please specify date AND time."
 
-    name = data.get("customer_name", "").strip() or "Guest"
+    name = (data.get("customer_name") or "Guest").strip()
     key = f"{name}|{iso_utc}"
 
     if _cache_check_and_add(key):
-        return f"ℹ️ Already confirmed.\n👤 {name}"
+        # Already confirmed recently
+        readable = _readable_local(iso_utc)
+        table = data.get("table_number") or "-"
+        return f"ℹ️ Already confirmed.\n👤 {name}\n🗓 {readable}\n🍽 Table: {table}"
 
     table = data.get("table_number") or assign_table(iso_utc)
     if not table:
@@ -191,11 +206,11 @@ def save_reservation(data: dict) -> str:
         "customer_name": name,
         "customer_email": data.get("customer_email", "") or "",
         "contact_phone": data.get("contact_phone", ""),
-        "datetime": iso_utc,
+        "datetime": iso_utc,  # stored in UTC
         "party_size": int(data.get("party_size", 1)),
         "table_number": table,
-        "notes": data.get("notes", ""),
-        "status": "confirmed",
+        "notes": data.get("notes", "") or "",
+        "status": "confirmed"
     }).execute()
 
     readable = _readable_local(iso_utc)
@@ -209,31 +224,37 @@ def home():
     return "<h3>✅ Backend running</h3><p>Go to /dashboard</p>"
 
 # ---------------------------------------------------------
-# DASHBOARD ROUTE (unchanged)
+# DASHBOARD (unchanged UI data shape)
 # ---------------------------------------------------------
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
-    rows = res.data or []
-    for r in rows:
-        r["datetime"] = _utc_iso_to_local_iso(r.get("datetime"))
-    return templates.TemplateResponse("dashboard.html", {"request": request, "reservations": rows})
+    reservations = res.data or []
+
+    view_rows = []
+    for r in reservations:
+        row = dict(r)
+        local_iso = _utc_iso_to_local_iso(r.get("datetime"))
+        row["datetime"] = local_iso or r.get("datetime") or ""
+        view_rows.append(row)
+
+    return templates.TemplateResponse("dashboard.html", {"request": request, "reservations": view_rows})
 
 # ---------------------------------------------------------
-# ✅ WHATSApp BOOKING (EMAIL OPTIONAL, AUTO-PHONE)
+# ✅ WHATSAPP BOOKING (email optional, auto phone) — FIXED DATETIME
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(request: Request):
     form = await request.form()
     Body = form.get("Body", "")
-    From = form.get("From", "")  # phone number from WhatsApp
+    From = form.get("From", "")  # e.g. whatsapp:+57...
     resp = MessagingResponse()
 
-    # Always store WhatsApp number as phone automatically
-    contact_phone = From.replace("whatsapp:", "")
+    # Use WhatsApp sender phone automatically
+    contact_phone = From.replace("whatsapp:", "").strip()
 
-    prompt = """
-Extract JSON. REQUIRED FIELDS:
+    extraction_prompt = """
+Return ONLY JSON with these fields (no extra keys, no prose):
 
 {
  "customer_name": "",
@@ -242,9 +263,12 @@ Extract JSON. REQUIRED FIELDS:
  "notes": ""
 }
 
-DO NOT ASK FOR EMAIL.
-DO NOT RETURN ask FOR EMAIL.
-Never ask for phone — use metadata.
+Rules:
+- If the user says 'today', 'tomorrow', 'tonight', keep those EXACT words.
+- DO NOT convert them into a weekday name.
+- DO NOT guess a year.
+- Phone is never asked (use metadata).
+- Email is optional and must not be requested.
 """
 
     try:
@@ -252,22 +276,25 @@ Never ask for phone — use metadata.
             model="gpt-4.1-mini",
             temperature=0,
             messages=[
-                {"role": "system", "content": prompt},
+                {"role": "system", "content": extraction_prompt},
                 {"role": "user", "content": Body},
             ]
         )
         output = result.choices[0].message.content.strip()
         if output.startswith("```"):
             output = output.replace("```json", "").replace("```", "").strip()
-
         data = json.loads(output)
-
-    except:
+    except Exception as e:
+        print("❌ WhatsApp extract error:", e)
         resp.message("❌ I didn’t understand that. Try again.")
         return Response(content=str(resp), media_type="application/xml")
 
     # Auto-inject WhatsApp phone
     data["contact_phone"] = contact_phone
+
+    # If GPT returned an empty/weak datetime, fall back to the raw Body
+    if not data.get("datetime"):
+        data["datetime"] = Body
 
     msg = save_reservation(data)
     resp.message(msg)
@@ -275,82 +302,156 @@ Never ask for phone — use metadata.
     return Response(content=str(resp), media_type="application/xml")
 
 # ---------------------------------------------------------
-# ✅ VOICE (unchanged)
+# DASHBOARD API (Create / Update / Cancel)
+# ---------------------------------------------------------
+@app.post("/createReservation")
+async def create_reservation(payload: dict):
+    msg = save_reservation(payload)
+    asyncio.create_task(notify_refresh())
+    return {"success": True, "message": msg}
+
+@app.post("/updateReservation")
+async def update_reservation(update: dict):
+    new_dt = update.get("datetime")
+    normalized = _to_utc_iso(new_dt) if new_dt else None
+
+    supabase.table("reservations") \
+        .update({
+            "datetime": normalized if normalized else new_dt,
+            "party_size": update.get("party_size"),
+            "table_number": update.get("table_number"),
+            "notes": update.get("notes"),
+            "status": update.get("status", "updated"),
+        }) \
+        .eq("reservation_id", update["reservation_id"]) \
+        .execute()
+
+    asyncio.create_task(notify_refresh())
+    return {"success": True}
+
+@app.post("/cancelReservation")
+async def cancel(update: dict):
+    supabase.table("reservations") \
+        .update({"status": "cancelled"}) \
+        .eq("reservation_id", update["reservation_id"]) \
+        .execute()
+    asyncio.create_task(notify_refresh())
+    return {"success": True}
+
+# ---------------------------------------------------------
+# ✅ VOICE CALL FLOW (unchanged logic)
 # ---------------------------------------------------------
 @app.get("/call")
 async def make_test_call(to: str):
-    call = twilio_client.calls.create(
-        to=to,
-        from_=TWILIO_PHONE_NUMBER,
-        url=f"{PUBLIC_BASE_URL}/voice",
+    try:
+        call = twilio_client.calls.create(
+            to=to,
+            from_=TWILIO_PHONE_NUMBER,
+            url=f"{PUBLIC_BASE_URL}/voice",
+        )
+        return {"status": "queued", "sid": call.sid}
+    except Exception as e:
+        return {"error": str(e)}
+
+def _gather(vr: VoiceResponse, url: str, prompt: str, timeout_sec=6):
+    g = vr.gather(
+        input="speech",
+        speech_model="default",
+        speech_timeout="auto",
+        partial_results_callback="/voice/stream",
+        profanity_filter="false",
+        timeout=timeout_sec,
+        action=url,
+        method="POST",
     )
-    return {"status": "queued", "sid": call.sid}
+    g.say(prompt, voice="Polly.Joanna-Neural", language="en-US")
+    return vr
 
 @app.post("/voice")
 async def voice_welcome():
     vr = VoiceResponse()
-    g = vr.gather(input="speech", action="/voice/name")
-    g.say("Hi! I can book your table. What is your name?", voice="Polly.Joanna-Neural")
+    _gather(vr, "/voice/name", "Hi! I can book your table. What is your name?")
     return Response(content=str(vr), media_type="application/xml")
 
 @app.post("/voice/name")
 async def voice_name(request: Request):
     form = await request.form()
-    name = clean_name_input(form.get("SpeechResult") or "")
+    name_raw = (form.get("SpeechResult") or "").strip()
+    name = clean_name_input(name_raw)
+
     vr = VoiceResponse()
-    g = vr.gather(input="speech", action=f"/voice/party?name={quote(name)}")
-    g.say(f"Nice to meet you {name}. For how many people?", voice="Polly.Joanna-Neural")
+    _gather(vr, f"/voice/party?name={quote(name)}", f"Nice to meet you {name}. For how many people?")
     return Response(content=str(vr), media_type="application/xml")
 
 @app.post("/voice/party")
 async def voice_party(request: Request, name: str):
     form = await request.form()
-    speech = form.get("SpeechResult", "").lower()
-    numbers = {"one":"1","two":"2","for":"4"}
-    party = next((word for word in speech.split() if word.isdigit()), None) or \
-            next((numbers[w] for w in numbers if w in speech), "1")
+    speech = (form.get("SpeechResult") or "").lower().strip()
+
+    numbers = {"one":"1","two":"2","three":"3","four":"4","for":"4","five":"5","six":"6","seven":"7","eight":"8","nine":"9","ten":"10"}
+    party = next((token for token in speech.replace("-", " ").split() if token.isdigit()), None)
+    if party is None:
+        party = next((num for word, num in numbers.items() if word in speech), "1")
+
     vr = VoiceResponse()
-    g = vr.gather(input="speech", action=f"/voice/datetime?name={quote(name)}&party={party}")
-    g.say("What date and time should I book?", voice="Polly.Joanna-Neural")
+    _gather(vr, f"/voice/datetime?name={quote(name)}&party={party}", "What date and time should I book?")
     return Response(content=str(vr), media_type="application/xml")
 
 @app.post("/voice/datetime")
 async def voice_datetime(request: Request, name: str, party: str):
     form = await request.form()
-    raw = form.get("SpeechResult", "").strip()
+    raw = (form.get("SpeechResult") or "").strip()
     cleaned = clean_datetime_input(raw)
 
-    if not re.search(r"\d|pm|am", cleaned):
+    # If user gives day only ("Friday night"), ask for time
+    contains_time = bool(re.search(r"\d|pm|am", cleaned))
+    if not contains_time:
         vr = VoiceResponse()
-        g = vr.gather(input="speech", action=f"/voice/datetime?name={quote(name)}&party={party}")
-        g.say("What time exactly?", voice="Polly.Joanna-Neural")
+        _gather(vr, f"/voice/datetime?name={quote(name)}&party={party}",
+                "What time exactly?")
         return Response(content=str(vr), media_type="application/xml")
 
-    iso = _to_utc_iso(cleaned) or _to_utc_iso(gpt_extract_datetime(raw))
-
+    # Parse datetime (auto-fixes “around 7pm” → 7PM)
+    iso = _to_utc_iso(cleaned)
     if not iso:
-        vr = VoiceResponse()
-        g = vr.gather(input="speech", action=f"/voice/datetime?name={quote(name)}&party={party}")
-        g.say("Sorry, I couldn’t understand. Try Friday at 7 PM.", voice="Polly.Joanna-Neural")
-        return Response(content=str(vr), media_type="application/xml")
+        cleaned_gpt = gpt_extract_datetime(raw)
+        if cleaned_gpt:
+            iso = _to_utc_iso(cleaned_gpt)
+            cleaned = cleaned_gpt
 
     vr = VoiceResponse()
-    g = vr.gather(input="speech", action=f"/voice/notes?name={quote(name)}&party={party}&dt={quote(cleaned)}")
-    g.say("Any notes or preferences? Say none if no.", voice="Polly.Joanna-Neural")
+    if not iso:
+        _gather(vr, f"/voice/datetime?name={quote(name)}&party={party}",
+                "Sorry, I didn't catch that. Try saying Friday at 7 PM.")
+        return Response(content=str(vr), media_type="application/xml")
+
+    _gather(vr, f"/voice/notes?name={quote(name)}&party={party}&dt={quote(cleaned)}",
+            "Any notes or preferences? Say none if no.")
     return Response(content=str(vr), media_type="application/xml")
 
 @app.post("/voice/notes")
 async def voice_notes(request: Request, name: str, party: str, dt: str):
     form = await request.form()
-    notes = form.get("SpeechResult", "").strip()
-    if notes.lower() in ["none", "no", "nothing"]:
-        notes = ""
+    notes_speech = (form.get("SpeechResult") or "").strip()
+    notes = "none" if any(x in notes_speech.lower() for x in ["none", "no", "nothing"]) else notes_speech
+
     payload = {"customer_name": name, "party_size": party, "datetime": dt, "notes": notes, "contact_phone": ""}
+
     vr = VoiceResponse()
-    vr.say("Perfect, booking now.", voice="Polly.Joanna-Neural")
+    vr.say("Perfect, I’m booking your table now.", voice="Polly.Joanna-Neural", language="en-US")
+    vr.say("Thank you. Goodbye.", voice="Polly.Joanna-Neural", language="en-US")
     vr.hangup()
+
     asyncio.create_task(async_save(payload))
     return Response(content=str(vr), media_type="application/xml")
+
+@app.post("/voice/stream")
+async def voice_stream(request: Request):
+    try:
+        _ = await request.form()
+    except:
+        pass
+    return Response(content="OK", media_type="text/plain")
 
 async def async_save(payload):
     await asyncio.sleep(2)
@@ -358,60 +459,108 @@ async def async_save(payload):
     await notify_refresh()
 
 # ---------------------------------------------------------
-# ✅ REMINDER SCHEDULER (unchanged)
+# 🔔 REMINDER SCHEDULER (unchanged)
 # ---------------------------------------------------------
-_reminded = set()
+_reminded_ids: set[str] = set()
+
+def _format_whatsapp(number: str | None) -> str | None:
+    if not number:
+        return None
+    n = number.strip()
+    if not n:
+        return None
+    if n.startswith("whatsapp:"):
+        return n
+    if n.startswith("+"):
+        return f"whatsapp:{n}"
+    digits = re.sub(r"\D", "", n)
+    if len(digits) == 10:
+        return f"whatsapp:+57{digits}"
+    return None
+
+def _can_send_whatsapp() -> bool:
+    return bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_WHATSAPP_FROM)
+
+async def _send_whatsapp(to_whatsapp: str, body: str):
+    try:
+        twilio_client.messages.create(
+            from_=TWILIO_WHATSAPP_FROM,
+            to=to_whatsapp,
+            body=body,
+        )
+    except Exception as e:
+        print("❌ WhatsApp send error:", e)
 
 async def reminder_loop():
     while True:
         try:
-            now = datetime.now(timezone.utc)
-            window_end = now + timedelta(hours=REMINDER_HOURS)
-            res = supabase.table("reservations").select("*").eq("status","confirmed").execute()
-            for r in res.data or []:
-                rid = r.get("reservation_id")
-                if rid in _reminded:
-                    continue
-                dt = _safe_fromiso(r.get("datetime") or "")
-                if not dt:
-                    continue
-                secs = (dt - now).total_seconds()
-                target = REMINDER_HOURS * 3600
-                if (target - REMINDER_GRACE_SEC) <= secs <= (target + REMINDER_GRACE_SEC):
-                    phone = r.get("contact_phone","")
-                    if phone:
-                        twilio_client.messages.create(
-                            from_=TWILIO_WHATSAPP_FROM,
-                            to=f"whatsapp:{phone}",
-                            body=f"⏰ Reminder: Your reservation is today at {_readable_local(r.get('datetime'))}",
-                        )
-                    _reminded.add(rid)
+            if _can_send_whatsapp():
+                now_utc = datetime.now(timezone.utc)
+                window_end = now_utc + timedelta(hours=REMINDER_HOURS, minutes=15)
+
+                res = supabase.table("reservations") \
+                    .select("*") \
+                    .in_("status", ["confirmed"]) \
+                    .lte("datetime", window_end.isoformat().replace("+00:00", "Z")) \
+                    .execute()
+
+                rows = res.data or []
+                for r in rows:
+                    rid = str(r.get("reservation_id"))
+                    if not rid or rid in _reminded_ids:
+                        continue
+
+                    dt_utc = _safe_fromiso(r.get("datetime") or "")
+                    if not dt_utc:
+                        continue
+                    if dt_utc.tzinfo is None:
+                        dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+
+                    delta_sec = (dt_utc - now_utc).total_seconds()
+                    target_sec = REMINDER_HOURS * 3600
+                    if (target_sec - REMINDER_GRACE_SEC) <= delta_sec <= (target_sec + REMINDER_GRACE_SEC):
+                        to_wa = _format_whatsapp(r.get("contact_phone"))
+                        if not to_wa:
+                            _reminded_ids.add(rid)
+                            continue
+
+                        readable = _readable_local(r.get("datetime"))
+                        name = r.get("customer_name") or "your reservation"
+                        party = r.get("party_size") or ""
+                        party_txt = f" for {party} " if party else " "
+
+                        body = f"⏰ Reminder: {name}{party_txt}is today at {readable.split(' ',1)[1]}."
+                        await _send_whatsapp(to_wa, body)
+                        _reminded_ids.add(rid)
         except Exception as e:
-            print("Reminder error:", e)
+            print("❌ Reminder loop error:", e)
         await asyncio.sleep(60)
 
 @app.on_event("startup")
-async def start_scheduler():
+async def _on_startup():
     asyncio.create_task(reminder_loop())
 
 # ---------------------------------------------------------
-# ✅ WEBSOCKET REFRESH
+# WEBSOCKET LIVE REFRESH
 # ---------------------------------------------------------
 clients = []
 
 @app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):
-    await ws.accept()
-    clients.append(ws)
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    clients.append(websocket)
     try:
         while True:
-            await ws.receive_text()
+            await websocket.receive_text()
     except:
-        clients.remove(ws)
+        clients.remove(websocket)
 
 async def notify_refresh():
     for ws in list(clients):
         try:
             await ws.send_text("refresh")
         except:
-            clients.remove(ws)
+            try:
+                clients.remove(ws)
+            except:
+                pass
