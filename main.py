@@ -27,6 +27,13 @@ TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://ai-reservation-backend-final.onrender.com")
 twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
+# ✅ WhatsApp sender config
+TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM") or (f"whatsapp:{TWILIO_PHONE_NUMBER}" if TWILIO_PHONE_NUMBER else None)
+
+# ✅ Reminder config
+REMINDER_HOURS = float(os.getenv("REMINDER_HOURS", "2"))
+REMINDER_GRACE_SEC = int(os.getenv("REMINDER_GRACE_SEC", "300"))  # ±5min window
+
 # ---------------------------------------------------------
 # APP INIT
 # ---------------------------------------------------------
@@ -558,6 +565,93 @@ async def async_save(payload):
     await asyncio.sleep(2)
     save_reservation(payload)
     await notify_refresh()
+
+# ---------------------------------------------------------
+# 🔔 REMINDER SCHEDULER (WhatsApp, ~2 hours before)
+# ---------------------------------------------------------
+_reminded_ids: set[str] = set()
+
+def _format_whatsapp(number: str | None) -> str | None:
+    if not number:
+        return None
+    n = number.strip()
+    if not n:
+        return None
+    if n.startswith("whatsapp:"):
+        return n
+    if n.startswith("+"):
+        return f"whatsapp:{n}"
+    # Try to add +57 if it looks like a Colombia local mobile (10 digits)
+    digits = re.sub(r"\D", "", n)
+    if len(digits) == 10:
+        return f"whatsapp:+57{digits}"
+    return None
+
+def _can_send_whatsapp() -> bool:
+    return bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_WHATSAPP_FROM)
+
+async def _send_whatsapp(to_whatsapp: str, body: str):
+    try:
+        twilio_client.messages.create(
+            from_=TWILIO_WHATSAPP_FROM,
+            to=to_whatsapp,
+            body=body,
+        )
+    except Exception as e:
+        print("❌ WhatsApp send error:", e)
+
+async def reminder_loop():
+    # Run forever; wake up roughly every 60s
+    while True:
+        try:
+            if _can_send_whatsapp():
+                # Pull upcoming confirmed reservations within next REMINDER_HOURS + buffer
+                now_utc = datetime.now(timezone.utc)
+                window_end = now_utc + timedelta(hours=REMINDER_HOURS, minutes=15)
+
+                res = supabase.table("reservations") \
+                    .select("*") \
+                    .in_("status", ["confirmed"]) \
+                    .lte("datetime", window_end.isoformat().replace("+00:00", "Z")) \
+                    .execute()
+
+                rows = res.data or []
+                for r in rows:
+                    rid = str(r.get("reservation_id"))
+                    if not rid or rid in _reminded_ids:
+                        continue
+
+                    dt_utc = _safe_fromiso(r.get("datetime") or "")
+                    if not dt_utc:
+                        continue
+                    if dt_utc.tzinfo is None:
+                        dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+
+                    delta_sec = (dt_utc - now_utc).total_seconds()
+                    target_sec = REMINDER_HOURS * 3600
+                    # Trigger within [target - grace, target + grace]
+                    if (target_sec - REMINDER_GRACE_SEC) <= delta_sec <= (target_sec + REMINDER_GRACE_SEC):
+                        to_wa = _format_whatsapp(r.get("contact_phone"))
+                        if not to_wa:
+                            _reminded_ids.add(rid)  # prevent retry storm without phone
+                            continue
+
+                        readable = _readable_local(r.get("datetime"))
+                        name = r.get("customer_name") or "your reservation"
+                        party = r.get("party_size") or ""
+                        party_txt = f" for {party} " if party else " "
+
+                        body = f"⏰ Reminder: {name}{party_txt}is today at {readable.split(' ',1)[1]}."
+                        await _send_whatsapp(to_wa, body)
+                        _reminded_ids.add(rid)
+            # sleep regardless of errors
+        except Exception as e:
+            print("❌ Reminder loop error:", e)
+        await asyncio.sleep(60)
+
+@app.on_event("startup")
+async def _on_startup():
+    asyncio.create_task(reminder_loop())
 
 # ---------------------------------------------------------
 # WEBSOCKET LIVE REFRESH
