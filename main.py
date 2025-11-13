@@ -54,6 +54,7 @@ def _safe_fromiso(s: str) -> datetime | None:
 def _explicit_year_in(text: str | None) -> bool:
     return bool(text and re.search(r"\b20\d{2}\b", text))
 
+# ---------- FIXED _to_utc_iso() ----------
 def _to_utc_iso(dt_str: str | None) -> str | None:
     if not dt_str:
         return None
@@ -65,8 +66,10 @@ def _to_utc_iso(dt_str: str | None) -> str | None:
             dti = dti.replace(tzinfo=LOCAL_TZ)
         return dti.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    # Natural language
+    # Natural language parse
     now_local = datetime.now(LOCAL_TZ)
+    current_year = 2025  # <-- fixed year for your system
+
     try:
         parsed = dateparser.parse(
             dt_str,
@@ -81,13 +84,14 @@ def _to_utc_iso(dt_str: str | None) -> str | None:
         if not parsed:
             return None
 
-        # ---------- THE ONLY FIX ----------
-        # Force current year (2025) unless user explicitly said another year
+        # --- Smart Year Correction ---
         if not _explicit_year_in(dt_str):
-            parsed = parsed.replace(year=now_local.year)
-        # -----------------------------------
+            if parsed.year != current_year:
+                parsed = parsed.replace(year=current_year)
+        # ------------------------------
 
         return parsed.isoformat().replace("+00:00", "Z")
+
     except:
         return None
 
@@ -135,7 +139,6 @@ def _cache_check_and_add(key: str) -> bool:
         return True
     _recent_keys[key] = exp
     return False
-
 # ---------- DB helpers ----------
 def assign_table(iso_utc: str):
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
@@ -168,13 +171,25 @@ def save_reservation(data: dict) -> str:
         if existing:
             readable = _readable_local(existing.get("datetime"))
             table = existing.get("table_number") or "-"
-            return f"ℹ️ Already booked (dedup).\n👤 {existing.get('customer_name','')}\n👥 {existing.get('party_size','')} people\n🗓 {readable}\n🍽 Table: {table}"
+            return (
+                f"ℹ️ Already booked (dedup).\n"
+                f"👤 {existing.get('customer_name','')}\n"
+                f"👥 {existing.get('party_size','')} people\n"
+                f"🗓 {readable}\n"
+                f"🍽 Table: {table}"
+            )
 
     existing = _find_existing(iso_utc, name)
     if existing:
         readable = _readable_local(existing.get("datetime"))
         table = existing.get("table_number") or "-"
-        return f"ℹ️ Already booked.\n👤 {existing.get('customer_name','')}\n👥 {existing.get('party_size','')} people\n🗓 {readable}\n🍽 Table: {table}"
+        return (
+            f"ℹ️ Already booked.\n"
+            f"👤 {existing.get('customer_name','')}\n"
+            f"👥 {existing.get('party_size','')} people\n"
+            f"🗓 {readable}\n"
+            f"🍽 Table: {table}"
+        )
 
     table = data.get("table_number") or assign_table(iso_utc)
     if not table:
@@ -192,7 +207,13 @@ def save_reservation(data: dict) -> str:
     }).execute()
 
     readable = _readable_local(iso_utc)
-    return f"✅ Reservation confirmed!\n👤 {name}\n👥 {data.get('party_size', 1)} people\n🗓 {readable}\n🍽 Table: {table}"
+    return (
+        f"✅ Reservation confirmed!\n"
+        f"👤 {name}\n"
+        f"👥 {data.get('party_size', 1)} people\n"
+        f"🗓 {readable}\n"
+        f"🍽 Table: {table}"
+    )
 
 # ---------- Routes ----------
 @app.get("/", response_class=HTMLResponse)
@@ -288,10 +309,10 @@ OPTIONAL:
 - contact_phone
 
 NEVER ask follow-up questions.
-Never ask for email.
 Never ask for phone.
+Never ask for email.
 
-JSON SHAPE:
+JSON FORMAT:
 {
  "customer_name": "",
  "party_size": "",
@@ -306,8 +327,10 @@ JSON SHAPE:
         result = client.chat.completions.create(
             model="gpt-4.1-mini",
             temperature=0,
-            messages=[{"role": "system", "content": prompt},
-                      {"role": "user", "content": Body}],
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": Body}
+            ],
         )
         output = result.choices[0].message.content.strip()
         if output.startswith("```"):
@@ -324,7 +347,6 @@ JSON SHAPE:
     resp.message(msg)
     asyncio.create_task(notify_refresh())
     return Response(str(resp), media_type="application/xml")
-
 # ---------- Dashboard API ----------
 @app.post("/createReservation")
 async def create_reservation(payload: dict):
@@ -367,31 +389,49 @@ async def make_test_call(to: str):
 
 def _gather_xml(prompt: str, action_url: str) -> str:
     vr = VoiceResponse()
-    g = Gather(input="speech", speech_timeout="auto", timeout=5, action=action_url, method="POST")
+    g = Gather(
+        input="speech",
+        speech_timeout="auto",
+        timeout=5,
+        action=action_url,
+        method="POST"
+    )
     g.say(prompt, voice="Polly.Joanna-Neural", language="en-US")
     vr.append(g)
     return str(vr)
 
 @app.post("/voice")
 async def voice_welcome():
-    return Response(_gather_xml("Hi! I can book your table. What is your name?", "/voice/name"),
-                    media_type="application/xml")
+    return Response(
+        _gather_xml("Hi! I can book your table. What is your name?", "/voice/name"),
+        media_type="application/xml"
+    )
 
 @app.post("/voice/name")
 async def voice_name(request: Request):
     form = await request.form()
     caller = form.get("Caller", "")
-    phone  = caller if caller.startswith("+") else f"+{caller}" if caller else ""
-    name   = clean_name_input(form.get("SpeechResult") or "Guest")
-    return Response(_gather_xml(f"Nice to meet you {name}. For how many people should I book the table?",
-                                f"/voice/party?name={quote(name)}&phone={quote(phone)}"),
-                    media_type="application/xml")
+    phone = caller if caller.startswith("+") else f"+{caller}" if caller else ""
+    name = clean_name_input(form.get("SpeechResult") or "Guest")
+
+    return Response(
+        _gather_xml(
+            f"Nice to meet you {name}. For how many people should I book the table?",
+            f"/voice/party?name={quote(name)}&phone={quote(phone)}"
+        ),
+        media_type="application/xml"
+    )
 
 @app.post("/voice/party")
 async def voice_party(request: Request, name: str, phone: str):
     form = await request.form()
     speech = (form.get("SpeechResult") or "").lower()
-    numbers = {"one":"1","two":"2","three":"3","four":"4","for":"4","five":"5","six":"6","seven":"7","eight":"8","nine":"9","ten":"10"}
+
+    numbers = {
+        "one": "1", "two": "2", "three": "3", "four": "4", "for": "4", "five": "5",
+        "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10"
+    }
+
     party = next((tok for tok in speech.replace("-", " ").split() if tok.isdigit()), None)
     if not party:
         for w, n in numbers.items():
@@ -400,37 +440,64 @@ async def voice_party(request: Request, name: str, phone: str):
                 break
     if not party:
         party = "1"
-    return Response(_gather_xml("What date and time should I book?",
-                                f"/voice/datetime?name={quote(name)}&phone={quote(phone)}&party={party}"),
-                    media_type="application/xml")
+
+    return Response(
+        _gather_xml(
+            "What date and time should I book?",
+            f"/voice/datetime?name={quote(name)}&phone={quote(phone)}&party={party}"
+        ),
+        media_type="application/xml"
+    )
 
 @app.post("/voice/datetime")
 async def voice_datetime(request: Request, name: str, phone: str, party: str):
     form = await request.form()
     raw = (form.get("SpeechResult") or "").strip()
     cleaned = clean_datetime_input(raw)
+
     iso = _to_utc_iso(cleaned)
     if not iso:
-        return Response(_gather_xml("Sorry, I didn’t catch that. Please say: Friday at 7 PM.",
-                                    f"/voice/datetime?name={quote(name)}&phone={quote(phone)}&party={party}"),
-                        media_type="application/xml")
-    return Response(_gather_xml("Any notes or preferences? Say none if no.",
-                                f"/voice/notes?name={quote(name)}&phone={quote(phone)}&party={party}&dt={quote(cleaned)}"),
-                    media_type="application/xml")
+        return Response(
+            _gather_xml(
+                "Sorry, I didn’t catch that. Please say: Friday at 7 PM.",
+                f"/voice/datetime?name={quote(name)}&phone={quote(phone)}&party={party}"
+            ),
+            media_type="application/xml"
+        )
+
+    return Response(
+        _gather_xml(
+            "Any notes or preferences? Say none if no.",
+            f"/voice/notes?name={quote(name)}&phone={quote(phone)}&party={party}&dt={quote(cleaned)}"
+        ),
+        media_type="application/xml"
+    )
 
 @app.post("/voice/notes")
 async def voice_notes(request: Request, name: str, phone: str, party: str, dt: str):
     form = await request.form()
     notes_speech = (form.get("SpeechResult") or "").strip()
-    notes = "none" if any(x in notes_speech.lower() for x in ["none", "no", "nothing", "no notes"]) else notes_speech
 
-    payload = {"customer_name": name, "party_size": party, "datetime": dt, "notes": notes, "contact_phone": phone}
+    notes = (
+        "none"
+        if any(x in notes_speech.lower() for x in ["none", "no", "nothing", "no notes"])
+        else notes_speech
+    )
+
+    payload = {
+        "customer_name": name,
+        "party_size": party,
+        "datetime": dt,
+        "notes": notes,
+        "contact_phone": phone
+    }
     save_reservation(payload)
 
     vr = VoiceResponse()
     vr.say("Perfect, I'm booking your table now.", voice="Polly.Joanna-Neural", language="en-US")
     vr.say("Thank you, goodbye.", voice="Polly.Joanna-Neural", language="en-US")
     vr.hangup()
+
     asyncio.create_task(notify_refresh())
     return Response(str(vr), media_type="application/xml")
 
