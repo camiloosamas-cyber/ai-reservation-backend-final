@@ -35,16 +35,61 @@
       margin-bottom:22px;
     }
     .filters input, .filters select{ height:38px; border-radius:10px; border:1px solid var(--border); padding:8px 12px; font-size:14px; }
+
+    .table-availability{
+      background:white; border:1px solid var(--border); border-radius:14px;
+      padding:16px; box-shadow:var(--shadow); margin-bottom:20px;
+    }
+    .table-grid{ display:grid; grid-template-columns: repeat(5, 1fr); gap:10px; }
+    .tcard{ background:white; border:1px solid var(--border); border-radius:12px; padding:10px; cursor:pointer; transition:0.15s; display:flex; flex-direction:column; gap:4px; }
+    .tcard:hover{ background:#f9fbff; }
+    .free{ background:#ecfdf5; color:#01643f; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700; }
+    .occupied{ background:#fef2f2; color:#9b1c1c; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700; }
+
+    .table-wrap{ border-radius:14px; background:white; border:1px solid var(--border); }
+    table{ width:100%; border-collapse:collapse; }
+    thead th{ padding:12px; background:var(--head); color:white; font-weight:600; font-size:13px; }
+    tbody td{ padding:12px; border-top:1px solid var(--border); font-size:14px; }
+    tbody tr:hover{ background:#f9fbff; }
+
+    .chip{ padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700; display:inline-block; }
+    .confirmed{ background:#dcfce7; color:#166534; }
+    .arrived{ background:#bbf7d0; color:#064e3b; }
+    .updated{ background:#fef9c3; color:#854d0e; }
+    .pending{ background:#eef2ff; color:#4338ca; }
+    .cancelled,.no_show{ background:#fee2e2; color:#b91c1c; }
+    .archived{ background:#d1d5db; color:#4b5563; }
+
+    .contact-actions{ display:flex; gap:4px; margin-top:4px; }
+    .icon-btn{ padding:4px 6px; font-size:13px; border-radius:6px; border:none; cursor:pointer; background:#eef2ff; }
+
+    .menu-wrapper{ position:relative; }
+    .menu-btn{ border:none; background:none; font-size:18px; cursor:pointer; }
+    .dropdown-menu{
+      display:none; position:absolute; right:0; top:22px; background:white;
+      border:1px solid var(--border); border-radius:8px; min-width:150px;
+      box-shadow:var(--shadow); z-index:50;
+    }
+    .dropdown-menu button{ width:100%; background:none; border:none; padding:8px 12px; text-align:left; font-size:13px; cursor:pointer; }
+    .dropdown-menu button:hover{ background:#eef2ff; }
+
+    .modal-backdrop{ position:fixed; inset:0; background:#0008; display:none; align-items:center; justify-content:center; z-index:100; }
+    .modal{ background:white; width:600px; max-width:90vw; border-radius:16px; padding:16px; border:1px solid var(--border); box-sizing:border-box; }
+    .modal header{ padding-bottom:12px; border-bottom:1px solid var(--border); }
+    .modal footer{ padding-top:12px; display:flex; justify-content:flex-end; gap:10px; }
+
+    .form-row{ display:flex; justify-content:space-between; gap:20px; margin-bottom:14px; }
+    .field{ width:48%; box-sizing:border-box; }
+    .field input,.field textarea{ width:100%; padding:10px; border-radius:10px; border:1px solid var(--border); }
   </style>
 </head>
 
 <body>
 <div class="wrap">
 
-  <!-- ENCABEZADO -->
   <header>
     <div>
-      <h1>📅 Panel de Reservas</h1>
+      <h1>🤖 Panel de Reservas</h1>
       <p class="sub">Administra reservas, analiza datos y mantén todo organizado</p>
     </div>
     <div class="toolbar">
@@ -54,7 +99,7 @@
     </div>
   </header>
 
-  <!-- TARJETAS SUPERIORES -->
+  <!-- Top KPIs rendered server-side -->
   <div class="cards">
     <div class="card"><h3>Total de Reservas</h3><p>{{ reservations|length }}</p></div>
     <div class="card"><h3>Confirmadas</h3><p>{{ reservations|selectattr('status','equalto','confirmed')|list|length }}</p></div>
@@ -62,7 +107,7 @@
     <div class="card"><h3>Esta Semana</h3><p>{{ weekly_count }}</p></div>
   </div>
 
-  <!-- FILTROS -->
+  <!-- Filtros -->
   <div class="filters">
     <input id="q" placeholder="Buscar...">
     <input id="dateFilter" type="date">
@@ -73,34 +118,27 @@
       <option value="confirmed">Confirmadas</option>
       <option value="pending">Pendientes</option>
       <option value="cancelled">Canceladas</option>
-      <option value="arrived">Llegaron</option>
+      <option value="arrived">Llegó</option>
       <option value="no_show">No-Show</option>
     </select>
     <button class="btn" id="todayBtn">Hoy</button>
   </div>
-  <!-- DISPONIBILIDAD DE MESAS -->
-  <div class="table-availability"">
+
+  <!-- Disponibilidad de mesas -->
+  <div class="table-availability">
     <h2>🟩 Disponibilidad de Mesas</h2>
     <div id="tableGrid" class="table-grid"></div>
   </div>
 
-  <!-- TABLA PRINCIPAL DE RESERVAS -->
+  <!-- Tabla principal -->
   <div class="table-wrap">
     <table>
       <thead>
       <tr>
-        <th>Fecha</th>
-        <th>Hora</th>
-        <th>Cliente</th>
-        <th>Contacto</th>
-        <th>Personas</th>
-        <th>Mesa</th>
-        <th>Notas</th>
-        <th>Estado</th>
-        <th>Acciones</th>
+        <th>Fecha</th><th>Hora</th><th>Cliente</th><th>Contacto</th>
+        <th>Personas</th><th>Mesa</th><th>Notas</th><th>Estado</th><th>Acciones</th>
       </tr>
       </thead>
-
       <tbody id="tbody">
 
       {% for r in reservations %}
@@ -114,7 +152,6 @@
         data-status="{{ r.status }}"
         data-table="{{ r.table_number or '' }}"
       >
-
         {% if r.datetime and 'T' in r.datetime %}
           {% set dt = r.datetime.split('T') %}
           <td>{{ dt[0] }}</td>
@@ -124,13 +161,10 @@
           <td>-</td>
         {% endif %}
 
-        <!-- Cliente -->
         <td>{{ r.customer_name }}</td>
 
-        <!-- Contacto: teléfono o email -->
         <td>
           {{ r.customer_email or r.contact_phone or '-' }}
-
           <div class="contact-actions">
             <button class="icon-btn" onclick="callCustomer(`{{ r.contact_phone or '' }}`)">📞</button>
             <button class="icon-btn" onclick="sendWhatsApp(`{{ r.contact_phone or '' }}`, `{{ r.customer_name }}`, `{{ r.datetime or '' }}`)">💬</button>
@@ -140,108 +174,63 @@
         <td>{{ r.party_size }}</td>
         <td>{{ r.table_number or '-' }}</td>
         <td>{{ r.notes or '-' }}</td>
+        <td><span class="chip {{ r.status }}">{{ r.status.replace("_"," ") }}</span></td>
 
-        <!-- ESTADO EN ESPAÑOL -->
-        <td>
-          {% set st = r.status %}
-          {% if st == "confirmed" %}
-            <span class="chip confirmed">Confirmada</span>
-          {% elif st == "arrived" %}
-            <span class="chip arrived">Llegó</span>
-          {% elif st == "updated" %}
-            <span class="chip updated">Actualizada</span>
-          {% elif st == "pending" %}
-            <span class="chip pending">Pendiente</span>
-          {% elif st == "cancelled" %}
-            <span class="chip cancelled">Cancelada</span>
-          {% elif st == "no_show" %}
-            <span class="chip no_show">No-Show</span>
-          {% elif st == "archived" %}
-            <span class="chip archived">Archivada</span>
-          {% else %}
-            <span class="chip">{{ st }}</span>
-          {% endif %}
-        </td>
-
-        <!-- MENÚ DE ACCIONES (TODO EN ESPAÑOL) -->
         <td>
           <div class="menu-wrapper" onclick="event.stopPropagation()">
             <button class="menu-btn" onclick="toggleMenu(this);event.stopPropagation()">⋮</button>
             <div class="dropdown-menu" onclick="event.stopPropagation()">
-
               <button onclick="openEdit({{ r.reservation_id }}, `{{ r.datetime or '' }}`, {{ r.party_size or 1 }}, `{{ r.table_number or '' }}`, `{{ r.notes or '' }}`)">✏️ Editar</button>
-
               <button onclick="markStatus({{ r.reservation_id }}, 'arrived')">✅ Marcar como Llegó</button>
-
               <button onclick="markStatus({{ r.reservation_id }}, 'no_show')">⚠️ Marcar No-Show</button>
-
               <button onclick="doArchive({{ r.reservation_id }})">🗄️ Archivar</button>
-
               <button onclick="doCancel({{ r.reservation_id }})">❌ Cancelar</button>
-
             </div>
           </div>
         </td>
-
       </tr>
       {% endfor %}
 
       </tbody>
     </table>
   </div>
-  <!-- INSIGHTS / ESTADÍSTICAS -->
+
+  <!-- Insights -->
   <h2 style="margin-top:24px;">📊 Estadísticas</h2>
-
   <div class="cards" style="grid-template-columns:repeat(3,1fr);">
-    <div class="card">
-      <h3>Promedio de Personas</h3>
-      <p id="avgParty">–</p>
-    </div>
-
-    <div class="card">
-      <h3>Hora Pico</h3>
-      <p id="peakTime">–</p>
-    </div>
-
-    <div class="card">
-      <h3>Tasa de Cancelación</h3>
-      <p id="cancelRate">–</p>
-    </div>
+    <div class="card"><h3>Promedio de Personas</h3><p id="avgParty">–</p></div>
+    <div class="card"><h3>Hora Pico</h3><p id="peakTime">–</p></div>
+    <div class="card"><h3>Tasa de Cancelación</h3><p id="cancelRate">–</p></div>
   </div>
-</div> <!-- wrap end -->
 
-<!-- MODAL: EDITAR RESERVA -->
+</div>
+
+<!-- Modal editar -->
 <div class="modal-backdrop" id="editModal">
   <div class="modal">
     <header><h3>Editar Reserva</h3></header>
     <div style="padding:16px;">
-
       <div class="form-row">
         <div class="field">
           <label for="dt">Fecha y Hora</label>
           <input id="dt" type="datetime-local">
         </div>
-
         <div class="field">
-          <label for="ps">Número de Personas</label>
+          <label for="ps">Personas</label>
           <input id="ps" type="number" min="1" value="1">
         </div>
       </div>
-
       <div class="form-row">
         <div class="field">
           <label for="table">Mesa</label>
           <input id="table">
         </div>
-
         <div class="field">
           <label for="notes">Notas</label>
           <textarea id="notes"></textarea>
         </div>
       </div>
-
     </div>
-
     <footer>
       <button class="btn" onclick="closeEdit()">Cancelar</button>
       <button class="btn primary" id="saveBtn">Guardar</button>
@@ -249,57 +238,25 @@
   </div>
 </div>
 
-
-<!-- MODAL: NUEVA RESERVA -->
+<!-- Modal nueva reserva -->
 <div class="modal-backdrop" id="newModal">
   <div class="modal">
     <header><h3>Nueva Reserva</h3></header>
-
     <div style="padding:16px;">
-
       <div class="form-row">
-        <div class="field">
-          <label for="new_name">Nombre *</label>
-          <input id="new_name" required>
-        </div>
-
-        <div class="field">
-          <label for="new_email">Correo</label>
-          <input id="new_email" type="email">
-        </div>
+        <div class="field"><label for="new_name">Nombre *</label><input id="new_name" required></div>
+        <div class="field"><label for="new_email">Email</label><input id="new_email" type="email"></div>
       </div>
-
       <div class="form-row">
-        <div class="field">
-          <label for="new_phone">Teléfono</label>
-          <input id="new_phone" type="tel">
-        </div>
-
-        <div class="field">
-          <label for="new_party">Personas *</label>
-          <input id="new_party" type="number" min="1" value="2">
-        </div>
+        <div class="field"><label for="new_phone">Teléfono</label><input id="new_phone" type="tel"></div>
+        <div class="field"><label for="new_party">Personas *</label><input id="new_party" type="number" min="1" value="2"></div>
       </div>
-
       <div class="form-row">
-        <div class="field">
-          <label for="new_dt">Fecha & Hora *</label>
-          <input id="new_dt" type="datetime-local">
-        </div>
-
-        <div class="field">
-          <label for="new_table">Mesa</label>
-          <input id="new_table">
-        </div>
+        <div class="field"><label for="new_dt">Fecha y Hora *</label><input id="new_dt" type="datetime-local"></div>
+        <div class="field"><label for="new_table">Mesa</label><input id="new_table"></input></div>
       </div>
-
-      <div class="field">
-        <label for="new_notes">Notas</label>
-        <textarea id="new_notes"></textarea>
-      </div>
-
+      <div class="field"><label for="new_notes">Notas</label><textarea id="new_notes"></textarea></div>
     </div>
-
     <footer>
       <button class="btn" id="closeNewBtn">Cancelar</button>
       <button class="btn primary" id="createBtn">Crear</button>
@@ -307,189 +264,130 @@
   </div>
 </div>
 
-
 <script>
-/* ===========================
-      MENÚ DE ACCIONES
-=========================== */
+/* Menú flotante */
 function toggleMenu(el){
   const menu = el.nextElementSibling;
-  document.querySelectorAll(".dropdown-menu").forEach(m => {
-    if (m !== menu) m.style.display = "none";
-  });
-  menu.style.display = menu.style.display === "block" ? "none" : "block";
+  document.querySelectorAll(".dropdown-menu").forEach(m=>{ if(m!==menu) m.style.display="none"; });
+  menu.style.display = menu.style.display==="block" ? "none" : "block";
 }
-document.body.addEventListener("click", ()=>{
+document.body.addEventListener("click", ()=> {
   document.querySelectorAll(".dropdown-menu").forEach(m=> m.style.display="none");
 });
 
-
-/* ===========================
-          FILTROS
-=========================== */
-const tbody = document.getElementById("tbody");
-const q = document.getElementById("q");
-const dateF = document.getElementById("dateFilter");
-const statusF = document.getElementById("statusFilter");
+/* Filtros */
+const tbody=document.getElementById("tbody");
+const q=document.getElementById("q");
+const dateF=document.getElementById("dateFilter");
+const statusF=document.getElementById("statusFilter");
 
 function filter(){
-  const qv = q.value.toLowerCase();
-  const dv = dateF.value;
-  const sv = statusF.value;
+  const qv=q.value.toLowerCase();
+  const dv=dateF.value;
+  const sv=statusF.value;
 
   [...tbody.rows].forEach(r=>{
-    const okQ = r.dataset.name.includes(qv);
-    const okD = !dv || r.dataset.date === dv;
-    const s = r.dataset.status;
+    const okQ=r.dataset.name.includes(qv);
+    const okD=!dv || r.dataset.date===dv;
+    const s=r.dataset.status;
+    const okS=
+      (sv==="active" && s!=="archived") ||
+      (sv==="archived" && s==="archived") ||
+      (sv==="all") ||
+      (sv===s);
 
-    const okS =
-      (sv === "active" && s !== "archived") ||
-      (sv === "archived" && s === "archived") ||
-      (sv === "all") ||
-      (sv === s);
-
-    r.style.display = (okQ && okD && okS) ? "" : "none";
+    r.style.display=(okQ&&okD&&okS)?"":"none";
   });
 
   buildTableGrid();
   computeInsights();
 }
 
-q.oninput = filter;
-dateF.onchange = filter;
-statusF.onchange = filter;
+q.oninput=filter;
+dateF.onchange=filter;
+statusF.onchange=filter;
 
-document.getElementById("todayBtn").onclick = ()=>{
-  dateF.value = new Date().toISOString().slice(0,10);
+document.getElementById("todayBtn").onclick=()=>{
+  dateF.value=new Date().toISOString().slice(0,10);
   filter();
 };
 
-
-/* ===========================
-    DISPONIBILIDAD DE MESAS
-=========================== */
+/* Disponibilidad de mesas */
 const TABLE_IDS = ["T1","T2","T3","T4","T5","T6","T7","T8","T9","T10"];
 
 function buildTableGrid(){
-  const grid = document.getElementById("tableGrid");
-  const rows = [...tbody.rows];
+  const grid=document.getElementById("tableGrid");
+  const rows=[...tbody.rows];
 
-  grid.innerHTML = "";
-
-  TABLE_IDS.forEach(id =>{
-    const reserved = rows.filter(r =>
-      r.style.display !== "none" &&
-      r.dataset.table === id &&
-      r.dataset.status !== "cancelled"
-    );
-
-    const div = document.createElement("div");
-    div.className = "tcard";
-    div.onclick = ()=> filterByTable(id);
-
-    div.innerHTML = `
+  grid.innerHTML="";
+  TABLE_IDS.forEach(id=>{
+    const reserved = rows.filter(r => r.style.display !== "none" && r.dataset.table === id && r.dataset.status !== "cancelled");
+    const div=document.createElement("div");
+    div.className="tcard";
+    div.onclick=()=>filterByTable(id);
+    div.innerHTML=`
       <span style="font-weight:700;">${id}</span>
-      <span class="${reserved.length ? 'occupied' : 'free'}">
-        ${reserved.length ? "Ocupada" : "Libre"}
-      </span>
+      <span class="${reserved.length ? 'occupied' : 'free'}">${reserved.length ? "Ocupada" : "Libre"}</span>
     `;
-
     grid.appendChild(div);
   });
 }
 
 function filterByTable(table){
-  q.value = "";
-  dateF.value = "";
-  statusF.value = "active";
-
+  q.value="";
+  dateF.value="";
+  statusF.value="active";
   [...tbody.rows].forEach(r=>{
-    r.style.display = r.dataset.table === table ? "" : "none";
+    r.style.display = (r.dataset.table === table) ? "" : "none";
   });
-
   buildTableGrid();
   computeInsights();
 }
 
-
-/* ===========================
-        ACCIONES DEL CRUD
-=========================== */
-async function markStatus(id, s){
-  await fetch("/updateReservation", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({reservation_id:id, status:s})
-  });
+/* Acciones (misma API) */
+async function markStatus(id,s){
+  await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:s})});
   location.reload();
 }
-
 async function doArchive(id){
-  await fetch("/updateReservation", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({reservation_id:id, status:"archived"})
-  });
+  await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:"archived"})});
   location.reload();
 }
-
 async function doCancel(id){
-  await fetch("/cancelReservation", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({reservation_id:id})
-  });
+  await fetch("/cancelReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id})});
   location.reload();
 }
 
-
-/* ===========================
-    CONTACTO (LLAMAR / WA)
-=========================== */
+/* Llamar + WhatsApp */
 function callCustomer(phone){
-  if(!phone) return alert("No hay número telefónico.");
+  if(!phone) return alert("No hay número de teléfono.");
   window.location.href = `tel:${phone}`;
 }
-
 function sendWhatsApp(phone,name,dt){
-  if(!phone) return alert("No hay número telefónico.");
-  const msg = `Hola ${name}, confirmamos tu reserva para ${dt}.`;
+  if(!phone) return alert("No hay número de teléfono.");
+  const msg = `Hola ${name}, solo queremos confirmar tu reserva para ${dt}.`;
   window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
 }
 
-
-/* ===========================
-    REFRESCO AUTOMÁTICO (WS)
-=========================== */
-document.getElementById("refreshBtn").onclick = ()=> location.reload();
-
+/* Actualizar & WebSocket */
+document.getElementById("refreshBtn").onclick=()=>location.reload();
 (function(){
   try{
-    const ws = new WebSocket(
-      `${location.protocol==="https:"?"wss":"ws"}://${location.host}/ws`
-    );
-    ws.onmessage = ()=> location.reload();
+    const ws=new WebSocket(`${location.protocol==="https:"?"wss":"ws"}://${location.host}/ws`);
+    ws.onmessage=()=>location.reload();
   }catch(e){}
 })();
 
+/* Crear Reserva (misma API, texto español) */
+document.getElementById("newBtn").onclick=()=>{ document.getElementById("newModal").style.display="flex"; };
+document.getElementById("closeNewBtn").onclick=()=>{ document.getElementById("newModal").style.display="none"; };
 
-/* ===========================
-      NUEVA RESERVA (POST)
-=========================== */
-document.getElementById("newBtn").onclick = ()=>{
-  document.getElementById("newModal").style.display = "flex";
-};
-
-document.getElementById("closeNewBtn").onclick = ()=>{
-  document.getElementById("newModal").style.display = "none";
-};
-
-document.getElementById("createBtn").onclick = async ()=>{
+document.getElementById("createBtn").onclick = async () => {
   const name = document.getElementById("new_name").value.trim();
   const party = Number(document.getElementById("new_party").value || 1);
   const dtVal = document.getElementById("new_dt").value;
 
-  if(!name || !dtVal){
+  if (!name || !dtVal) {
     alert("El nombre y la fecha/hora son obligatorios.");
     return;
   }
@@ -505,68 +403,50 @@ document.getElementById("createBtn").onclick = async ()=>{
   };
 
   await fetch("/createReservation", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(payload)
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
   });
 
   document.getElementById("newModal").style.display = "none";
   location.reload();
 };
 
-
-/* ===========================
-         EDITAR RESERVA
-=========================== */
+/* Editar reserva */
 let currentId = null;
 
 function openEdit(id, dt, ps, table, notes){
   currentId = id;
-
-  document.getElementById("dt").value =
-    dt && dt.includes("T") ? dt.slice(0,16) : "";
-
+  document.getElementById("dt").value = dt && dt.includes("T") ? dt.slice(0,16) : "";
   document.getElementById("ps").value = ps || 1;
   document.getElementById("table").value = table || "";
   document.getElementById("notes").value = notes || "";
-
-  document.getElementById("editModal").style.display = "flex";
+  document.getElementById("editModal").style.display="flex";
 }
+function closeEdit(){ document.getElementById("editModal").style.display="none"; }
 
-function closeEdit(){
-  document.getElementById("editModal").style.display = "none";
-}
-
-
-document.getElementById("saveBtn").onclick = async ()=>{
+document.getElementById("saveBtn").onclick = async () => {
   const payload = {
     reservation_id: currentId,
-    datetime: document.getElementById("dt").value
-      ? new Date(document.getElementById("dt").value).toISOString()
-      : undefined,
-    party_size: document.getElementById("ps").value
-      ? Number(document.getElementById("ps").value)
-      : undefined,
+    datetime: document.getElementById("dt").value ? new Date(document.getElementById("dt").value).toISOString() : undefined,
+    party_size: document.getElementById("ps").value ? Number(document.getElementById("ps").value) : undefined,
     table_number: document.getElementById("table").value || undefined,
     notes: document.getElementById("notes").value || undefined,
     status: "updated"
   };
 
-  await fetch("/updateReservation",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(payload)
+  await fetch("/updateReservation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
   });
 
   closeEdit();
   location.reload();
 };
 
-
-/* ===========================
-    EXPORTAR CSV
-=========================== */
-document.getElementById("exportBtn").onclick = ()=>{
+/* Exportar CSV */
+document.getElementById("exportBtn").onclick=()=>{
   const header = ["Fecha","Hora","Cliente","Contacto","Personas","Mesa","Notas","Estado"];
   const rows = [header];
 
@@ -581,29 +461,40 @@ document.getElementById("exportBtn").onclick = ()=>{
       cells[4].innerText.trim(),
       cells[5].innerText.trim(),
       cells[6].innerText.trim(),
-      cells[7].innerText.trim()
+      cells[7].innerText.trim(),
     ]);
   });
 
-  const csv = rows
-    .map(r => r.map(v => `"${(v||"").replace(/"/g,'""')}"`).join(","))
-    .join("\n");
-
+  const csv = rows.map(r => r.map(v => `"${(v||"").replace(/"/g,'""')}"`).join(",")).join("\n");
   const a = document.createElement("a");
-  a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
-  a.download = "reservas.csv";
+  a.href="data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+  a.download="reservas.csv";
   a.click();
 };
 
+/* Etiquetas en español para los estados (sin cambiar los valores reales) */
+function localizeStatusBadges(){
+  const map = {
+    confirmed: "Confirmada",
+    pending: "Pendiente",
+    cancelled: "Cancelada",
+    arrived: "Llegó",
+    no_show: "No se presentó",
+    archived: "Archivada",
+    updated: "Actualizada"
+  };
+  document.querySelectorAll("td .chip").forEach(span=>{
+    const cls = [...span.classList].find(c => map[c]);
+    if(cls) span.innerText = map[cls];
+  });
+}
 
-/* ===========================
-          INSIGHTS
-=========================== */
+/* Estadísticas */
 function computeInsights(){
   const rows = [...tbody.rows];
 
   const total = rows.length;
-  if(!total){
+  if (!total){
     document.getElementById("avgParty").innerText = "0";
     document.getElementById("peakTime").innerText = "N/A";
     document.getElementById("cancelRate").innerText = "0%";
@@ -616,45 +507,34 @@ function computeInsights(){
 
   rows.forEach(r=>{
     const p = parseInt(r.cells[4].innerText.trim() || "0", 10);
-    if(!isNaN(p) && p>0){
-      sumParty += p;
-      countParty++;
-    }
+    if (!isNaN(p) && p>0){ sumParty += p; countParty++; }
 
     const t = r.cells[1].innerText.trim();
-    if(t && t !== "-"){
-      timeFreq[t] = (timeFreq[t] || 0) + 1;
-    }
+    if (t && t !== "-"){ timeFreq[t] = (timeFreq[t]||0) + 1; }
 
     const s = r.dataset.status || "";
-    if(s === "cancelled") cancelled++;
+    if (s === "cancelled") cancelled += 1;
   });
 
   const avg = countParty ? (sumParty / countParty) : 0;
-
   let peak = "N/A";
   let best = 0;
   Object.entries(timeFreq).forEach(([t,c])=>{
-    if(c > best){
-      best = c;
-      peak = t;
-    }
+    if (c > best){ best = c; peak = t; }
   });
 
-  const cancelRate = total ? ((cancelled / total) * 100) : 0;
+  const cancelRate = total ? ((cancelled/total)*100) : 0;
 
   document.getElementById("avgParty").innerText = avg.toFixed(1);
   document.getElementById("peakTime").innerText = peak;
   document.getElementById("cancelRate").innerText = cancelRate.toFixed(1) + "%";
 }
 
-
-/* ===========================
-           INIT
-=========================== */
+/* Init */
 document.addEventListener("DOMContentLoaded", ()=>{
   buildTableGrid();
   computeInsights();
+  localizeStatusBadges();
 });
 </script>
 
