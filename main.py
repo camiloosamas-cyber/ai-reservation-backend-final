@@ -114,7 +114,7 @@ def _norm_name(name: str | None) -> str:
 # -----------------------------------------------------
 def clean_name_input(text: str) -> str:
     text = (text or "").lower()
-    for r in ["my name is", "i am", "i'm", "its", "it's", "this is", "name is"]:
+    for r in ["my name is", "i am", "i'm", "its", "it's", "this is", "name is", "soy", "me llamo", "mi nombre es"]:
         text = text.replace(r, " ")
     text = re.sub(r"[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ ]", "", text)
     return re.sub(r"\s+", " ", text).strip().title()
@@ -139,7 +139,6 @@ def _cache_check_and_add(key: str) -> bool:
         return True
     _recent_keys[key] = exp
     return False
-
 # -----------------------------------------------------
 #                     DB HELPERS
 # -----------------------------------------------------
@@ -160,8 +159,9 @@ def _find_existing(utc_iso: str, name: str):
         if _norm_name(r.get("customer_name")) == n and r.get("status") not in ("cancelled", "archived"):
             return r
     return None
+
 # -----------------------------------------------------
-#              SAVE RESERVATION (BILINGUAL)
+#              SAVE RESERVATION (FINAL + CLEAN)
 # -----------------------------------------------------
 def save_reservation(data: dict):
     iso_utc = _to_utc_iso(data.get("datetime"))
@@ -171,7 +171,7 @@ def save_reservation(data: dict):
             "en": "❌ Invalid date/time. Please specify date AND time."
         }
 
-    name = data.get("customer_name", "")
+    name = data.get("customer_name", "").strip().title()
     key = f"{_norm_name(name)}|{iso_utc}"
 
     # ----- IDEMPOTENCY CHECK -----
@@ -230,7 +230,7 @@ def save_reservation(data: dict):
     # ----- SAVE TO DB -----
     supabase.table("reservations").insert({
         "customer_name": name,
-        "customer_email": data.get("customer_email", "") or "",
+        "customer_email": "",
         "contact_phone": data.get("contact_phone", "") or "",
         "datetime": iso_utc,
         "party_size": int(data.get("party_size", 1)),
@@ -340,13 +340,14 @@ async def whatsapp_webhook(
     From: str = Form(None)
 ):
     """
-    SMART AUTONOMOUS BEHAVIOR:
-    - Same tone & intelligence as the screenshot you loved
-    - Friendly natural intro ONLY when user greets
-    - If some info missing → ask ONLY for the missing piece
-    - If all info present → confirm reservation immediately
-    - NO overthinking, NO robotic tone
-    - Spanish-first but bilingual
+    PERFECT WHATSAPP BEHAVIOR (like your screenshot):
+    - Spanish-first (English only if user speaks English)
+    - SUPER natural, warm, short messages
+    - If user greets → friendly intro
+    - If user gives full reservation info → confirm immediately
+    - If ANY data missing → ask ONLY for the missing part
+    - NEVER ask for email or phone
+    - Tone EXACTLY like your screenshot: human, warm, simple
     """
 
     resp = MessagingResponse()
@@ -372,52 +373,62 @@ async def whatsapp_webhook(
         if lang == "es":
             intro = "¡Hola! 😊 ¿En qué puedo ayudarte hoy? ¿Quieres información del restaurante o hacer una reserva?"
         else:
-            intro = "Hi! 😊 How can I help you today? Do you want restaurant info or make a reservation?"
+            intro = "Hi! 😊 How can I help you today? Want restaurant info or make a reservation?"
         resp.message(intro)
         return Response(str(resp), media_type="application/xml")
 
-    # -------- SYSTEM PROMPT (super friendly + smart) --------
+    # -----------------------------------------------------
+    #   SUPER NATURAL BRAIN — EXACT STYLE YOU WANTED
+    # -----------------------------------------------------
     system_prompt = f"""
-Eres un asistente de reservas extremadamente amigable y natural.
-Tu tono debe ser cálido, humano y similar al ejemplo del screenshot.
+Eres un asistente de reservas extremadamente natural, cálido y sencillo.
+Tu tono debe sonar EXACTAMENTE como WhatsApp real (como en el screenshot del cliente).
 
 Usa SIEMPRE el idioma del usuario: {"español" if lang=="es" else "inglés"}.
 
-Tu trabajo:
+REGLAS DE ORO:
+- Respuestas muy cortas, cálidas, simples.
+- No hables como robot.
+- No escribas párrafos largos.
+- No hables inglés si el usuario escribe en español.
+- No pidas email ni número.
 
-1) Si el usuario proporciona **nombre + fecha+hora + personas**:
-   → NO escribas texto normal
-   → Devuelve SOLO el JSON de reserva.
+OBJETIVO:
+Recolectar estos 3 datos:
+1) nombre del cliente  
+2) fecha+hora  
+3) número de personas  
 
-2) Si falta alguno de estos datos, NO crees JSON todavía:
-   - Si falta el nombre → pregunta: "Perfecto 😊 ¿A nombre de quién sería la reserva?"
-   - Si falta fecha/hora → pregunta: "Genial 😊 ¿Para qué día y hora te gustaría la reserva?"
-   - Si faltan las personas → pregunta: "Claro 😊 ¿Para cuántas personas sería?"
+Si el usuario YA dio los 3 → NO preguntes nada, NO escribas texto.
+→ Devuelve SOLO este JSON:
 
-3) El estilo debe ser cálido:
-   - "Perfecto 😊"
-   - "Genial 😄"
-   - "Claro, sin problema"
-   - "¡Super!"
-
-4) Cuando corresponda crear reserva, usa este formato EXACTO:
-
-{
+{{
  "customer_name": "",
  "party_size": "",
  "datetime": "",
  "customer_email": "",
  "contact_phone": "",
  "notes": ""
-}
+}}
 
-Reglas:
-- Nunca pidas email.
-- Nunca pidas número.
-- Sé amable, breve, humano.
+SI FALTA INFORMACIÓN:
+- Si falta nombre → responde:
+  "Perfecto 😊 ¿A nombre de quién sería la reserva?"
+
+- Si falta fecha/hora → responde:
+  "Genial 😊 ¿Para qué día y hora te gustaría la reserva?"
+
+- Si faltan personas → responde:
+  "Claro 😊 ¿Para cuántas personas sería?"
+
+Elige SIEMPRE la respuesta más corta y cálida posible.
+
+No inventes datos. No adivines. No asumas.
 """
 
-    # -------- CALL OPENAI --------
+    # -----------------------------------------------------
+    #   CALL OPENAI
+    # -----------------------------------------------------
     try:
         ai = client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -433,19 +444,23 @@ Reglas:
         resp.message("❌ Hubo un error procesando tu mensaje.")
         return Response(str(resp), media_type="application/xml")
 
-    # -------- CASE A: AI gave a friendly normal message --------
+    # -----------------------------------------------------
+    #   CASE A: AI responded normally (missing info)
+    # -----------------------------------------------------
     if not ai_msg.startswith("{"):
         resp.message(ai_msg)
         return Response(str(resp), media_type="application/xml")
 
-    # -------- CASE B: AI returned JSON → save reservation --------
+    # -----------------------------------------------------
+    #   CASE B: AI returned JSON → save reservation
+    # -----------------------------------------------------
     try:
         data = json.loads(ai_msg)
     except:
         if lang == "es":
-            resp.message("❌ No entendí bien la fecha/hora. ¿Podrías repetirla por favor?")
+            resp.message("❌ No entendí la fecha/hora 😅 ¿Podrías repetirla?")
         else:
-            resp.message("❌ I couldn’t understand the date/time. Could you repeat it?")
+            resp.message("❌ Couldn't understand the date/time 😅 Try again?")
         return Response(str(resp), media_type="application/xml")
 
     # Attach phone automatically if missing
@@ -483,7 +498,7 @@ async def update_reservation(update: dict):
         "status": update.get("status", "updated"),
     }).eq("reservation_id", update["reservation_id"]).execute()
 
-    asyncio.create_task(notify_refresh())
+    asyncio.create_task(notify_refresh())  # live refresh
     return {"success": True}
 
 
@@ -495,8 +510,6 @@ async def cancel_reservation(update: dict):
 
     asyncio.create_task(notify_refresh())
     return {"success": True}
-
-
 
 
 # -----------------------------------------------------
@@ -638,8 +651,6 @@ async def voice_notes(request: Request, name: str, phone: str, party: str, dt: s
     return Response(str(vr), media_type="application/xml")
 
 
-
-
 # -----------------------------------------------------
 #              LIVE WEBSOCKET REFRESH
 # -----------------------------------------------------
@@ -666,7 +677,6 @@ async def notify_refresh():
                 clients.remove(ws)
             except:
                 pass
-
 
 
 # ---------------- END OF FILE ----------------
