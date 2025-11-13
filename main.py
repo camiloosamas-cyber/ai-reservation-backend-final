@@ -55,19 +55,18 @@ def _explicit_year_in(text: str | None) -> bool:
     return bool(text and re.search(r"\b20\d{2}\b", text))
 
 def _to_utc_iso(dt_str: str | None) -> str | None:
-    """Parse natural or ISO datetime -> UTC ISO, always using current year if user didn't say one."""
     if not dt_str:
         return None
 
-    # Try ISO first
+    # ISO direct
     dti = _safe_fromiso(dt_str)
     if dti:
         if dti.tzinfo is None:
             dti = dti.replace(tzinfo=LOCAL_TZ)
         return dti.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
+    # Natural language
     now_local = datetime.now(LOCAL_TZ)
-
     try:
         parsed = dateparser.parse(
             dt_str,
@@ -82,15 +81,14 @@ def _to_utc_iso(dt_str: str | None) -> str | None:
         if not parsed:
             return None
 
-        # If user did NOT mention a year → force current year
-        if not re.search(r"\b20\d{2}\b", dt_str):
+        # ---------- THE ONLY FIX ----------
+        # Force current year (2025) unless user explicitly said another year
+        if not _explicit_year_in(dt_str):
             parsed = parsed.replace(year=now_local.year)
+        # -----------------------------------
 
-        # Ensure UTC ISO output
-        parsed_utc = parsed.astimezone(timezone.utc)
-        return parsed_utc.isoformat().replace("+00:00", "Z")
-
-    except Exception:
+        return parsed.isoformat().replace("+00:00", "Z")
+    except:
         return None
 
 def _utc_iso_to_local_iso(iso_utc: str | None) -> str | None:
@@ -243,7 +241,7 @@ async def dashboard(request: Request):
 
         avg_party_size = round(sum(party_vals) / len(party_vals), 1) if party_vals else 0
         peak_time = max(set(times), key=times.count) if times else "N/A"
-        cancelled = len([rr for rr in view_rows if rr.get("status") == "cancelled"])
+        cancelled = len([rr for rr in view_rows if rr["status"] == "cancelled"])
         total = len(view_rows)
         cancel_rate = round((cancelled / total) * 100, 1) if total else 0
 
@@ -255,8 +253,7 @@ async def dashboard(request: Request):
             "peak_time": peak_time,
             "cancel_rate": cancel_rate,
         })
-    except Exception as e:
-        # Keep the page loading even if something odd slips through
+    except:
         return templates.TemplateResponse("dashboard.html", {
             "request": request,
             "reservations": [],
@@ -266,12 +263,11 @@ async def dashboard(request: Request):
             "cancel_rate": 0,
         })
 
-# ---------- WhatsApp webhook (email optional, never ask) ----------
+# ---------- WhatsApp webhook ----------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...), WaId: str = Form(None), From: str = Form(None)):
     resp = MessagingResponse()
 
-    # Real phone if available
     phone = ""
     if WaId:
         phone = WaId if WaId.startswith("+") else f"+{WaId}"
@@ -287,13 +283,15 @@ REQUIRED:
 - datetime
 
 OPTIONAL:
-- notes (only if user mentions something)
-- customer_email (ONLY include if user explicitly says an email)
-- contact_phone (fill with the phone we provide separately)
+- notes
+- customer_email (ONLY if explicitly given)
+- contact_phone
 
-NEVER ask for missing email or phone. Do not ask follow-up questions.
+NEVER ask follow-up questions.
+Never ask for email.
+Never ask for phone.
 
-Return EXACT shape:
+JSON SHAPE:
 {
  "customer_name": "",
  "party_size": "",
@@ -317,16 +315,15 @@ Return EXACT shape:
         data = json.loads(output)
     except:
         resp.message("❌ I couldn’t understand that. Try again.")
-        return Response(content=str(resp), media_type="application/xml")
+        return Response(str(resp), media_type="application/xml")
 
-    # Ensure phone stored
     if phone and not data.get("contact_phone"):
         data["contact_phone"] = phone
 
     msg = save_reservation(data)
     resp.message(msg)
     asyncio.create_task(notify_refresh())
-    return Response(content=str(resp), media_type="application/xml")
+    return Response(str(resp), media_type="application/xml")
 
 # ---------- Dashboard API ----------
 @app.post("/createReservation")
@@ -351,11 +348,11 @@ async def update_reservation(update: dict):
 
 @app.post("/cancelReservation")
 async def cancel_reservation(update: dict):
-    supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", update.get("reservation_id")).execute()
+    supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", update["reservation_id"]).execute()
     asyncio.create_task(notify_refresh())
     return {"success": True}
 
-# ---------- Voice call flow (fast, Joanna, saves caller phone) ----------
+# ---------- Voice flow ----------
 @app.get("/call")
 async def make_test_call(to: str):
     try:
