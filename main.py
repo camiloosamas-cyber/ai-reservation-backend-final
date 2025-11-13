@@ -103,7 +103,7 @@ def _utc_iso_to_local_iso(iso_utc: str | None) -> str | None:
 def _readable_local(iso_utc: str | None) -> str:
     dtu = _safe_fromiso(iso_utc or "")
     if not dtu:
-        return "Invalid time"
+        return "Hora inválida"
     if dtu.tzinfo is None:
         dtu = dtu.replace(tzinfo=timezone.utc)
     return dtu.astimezone(LOCAL_TZ).strftime("%A %I:%M %p")
@@ -139,6 +139,7 @@ def _cache_check_and_add(key: str) -> bool:
         return True
     _recent_keys[key] = exp
     return False
+
 # ---------------- DB HELPERS ----------------
 def assign_table(iso_utc: str):
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
@@ -159,12 +160,10 @@ def _find_existing(utc_iso: str, name: str):
             return r
     return None
 
-
-# ---------------- THE BIG ONE: SAVE RESERVATION (NOW BILINGUAL) ----------------
-def save_reservation(data: dict) -> str:
+# ---------------- SAVE RESERVATION — BILINGUAL OUTPUT ----------------
+def save_reservation(data: dict):
     iso_utc = _to_utc_iso(data.get("datetime"))
     if not iso_utc:
-        # we return BOTH languages, GPT inside whatsapp handler chooses based on user language
         return {
             "es": "❌ La fecha u hora no es válida. Por favor indica fecha Y hora.",
             "en": "❌ Invalid date/time. Please specify date AND time."
@@ -173,28 +172,25 @@ def save_reservation(data: dict) -> str:
     name = data.get("customer_name", "")
     key = f"{_norm_name(name)}|{iso_utc}"
 
-    # dedupe
     if _cache_check_and_add(key):
         existing = _find_existing(iso_utc, name)
         if existing:
             readable = _readable_local(existing.get("datetime"))
             table = existing.get("table_number") or "-"
             return {
-                "es": f"ℹ️ Esta reserva ya existe.\n👤 {existing.get('customer_name','')}\n👥 {existing.get('party_size','')} personas\n🗓 {readable}\n🍽 Mesa: {table}",
-                "en": f"ℹ️ This reservation already exists.\n👤 {existing.get('customer_name','')}\n👥 {existing.get('party_size','')} people\n🗓 {readable}\n🍽 Table: {table}"
+                "es": f"ℹ️ Esta reserva ya existe.\n👤 {existing['customer_name']}\n👥 {existing['party_size']} personas\n🗓 {readable}\n🍽 Mesa: {table}",
+                "en": f"ℹ️ This reservation already exists.\n👤 {existing['customer_name']}\n👥 {existing['party_size']} people\n🗓 {readable}\n🍽 Table: {table}"
             }
 
-    # already exists normal check
     existing = _find_existing(iso_utc, name)
     if existing:
         readable = _readable_local(existing.get("datetime"))
         table = existing.get("table_number") or "-"
         return {
-            "es": f"ℹ️ Esta reserva ya existe.\n👤 {existing.get('customer_name','')}\n👥 {existing.get('party_size','')} personas\n🗓 {readable}\n🍽 Mesa: {table}",
-            "en": f"ℹ️ This reservation already exists.\n👤 {existing.get('customer_name','')}\n👥 {existing.get('party_size','')} people\n🗓 {readable}\n🍽 Table: {table}"
+            "es": f"ℹ️ Esta reserva ya existe.\n👤 {existing['customer_name']}\n👥 {existing['party_size']} personas\n🗓 {readable}\n🍽 Mesa: {table}",
+            "en": f"ℹ️ This reservation already exists.\n👤 {existing['customer_name']}\n👥 {existing['party_size']} people\n🗓 {readable}\n🍽 Table: {table}"
         }
 
-    # assign table
     table = data.get("table_number") or assign_table(iso_utc)
     if not table:
         return {
@@ -202,7 +198,6 @@ def save_reservation(data: dict) -> str:
             "en": "❌ No tables available at that time."
         }
 
-    # save
     supabase.table("reservations").insert({
         "customer_name": name,
         "customer_email": data.get("customer_email", "") or "",
@@ -216,7 +211,6 @@ def save_reservation(data: dict) -> str:
 
     readable = _readable_local(iso_utc)
 
-    # Friendly Spanish B + Friendly English B
     return {
         "es": (
             f"✅ ¡Listo! Tu reserva está confirmada 😊\n"
@@ -234,12 +228,10 @@ def save_reservation(data: dict) -> str:
         )
     }
 
-
 # ---------------- ROUTES ----------------
 @app.get("/", response_class=HTMLResponse)
 def home():
     return "<h3>✅ Backend running</h3><p>Go to /dashboard</p>"
-
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -276,8 +268,7 @@ async def dashboard(request: Request):
                     weekly_count += 1
                 times.append(ldt.strftime("%H:%M"))
             try:
-                if r.get("party_size") is not None:
-                    party_vals.append(int(r.get("party_size") or 0))
+                party_vals.append(int(r.get("party_size") or 0))
             except:
                 pass
 
@@ -307,30 +298,36 @@ async def dashboard(request: Request):
         })
 
 
-# ---------------- WHATSAPP WEBHOOK (BILINGUAL) ----------------
+# ---------------- WHATSAPP WEBHOOK — BILINGUAL ----------------
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...), WaId: str = Form(None), From: str = Form(None)):
     resp = MessagingResponse()
 
-    # detect user phone properly
     phone = ""
     if WaId:
         phone = WaId if WaId.startswith("+") else f"+{WaId}"
     elif From:
         phone = (From or "").replace("whatsapp:", "").strip()
 
-    # STRICT datetime prompt (unchanged)
+    # ORIGINAL WORKING EXTRACTOR (Prompt #3)
     system_prompt = """
-You extract reservation details ONLY.
+Extract reservation details and return ONLY valid JSON.
 
-CRITICAL DATETIME RULES:
-- NEVER rewrite or translate dates.
-- NEVER guess weekdays.
-- NEVER change, add or remove anything from the user's datetime.
-- Copy datetime EXACTLY as the user wrote it.
+REQUIRED:
+- customer_name
+- party_size
+- datetime
 
-Return ONLY valid JSON:
+OPTIONAL:
+- notes
+- customer_email (ONLY if explicitly given)
+- contact_phone
 
+NEVER ask follow-up questions.
+Never ask for email.
+Never ask for phone.
+
+JSON FORMAT:
 {
  "customer_name": "",
  "party_size": "",
@@ -339,11 +336,8 @@ Return ONLY valid JSON:
  "contact_phone": "",
  "notes": ""
 }
-
-After returning JSON, produce a natural language reply in the SAME language as the last user message.
 """
 
-    # call GPT
     try:
         result = client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -353,41 +347,36 @@ After returning JSON, produce a natural language reply in the SAME language as t
                 {"role": "user", "content": Body}
             ],
         )
+
         output = result.choices[0].message.content.strip()
+
         if output.startswith("```"):
             output = output.replace("```json", "").replace("```", "").strip()
 
         data = json.loads(output)
 
-    except:
-        resp.message("❌ I couldn’t understand that. Try again.")
+    except Exception:
+        resp.message("❌ No pude entenderte. Intenta de nuevo.")
         return Response(str(resp), media_type="application/xml")
 
-    # attach phone
     if phone and not data.get("contact_phone"):
         data["contact_phone"] = phone
 
-    # save reservation returns bilingual dict
-    bilingual_message = save_reservation(data)
+    bilingual_msg = save_reservation(data)
 
-    # detect user language (SIMPLE + SAFE)
-    user_lang = "es" if re.search(r"[áéíóúñ¿¡]|hola|buenas|mesa|personas|hoy|mañana", Body.lower()) else "en"
+    user_lang = "es" if re.search(r"[áéíóúñ¿¡]|hola|buenas|mesa|personas|quiero|reserv", Body.lower()) else "en"
 
-    # choose correct language response
-    final_reply = bilingual_message[user_lang]
+    final_reply = bilingual_msg[user_lang]
 
     resp.message(final_reply)
     asyncio.create_task(notify_refresh())
     return Response(str(resp), media_type="application/xml")
-# ---------------- DASHBOARD API ----------------
+
+# ---------------- DASHBOARD API (Spanish by default) ----------------
 @app.post("/createReservation")
 async def create_reservation(payload: dict):
     msg = save_reservation(payload)
-    # msg is bilingual dict → choose Spanish by default in dashboard API
-    final = msg["es"]
-    asyncio.create_task(notify_refresh())
-    return {"success": True, "message": final}
-
+    return {"success": True, "message": msg["es"]}
 
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
@@ -405,15 +394,13 @@ async def update_reservation(update: dict):
     asyncio.create_task(notify_refresh())
     return {"success": True}
 
-
 @app.post("/cancelReservation")
 async def cancel_reservation(update: dict):
     supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", update["reservation_id"]).execute()
     asyncio.create_task(notify_refresh())
     return {"success": True}
 
-
-# ---------------- VOICE FLOW (kept English exactly as you had it) ----------------
+# ---------------- VOICE (unchanged) ----------------
 @app.get("/call")
 async def make_test_call(to: str):
     try:
@@ -426,7 +413,6 @@ async def make_test_call(to: str):
     except Exception as e:
         return {"error": str(e)}
 
-
 def _gather_xml(prompt: str, action_url: str) -> str:
     vr = VoiceResponse()
     g = Gather(
@@ -436,11 +422,9 @@ def _gather_xml(prompt: str, action_url: str) -> str:
         action=action_url,
         method="POST"
     )
-    # NOTE: You told me NOT to modify voice flow.
     g.say(prompt, voice="Polly.Joanna-Neural", language="en-US")
     vr.append(g)
     return str(vr)
-
 
 @app.post("/voice")
 async def voice_welcome():
@@ -448,7 +432,6 @@ async def voice_welcome():
         _gather_xml("Hi! I can book your table. What is your name?", "/voice/name"),
         media_type="application/xml"
     )
-
 
 @app.post("/voice/name")
 async def voice_name(request: Request):
@@ -464,7 +447,6 @@ async def voice_name(request: Request):
         ),
         media_type="application/xml"
     )
-
 
 @app.post("/voice/party")
 async def voice_party(request: Request, name: str, phone: str):
@@ -495,7 +477,6 @@ async def voice_party(request: Request, name: str, phone: str):
         media_type="application/xml"
     )
 
-
 @app.post("/voice/datetime")
 async def voice_datetime(request: Request, name: str, phone: str, party: str):
     form = await request.form()
@@ -519,7 +500,6 @@ async def voice_datetime(request: Request, name: str, phone: str, party: str):
         ),
         media_type="application/xml"
     )
-
 
 @app.post("/voice/notes")
 async def voice_notes(request: Request, name: str, phone: str, party: str, dt: str):
@@ -550,10 +530,8 @@ async def voice_notes(request: Request, name: str, phone: str, party: str, dt: s
     asyncio.create_task(notify_refresh())
     return Response(str(vr), media_type="application/xml")
 
-
 # ---------------- WEBSOCKET REFRESH ----------------
 clients = []
-
 
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
@@ -565,7 +543,6 @@ async def ws(websocket: WebSocket):
     except:
         if websocket in clients:
             clients.remove(websocket)
-
 
 async def notify_refresh():
     for ws in list(clients):
