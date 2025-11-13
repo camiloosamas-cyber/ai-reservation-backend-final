@@ -55,18 +55,19 @@ def _explicit_year_in(text: str | None) -> bool:
     return bool(text and re.search(r"\b20\d{2}\b", text))
 
 def _to_utc_iso(dt_str: str | None) -> str | None:
+    """Parse natural or ISO datetime -> UTC ISO, always using current year if user didn't say one."""
     if not dt_str:
         return None
 
-    # ISO
+    # Try ISO first
     dti = _safe_fromiso(dt_str)
     if dti:
         if dti.tzinfo is None:
             dti = dti.replace(tzinfo=LOCAL_TZ)
         return dti.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    # Natural language
     now_local = datetime.now(LOCAL_TZ)
+
     try:
         parsed = dateparser.parse(
             dt_str,
@@ -80,10 +81,16 @@ def _to_utc_iso(dt_str: str | None) -> str | None:
         )
         if not parsed:
             return None
-        if not _explicit_year_in(dt_str):
+
+        # If user did NOT mention a year → force current year
+        if not re.search(r"\b20\d{2}\b", dt_str):
             parsed = parsed.replace(year=now_local.year)
-        return parsed.isoformat().replace("+00:00", "Z")
-    except:
+
+        # Ensure UTC ISO output
+        parsed_utc = parsed.astimezone(timezone.utc)
+        return parsed_utc.isoformat().replace("+00:00", "Z")
+
+    except Exception:
         return None
 
 def _utc_iso_to_local_iso(iso_utc: str | None) -> str | None:
