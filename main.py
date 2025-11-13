@@ -40,6 +40,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
 TABLE_LIMIT = 10
 
+
 # ---------------- TIME HELPERS ----------------
 def _safe_fromiso(s: str) -> datetime | None:
     try:
@@ -51,13 +52,22 @@ def _safe_fromiso(s: str) -> datetime | None:
     except:
         return None
 
+
 def _explicit_year_in(text: str | None) -> bool:
     return bool(text and re.search(r"\b20\d{2}\b", text))
 
+
 def _to_utc_iso(dt_str: str | None) -> str | None:
+    """
+    STRICT YEAR MODE:
+    - Never changes the year.
+    - If the user says “viernes”, “mañana”, “el 20 de noviembre” → always interpret inside the current year.
+    - Only accept future if explicitly given year.
+    """
     if not dt_str:
         return None
 
+    # If it's already ISO-like
     dti = _safe_fromiso(dt_str)
     if dti:
         if dti.tzinfo is None:
@@ -65,8 +75,9 @@ def _to_utc_iso(dt_str: str | None) -> str | None:
         return dti.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
     now_local = datetime.now(LOCAL_TZ)
-    current_year = 2025
+    current_year = now_local.year  # 2025 today
 
+    # Parse using dateparser
     try:
         parsed = dateparser.parse(
             dt_str,
@@ -81,14 +92,15 @@ def _to_utc_iso(dt_str: str | None) -> str | None:
         if not parsed:
             return None
 
+        # Strict rule: never change year unless the user explicitly says a year
         if not _explicit_year_in(dt_str):
-            if parsed.year != current_year:
-                parsed = parsed.replace(year=current_year)
+            parsed = parsed.replace(year=current_year)
 
         return parsed.isoformat().replace("+00:00", "Z")
 
     except:
         return None
+
 
 def _utc_iso_to_local_iso(iso_utc: str | None) -> str | None:
     dtu = _safe_fromiso(iso_utc or "")
@@ -98,6 +110,7 @@ def _utc_iso_to_local_iso(iso_utc: str | None) -> str | None:
         dtu = dtu.replace(tzinfo=timezone.utc)
     return dtu.astimezone(LOCAL_TZ).isoformat()
 
+
 def _readable_local(iso_utc: str | None) -> str:
     dtu = _safe_fromiso(iso_utc or "")
     if not dtu:
@@ -106,8 +119,10 @@ def _readable_local(iso_utc: str | None) -> str:
         dtu = dtu.replace(tzinfo=timezone.utc)
     return dtu.astimezone(LOCAL_TZ).strftime("%A %I:%M %p")
 
+
 def _norm_name(name: str | None) -> str:
     return (name or "").strip().casefold()
+
 
 # ---------------- CLEAN INPUT HELPERS ----------------
 def clean_name_input(text: str) -> str:
@@ -117,12 +132,17 @@ def clean_name_input(text: str) -> str:
     text = re.sub(r"[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ ]", "", text)
     return re.sub(r"\s+", " ", text).strip().title()
 
+
 def clean_datetime_input(text: str) -> str:
     text = (text or "").lower()
-    for f in ["around", "ish", "maybe", "let's do", "lets do", "mmm", "uh", "uhh", "uhhh"]:
+    replace_phrases = [
+        "around", "ish", "maybe", "let's do", "lets do",
+        "mmm", "uh", "uhh", "uhhh"
+    ]
+    for f in replace_phrases:
         text = text.replace(f, " ")
-    text = re.sub(r"\bat\b", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
 
 # ---------------- DEDUPE ----------------
 _recent_keys: dict[str, float] = {}
@@ -136,6 +156,7 @@ def _cache_check_and_add(key: str) -> bool:
     _recent_keys[key] = exp
     return False
 
+
 # ---------------- DB HELPERS ----------------
 def assign_table(iso_utc: str):
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
@@ -146,6 +167,7 @@ def assign_table(iso_utc: str):
             return t
     return None
 
+
 def _find_existing(utc_iso: str, name: str):
     result = supabase.table("reservations").select("*").eq("datetime", utc_iso).execute()
     rows = result.data or []
@@ -155,13 +177,14 @@ def _find_existing(utc_iso: str, name: str):
             return r
     return None
 
-# ---------------- SAVE RESERVATION — RETURNS BILINGUAL DICT ----------------
+
+# ---------------- SAVE RESERVATION ----------------
 def save_reservation(data: dict):
     iso_utc = _to_utc_iso(data.get("datetime"))
     if not iso_utc:
         return {
-            "es": "❌ La fecha u hora no es válida. Por favor indica fecha Y hora.",
-            "en": "❌ Invalid date/time. Please specify date AND time."
+            "es": "❌ La fecha u hora no es válida. Recuerda incluir fecha **y** hora.",
+            "en": "❌ Invalid date/time. Please specify date **and** time."
         }
 
     name = data.get("customer_name", "")
@@ -170,8 +193,8 @@ def save_reservation(data: dict):
     if _cache_check_and_add(key):
         existing = _find_existing(iso_utc, name)
         if existing:
-            readable = _readable_local(existing.get("datetime"))
-            table = existing.get("table_number") or "-"
+            readable = _readable_local(existing["datetime"])
+            table = existing["table_number"] or "-"
             return {
                 "es": f"ℹ️ Esta reserva ya existe.\n👤 {existing['customer_name']}\n👥 {existing['party_size']} personas\n🗓 {readable}\n🍽 Mesa: {table}",
                 "en": f"ℹ️ This reservation already exists.\n👤 {existing['customer_name']}\n👥 {existing['party_size']} people\n🗓 {readable}\n🍽 Table: {table}"
@@ -179,8 +202,8 @@ def save_reservation(data: dict):
 
     existing = _find_existing(iso_utc, name)
     if existing:
-        readable = _readable_local(existing.get("datetime"))
-        table = existing.get("table_number") or "-"
+        readable = _readable_local(existing["datetime"])
+        table = existing["table_number"] or "-"
         return {
             "es": f"ℹ️ Esta reserva ya existe.\n👤 {existing['customer_name']}\n👥 {existing['party_size']} personas\n🗓 {readable}\n🍽 Mesa: {table}",
             "en": f"ℹ️ This reservation already exists.\n👤 {existing['customer_name']}\n👥 {existing['party_size']} people\n🗓 {readable}\n🍽 Table: {table}"
@@ -189,8 +212,8 @@ def save_reservation(data: dict):
     table = data.get("table_number") or assign_table(iso_utc)
     if not table:
         return {
-            "es": "❌ No hay mesas disponibles a esa hora.",
-            "en": "❌ No tables available at that time."
+            "es": "❌ No hay mesas disponibles para esa hora.",
+            "en": "❌ No tables available for that time."
         }
 
     supabase.table("reservations").insert({
@@ -205,28 +228,17 @@ def save_reservation(data: dict):
     }).execute()
 
     readable = _readable_local(iso_utc)
-
     return {
-        "es": (
-            f"✅ ¡Listo! Tu reserva está confirmada 😊\n"
-            f"👤 {name}\n"
-            f"👥 {data.get('party_size', 1)} personas\n"
-            f"🗓 {readable}\n"
-            f"🍽 Mesa: {table}"
-        ),
-        "en": (
-            f"✅ All set! Your reservation is confirmed 😊\n"
-            f"👤 {name}\n"
-            f"👥 {data.get('party_size', 1)} people\n"
-            f"🗓 {readable}\n"
-            f"🍽 Table: {table}"
-        )
+        "es": f"✅ ¡Reserva confirmada! 😊\n👤 {name}\n👥 {data.get('party_size', 1)} personas\n🗓 {readable}\n🍽 Mesa: {table}",
+        "en": f"✅ Reservation confirmed! 😊\n👤 {name}\n👥 {data.get('party_size', 1)} people\n🗓 {readable}\n🍽 Table: {table}"
     }
+
 
 # ---------------- ROUTES ----------------
 @app.get("/", response_class=HTMLResponse)
 def home():
     return "<h3>✅ Backend running</h3><p>Go to /dashboard</p>"
+
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -295,52 +307,54 @@ async def dashboard(request: Request):
 @app.post("/whatsapp")
 async def whatsapp_webhook(Body: str = Form(...), WaId: str = Form(None), From: str = Form(None)):
     """
-    This version uses a full ChatGPT-level agent:
-      - Conversational memory (inside the message)
-      - Understands English & Spanish automatically
-      - Extracts reservation info ONLY when needed
-      - Responds naturally when no reservation is made
-      - Still NEVER asks for email or phone
+    WhatsApp Smart Agent:
+    - Conversación natural estilo ChatGPT
+    - Responde en ES/EN dependiendo del usuario
+    - Solo crea una reserva si el modelo devuelve JSON válido completo
+    - Usa strict-year date parsing (2025 fijo)
     """
 
     resp = MessagingResponse()
 
-    # Normalize phone
+    # Normalize phone number
     phone = ""
     if WaId:
         phone = WaId if WaId.startswith("+") else f"+{WaId}"
     elif From:
         phone = (From or "").replace("whatsapp:", "").strip()
 
-    # ---------------- AI SYSTEM PROMPT (SMART) ----------------
+    # ---------------- SMART SYSTEM PROMPT ----------------
     system_prompt = """
-Eres un asistente de reservas para restaurantes. Tienes dos modos:
+Eres un asistente de reservas para un restaurante. Funcionas de dos maneras:
 
-1) 🧠 MODO CONVERSACIONAL:
-   - Responde como un humano inteligente.
-   - Sé amable, rápido, útil.
-   - Si el usuario solo habla, saluda, da información, responde preguntas.
-   - NO inventes políticas del restaurante.
-   - Responde en el mismo idioma que el usuario.
+──────────────────────────
+🧠 1) MODO CONVERSACIONAL
+──────────────────────────
+- Habla como un humano amable e inteligente.
+- Responde preguntas, saluda, da información, etc.
+- Si el usuario solo conversa, NO intentes reservar.
+- Usa SIEMPRE el idioma del usuario.
+- No inventes políticas, precios ni horarios.
 
-2) 🍽️ MODO RESERVA:
-   - Si el usuario quiere reservar (o menciona fecha/hora/personas):
-       EXTRAER los datos con precisión.
-   - Debes detectar automáticamente:
-       • customer_name
-       • party_size
-       • datetime (fecha y hora juntos)
-       • notes (si las dice)
-       • customer_email (solo si la dan)
-       • contact_phone (solo si la dan)
+──────────────────────────
+🍽️ 2) MODO RESERVA
+──────────────────────────
+Si el usuario menciona algo relacionado con reservar
+(fecha, hora, día, personas, mesa, “quiero reservar”, etc.)
+INTENTA detectar automáticamente estos campos:
 
-   - Si faltan datos, NO los pidas.
-   - Si la fecha u hora no están claras, igual intenta interpretarlas.
-   - Siempre produce un JSON válido SOLO cuando se está creando una reserva.
+- customer_name
+- party_size
+- datetime (fecha y hora)
+- notes (opcional)
+- customer_email (solo si la dicen explícitamente)
+- contact_phone (solo si lo dicen)
 
-3) FORMATO DE RESPUESTA:
-   - Si NO se está creando una reserva → responde normalmente.
-   - Si SÍ se está creando una reserva → responde SOLO con:
+REGLAS IMPORTANTES:
+- Si la fecha u hora parecen incompletas, IGUAL intenta interpretarlas.
+- NO pidas email. NO pidas número.
+- SI NO puedes completar una reserva → responde con un mensaje normal (modo conversación).
+- SI SÍ puedes completar una reserva → responde **SOLO el JSON**:
 
 {
  "customer_name": "",
@@ -351,66 +365,79 @@ Eres un asistente de reservas para restaurantes. Tienes dos modos:
  "notes": ""
 }
 
-IMPORTANT:
-- No preguntes email.
-- No preguntes número.
-- Usa el lenguaje del usuario.
+NO agregues texto fuera del JSON.
+NO uses comillas raras.
 """
 
-    # ---------------- Call OpenAI ----------------
+    # ---------------- CALL OPENAI ----------------
     try:
         result = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            temperature=0.4,
+            model="gpt-4.1",
+            temperature=0.5,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": Body}
             ],
         )
-
         ai_response = result.choices[0].message.content.strip()
 
     except Exception as e:
-        resp.message("❌ Hubo un error procesando tu mensaje.")
+        resp.message("❌ No pude procesar tu mensaje en este momento.")
         return Response(str(resp), media_type="application/xml")
 
     # ---------------------------------------------------------
-    # CASE A: AI responded normally → Just send reply back
+    # CASE A: regular conversation (not JSON)
     # ---------------------------------------------------------
     if not ai_response.startswith("{"):
-        resp.message(ai_response)
+        # Respond normally (same language)
+        if re.search(r"[áéíóúñ¿¡]|hola|buenas|gracias|reserv", Body.lower()):
+            resp.message(ai_response)
+        else:
+            resp.message(ai_response)
         return Response(str(resp), media_type="application/xml")
 
     # ---------------------------------------------------------
-    # CASE B: AI returned reservation JSON → parse + save
+    # CASE B: JSON detected → try to parse reservation
     # ---------------------------------------------------------
     try:
         data = json.loads(ai_response)
     except:
-        resp.message("❌ No entendí bien tu fecha/hora. Intenta decirlo diferente.")
+        resp.message("❌ No entendí bien tu fecha/hora. Intenta escribirla diferente.")
         return Response(str(resp), media_type="application/xml")
 
-    # Attach phone automatically
+    # Fill phone automatically
     if phone and not data.get("contact_phone"):
         data["contact_phone"] = phone
 
-    # Save reservation
-    msg = save_reservation(data)
+    # Ensure required fields exist
+    required = ["customer_name", "party_size", "datetime"]
+    if not all(data.get(f) for f in required):
+        # Missing data → treat it like normal conversation
+        if re.search(r"[áéíóúñ¿¡]|hola|buenas|gracias|reserv", Body.lower()):
+            resp.message("¿Podrías repetir la información? Creo que faltó la fecha, el nombre o el número de personas.")
+        else:
+            resp.message("Can you repeat the date, name, or party size? I think something was missing.")
+        return Response(str(resp), media_type="application/xml")
 
-    # Detect language
+    # Save reservation
+    reply = save_reservation(data)
+
+    # Detect user language
     user_lang = "es" if re.search(r"[áéíóúñ¿¡]|hola|buenas|quiero|reserv|mesa", Body.lower()) else "en"
 
-    # Final message
-    resp.message(msg[user_lang])
+    # Send reservation confirmation
+    resp.message(reply[user_lang])
 
-    # Dashboard live update
+    # Trigger dashboard refresh
     asyncio.create_task(notify_refresh())
+
     return Response(str(resp), media_type="application/xml")
 # ---------------- DASHBOARD API (Spanish by default) ----------------
 @app.post("/createReservation")
 async def create_reservation(payload: dict):
     msg = save_reservation(payload)
     return {"success": True, "message": msg["es"]}
+
 
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
@@ -428,6 +455,7 @@ async def update_reservation(update: dict):
     asyncio.create_task(notify_refresh())
     return {"success": True}
 
+
 @app.post("/cancelReservation")
 async def cancel_reservation(update: dict):
     supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", update["reservation_id"]).execute()
@@ -435,7 +463,7 @@ async def cancel_reservation(update: dict):
     return {"success": True}
 
 
-# ---------------- VOICE (unchanged) ----------------
+# ---------------- VOICE (unchanged, English only for now) ----------------
 @app.get("/call")
 async def make_test_call(to: str):
     try:
@@ -447,6 +475,7 @@ async def make_test_call(to: str):
         return {"status": "queued", "sid": call.sid}
     except Exception as e:
         return {"error": str(e)}
+
 
 def _gather_xml(prompt: str, action_url: str) -> str:
     vr = VoiceResponse()
@@ -461,12 +490,14 @@ def _gather_xml(prompt: str, action_url: str) -> str:
     vr.append(g)
     return str(vr)
 
+
 @app.post("/voice")
 async def voice_welcome():
     return Response(
         _gather_xml("Hi! I can book your table. What is your name?", "/voice/name"),
         media_type="application/xml"
     )
+
 
 @app.post("/voice/name")
 async def voice_name(request: Request):
@@ -482,6 +513,7 @@ async def voice_name(request: Request):
         ),
         media_type="application/xml"
     )
+
 
 @app.post("/voice/party")
 async def voice_party(request: Request, name: str, phone: str):
@@ -512,6 +544,7 @@ async def voice_party(request: Request, name: str, phone: str):
         media_type="application/xml"
     )
 
+
 @app.post("/voice/datetime")
 async def voice_datetime(request: Request, name: str, phone: str, party: str):
     form = await request.form()
@@ -535,6 +568,7 @@ async def voice_datetime(request: Request, name: str, phone: str, party: str):
         ),
         media_type="application/xml"
     )
+
 
 @app.post("/voice/notes")
 async def voice_notes(request: Request, name: str, phone: str, party: str, dt: str):
@@ -566,8 +600,9 @@ async def voice_notes(request: Request, name: str, phone: str, party: str, dt: s
     return Response(str(vr), media_type="application/xml")
 
 
-# ---------------- WEBSOCKET REFRESH ----------------
+# ---------------- WEBSOCKET AUTO-REFRESH ----------------
 clients = []
+
 
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
@@ -580,6 +615,7 @@ async def ws(websocket: WebSocket):
         if websocket in clients:
             clients.remove(websocket)
 
+
 async def notify_refresh():
     for ws in list(clients):
         try:
@@ -589,7 +625,7 @@ async def notify_refresh():
                 clients.remove(ws)
             except:
                 pass
+
+
 # ---------------- END OF FILE ----------------
-# Everything loaded successfully.
-# Backend is now fully bilingual + smart WhatsApp + Spanish dashboard.
 pass
