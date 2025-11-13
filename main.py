@@ -66,9 +66,8 @@ def _to_utc_iso(dt_str: str | None) -> str | None:
             dti = dti.replace(tzinfo=LOCAL_TZ)
         return dti.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    # Natural language parse
     now_local = datetime.now(LOCAL_TZ)
-    current_year = 2025  # <-- fixed year for your system
+    current_year = 2025  # your correct system year
 
     try:
         parsed = dateparser.parse(
@@ -215,10 +214,12 @@ def save_reservation(data: dict) -> str:
         f"🍽 Table: {table}"
     )
 
+
 # ---------- Routes ----------
 @app.get("/", response_class=HTMLResponse)
 def home():
     return "<h3>✅ Backend running</h3><p>Go to /dashboard</p>"
+
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -274,6 +275,7 @@ async def dashboard(request: Request):
             "peak_time": peak_time,
             "cancel_rate": cancel_rate,
         })
+
     except:
         return templates.TemplateResponse("dashboard.html", {
             "request": request,
@@ -283,6 +285,7 @@ async def dashboard(request: Request):
             "peak_time": "N/A",
             "cancel_rate": 0,
         })
+
 
 # ---------- WhatsApp webhook ----------
 @app.post("/whatsapp")
@@ -295,33 +298,36 @@ async def whatsapp_webhook(Body: str = Form(...), WaId: str = Form(None), From: 
     elif From:
         phone = (From or "").replace("whatsapp:", "").strip()
 
+    # ---------- STRICT SYSTEM PROMPT (fixes your bug) ----------
     prompt = """
-Extract reservation details and return ONLY valid JSON.
+You extract reservation details ONLY.
 
-REQUIRED:
-- customer_name
-- party_size
-- datetime
+VERY IMPORTANT RULES:
+- NEVER translate or reinterpret dates.
+- NEVER rewrite dates.
+- NEVER guess the weekday.
+- NEVER add/remove/change any part of the user's date.
+- ALWAYS copy the user's datetime EXACTLY as they wrote it.
+- Do NOT convert “today”, “tomorrow”, “viernes”, or weekday names.
+- Do NOT convert “1pm” to another format.
+- Do NOT add a weekday.
+- Do NOT remove a weekday.
+- Do NOT change the meaning in ANY way.
 
-OPTIONAL:
-- notes
-- customer_email (ONLY if explicitly given)
-- contact_phone
+Your job is NOT to understand the date — only return the exact text.
 
-NEVER ask follow-up questions.
-Never ask for phone.
-Never ask for email.
+Return ONLY valid JSON:
 
-JSON FORMAT:
 {
  "customer_name": "",
  "party_size": "",
- "datetime": "",
+ "datetime": "",   // <-- EXACT user text
  "customer_email": "",
  "contact_phone": "",
  "notes": ""
 }
 """
+    # -------------------------------------------------------------
 
     try:
         result = client.chat.completions.create(
@@ -345,6 +351,7 @@ JSON FORMAT:
 
     msg = save_reservation(data)
     resp.message(msg)
+
     asyncio.create_task(notify_refresh())
     return Response(str(resp), media_type="application/xml")
 # ---------- Dashboard API ----------
@@ -354,10 +361,12 @@ async def create_reservation(payload: dict):
     asyncio.create_task(notify_refresh())
     return {"success": True, "message": msg}
 
+
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
     new_dt = update.get("datetime")
     normalized = _to_utc_iso(new_dt) if new_dt else None
+
     supabase.table("reservations").update({
         "datetime": normalized if normalized else new_dt,
         "party_size": update.get("party_size"),
@@ -365,14 +374,18 @@ async def update_reservation(update: dict):
         "notes": update.get("notes"),
         "status": update.get("status", "updated"),
     }).eq("reservation_id", update["reservation_id"]).execute()
+
     asyncio.create_task(notify_refresh())
     return {"success": True}
+
 
 @app.post("/cancelReservation")
 async def cancel_reservation(update: dict):
     supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", update["reservation_id"]).execute()
     asyncio.create_task(notify_refresh())
     return {"success": True}
+
+
 
 # ---------- Voice flow ----------
 @app.get("/call")
@@ -387,6 +400,7 @@ async def make_test_call(to: str):
     except Exception as e:
         return {"error": str(e)}
 
+
 def _gather_xml(prompt: str, action_url: str) -> str:
     vr = VoiceResponse()
     g = Gather(
@@ -400,12 +414,14 @@ def _gather_xml(prompt: str, action_url: str) -> str:
     vr.append(g)
     return str(vr)
 
+
 @app.post("/voice")
 async def voice_welcome():
     return Response(
         _gather_xml("Hi! I can book your table. What is your name?", "/voice/name"),
         media_type="application/xml"
     )
+
 
 @app.post("/voice/name")
 async def voice_name(request: Request):
@@ -422,14 +438,16 @@ async def voice_name(request: Request):
         media_type="application/xml"
     )
 
+
 @app.post("/voice/party")
 async def voice_party(request: Request, name: str, phone: str):
     form = await request.form()
     speech = (form.get("SpeechResult") or "").lower()
 
     numbers = {
-        "one": "1", "two": "2", "three": "3", "four": "4", "for": "4", "five": "5",
-        "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10"
+        "one": "1", "two": "2", "three": "3", "four": "4", "for": "4",
+        "five": "5", "six": "6", "seven": "7", "eight": "8",
+        "nine": "9", "ten": "10"
     }
 
     party = next((tok for tok in speech.replace("-", " ").split() if tok.isdigit()), None)
@@ -438,6 +456,7 @@ async def voice_party(request: Request, name: str, phone: str):
             if w in speech:
                 party = n
                 break
+
     if not party:
         party = "1"
 
@@ -449,6 +468,7 @@ async def voice_party(request: Request, name: str, phone: str):
         media_type="application/xml"
     )
 
+
 @app.post("/voice/datetime")
 async def voice_datetime(request: Request, name: str, phone: str, party: str):
     form = await request.form()
@@ -456,6 +476,7 @@ async def voice_datetime(request: Request, name: str, phone: str, party: str):
     cleaned = clean_datetime_input(raw)
 
     iso = _to_utc_iso(cleaned)
+
     if not iso:
         return Response(
             _gather_xml(
@@ -472,6 +493,7 @@ async def voice_datetime(request: Request, name: str, phone: str, party: str):
         ),
         media_type="application/xml"
     )
+
 
 @app.post("/voice/notes")
 async def voice_notes(request: Request, name: str, phone: str, party: str, dt: str):
@@ -491,6 +513,7 @@ async def voice_notes(request: Request, name: str, phone: str, party: str, dt: s
         "notes": notes,
         "contact_phone": phone
     }
+
     save_reservation(payload)
 
     vr = VoiceResponse()
@@ -501,8 +524,11 @@ async def voice_notes(request: Request, name: str, phone: str, party: str, dt: s
     asyncio.create_task(notify_refresh())
     return Response(str(vr), media_type="application/xml")
 
+
+
 # ---------- Realtime refresh ----------
 clients = []
+
 
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
@@ -514,6 +540,7 @@ async def ws(websocket: WebSocket):
     except:
         if websocket in clients:
             clients.remove(websocket)
+
 
 async def notify_refresh():
     for ws in list(clients):
