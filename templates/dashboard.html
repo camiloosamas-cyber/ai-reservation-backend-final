@@ -3,227 +3,659 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Panel de Reservas — Restaurante AI</title>
+  <title>Panel de Reservas</title>
 
   <style>
-    :root {
-      --bg: #f6f8fb;
-      --card: #ffffff;
-      --ink: #1f2937;
-      --muted: #6b7280;
-      --primary: #2563eb;
-      --primary-ink: #fff;
-      --ok: #16a34a;
-      --warn: #f59e0b;
-      --bad: #ef4444;
-      --chip: #eef2ff;
-      --border: #e5e7eb;
-      --shadow: 0 6px 18px rgba(31,41,55,0.06);
-      --radius: 14px;
+    :root{
+      --bg:#f6f8fb; --card:#ffffff; --ink:#1f2937; --muted:#6b7280;
+      --primary:#2563eb; --primary-ink:#fff;
+      --ok:#16a34a; --warn:#f59e0b; --bad:#ef4444; --chip:#eef2ff;
+      --border:#e5e7eb; --shadow:0 6px 18px rgba(31,41,55,0.06);
+      --head:#1d4ed8;
     }
 
-    body {
-      margin: 0;
-      padding: 0;
-      font-family: Inter, sans-serif;
-      background: var(--bg);
-      color: var(--ink);
+    body{ margin:0; background:var(--bg); font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Arial; color:var(--ink); }
+    .wrap{ max-width:1200px; margin:auto; padding:30px 16px; }
+    header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
+    header h1{ font-size:26px; font-weight:700; margin:0; }
+    .sub{ margin-top:4px; font-size:14px; color:var(--muted); }
+    .toolbar{ display:flex; gap:10px; }
+
+    .btn{ padding:10px 14px; border-radius:10px; border:1px solid var(--border); font-weight:600; cursor:pointer; background:white; }
+    .btn.primary{ background:var(--primary); color:white; border:none; }
+
+    .cards{ display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:22px; }
+    .card{ background:white; border-radius:16px; padding:18px; border:1px solid var(--border); box-shadow:var(--shadow); }
+    .card h3{ margin:0; font-size:13px; color:var(--muted); }
+    .card p{ margin:0; font-size:28px; font-weight:800; }
+
+    .filters{
+      display:flex; align-items:center; gap:14px; background:white; padding:14px;
+      border-radius:14px; border:1px solid var(--border); box-shadow:var(--shadow);
+      margin-bottom:22px;
     }
-
-    h1 {
-      font-size: 24px;
-      margin-bottom: 20px;
-    }
-
-    .container {
-      max-width: 1360px;
-      margin: auto;
-      padding: 20px;
-    }
-
-    .kpi-row {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 16px;
-      margin-bottom: 32px;
-    }
-
-    .card {
-      background: var(--card);
-      padding: 18px;
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-    }
-
-    .card-title {
-      font-size: 14px;
-      color: var(--muted);
-      margin-bottom: 6px;
-    }
-
-    .card-value {
-      font-size: 22px;
-      font-weight: 700;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 20px;
-      background: var(--card);
-      border-radius: var(--radius);
-      overflow: hidden;
-      box-shadow: var(--shadow);
-    }
-
-    th {
-      background: #f1f5f9;
-      padding: 12px;
-      text-align: left;
-      font-size: 13px;
-      color: var(--muted);
-    }
-
-    td {
-      padding: 12px;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .status-chip {
-      display: inline-block;
-      padding: 4px 10px;
-      border-radius: 10px;
-      font-size: 12px;
-      font-weight: 500;
-      color: white;
-    }
-
-    .st-confirmed { background: var(--ok); }
-    .st-cancelled { background: var(--bad); }
-    .st-arrived { background: #3b82f6; }
-    .st-no-show { background: var(--warn); }
-    .st-archived { background: #6b7280; }
-
-    .btn {
-      padding: 6px 10px;
-      font-size: 12px;
-      border-radius: 6px;
-      cursor: pointer;
-      border: none;
-      color: white;
-    }
-
-    .btn-edit { background: #3b82f6; }
-    .btn-delete { background: var(--bad); }
+    .filters input, .filters select{ height:38px; border-radius:10px; border:1px solid var(--border); padding:8px 12px; font-size:14px; }
   </style>
 </head>
 
 <body>
-<div class="container">
-  <h1>📅 Panel de Reservas</h1>
+<div class="wrap">
 
-  <!-- KPIs -->
-  <div class="kpi-row">
-    <div class="card">
-      <div class="card-title">Total de Reservas (7 días)</div>
-      <div class="card-value">{{ weekly_count }}</div>
+  <!-- ENCABEZADO -->
+  <header>
+    <div>
+      <h1>📅 Panel de Reservas</h1>
+      <p class="sub">Administra reservas, analiza datos y mantén todo organizado</p>
     </div>
+    <div class="toolbar">
+      <button class="btn primary" id="newBtn">+ Nueva Reserva</button>
+      <button class="btn" id="refreshBtn">Actualizar</button>
+      <button class="btn" id="exportBtn">Exportar CSV</button>
+    </div>
+  </header>
 
-    <div class="card">
-      <div class="card-title">Tamaño Promedio del Grupo</div>
-      <div class="card-value">{{ avg_party_size }}</div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">Hora Pico</div>
-      <div class="card-value">{{ peak_time }}</div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">Tasa de Cancelación</div>
-      <div class="card-value">{{ cancel_rate }}%</div>
-    </div>
+  <!-- TARJETAS SUPERIORES -->
+  <div class="cards">
+    <div class="card"><h3>Total de Reservas</h3><p>{{ reservations|length }}</p></div>
+    <div class="card"><h3>Confirmadas</h3><p>{{ reservations|selectattr('status','equalto','confirmed')|list|length }}</p></div>
+    <div class="card"><h3>Canceladas</h3><p>{{ reservations|selectattr('status','equalto','cancelled')|list|length }}</p></div>
+    <div class="card"><h3>Esta Semana</h3><p>{{ weekly_count }}</p></div>
   </div>
 
-  <!-- Tabla -->
-  <table>
-    <thead>
+  <!-- FILTROS -->
+  <div class="filters">
+    <input id="q" placeholder="Buscar...">
+    <input id="dateFilter" type="date">
+    <select id="statusFilter">
+      <option value="active">Activas</option>
+      <option value="archived">Archivadas</option>
+      <option value="all">Todas</option>
+      <option value="confirmed">Confirmadas</option>
+      <option value="pending">Pendientes</option>
+      <option value="cancelled">Canceladas</option>
+      <option value="arrived">Llegaron</option>
+      <option value="no_show">No-Show</option>
+    </select>
+    <button class="btn" id="todayBtn">Hoy</button>
+  </div>
+  <!-- DISPONIBILIDAD DE MESAS -->
+  <div class="table-availability"">
+    <h2>🟩 Disponibilidad de Mesas</h2>
+    <div id="tableGrid" class="table-grid"></div>
+  </div>
+
+  <!-- TABLA PRINCIPAL DE RESERVAS -->
+  <div class="table-wrap">
+    <table>
+      <thead>
       <tr>
+        <th>Fecha</th>
+        <th>Hora</th>
         <th>Cliente</th>
+        <th>Contacto</th>
         <th>Personas</th>
-        <th>Fecha / Hora</th>
         <th>Mesa</th>
         <th>Notas</th>
         <th>Estado</th>
         <th>Acciones</th>
       </tr>
-    </thead>
+      </thead>
 
-    <tbody>
+      <tbody id="tbody">
+
       {% for r in reservations %}
-      <tr>
+      <tr
+        data-name="{{ (r.customer_name ~ ' ' ~ r.customer_email)|lower }}"
+        {% if r.datetime and 'T' in r.datetime %}
+          data-date="{{ r.datetime.split('T')[0] }}"
+        {% else %}
+          data-date=""
+        {% endif %}
+        data-status="{{ r.status }}"
+        data-table="{{ r.table_number or '' }}"
+      >
+
+        {% if r.datetime and 'T' in r.datetime %}
+          {% set dt = r.datetime.split('T') %}
+          <td>{{ dt[0] }}</td>
+          <td>{{ dt[1][:5] }}</td>
+        {% else %}
+          <td>-</td>
+          <td>-</td>
+        {% endif %}
+
+        <!-- Cliente -->
         <td>{{ r.customer_name }}</td>
+
+        <!-- Contacto: teléfono o email -->
+        <td>
+          {{ r.customer_email or r.contact_phone or '-' }}
+
+          <div class="contact-actions">
+            <button class="icon-btn" onclick="callCustomer(`{{ r.contact_phone or '' }}`)">📞</button>
+            <button class="icon-btn" onclick="sendWhatsApp(`{{ r.contact_phone or '' }}`, `{{ r.customer_name }}`, `{{ r.datetime or '' }}`)">💬</button>
+          </div>
+        </td>
+
         <td>{{ r.party_size }}</td>
-        <td>{{ r.datetime }}</td>
-        <td>{{ r.table_number }}</td>
-        <td>{{ r.notes }}</td>
+        <td>{{ r.table_number or '-' }}</td>
+        <td>{{ r.notes or '-' }}</td>
 
+        <!-- ESTADO EN ESPAÑOL -->
         <td>
-          <span class="status-chip st-{{ r.status }}">
-            {% if r.status == "confirmed" %} Confirmada
-            {% elif r.status == "cancelled" %} Cancelada
-            {% elif r.status == "arrived" %} Llegó
-            {% elif r.status == "no-show" %} No llegó
-            {% else %} {{ r.status }}
-            {% endif %}
-          </span>
+          {% set st = r.status %}
+          {% if st == "confirmed" %}
+            <span class="chip confirmed">Confirmada</span>
+          {% elif st == "arrived" %}
+            <span class="chip arrived">Llegó</span>
+          {% elif st == "updated" %}
+            <span class="chip updated">Actualizada</span>
+          {% elif st == "pending" %}
+            <span class="chip pending">Pendiente</span>
+          {% elif st == "cancelled" %}
+            <span class="chip cancelled">Cancelada</span>
+          {% elif st == "no_show" %}
+            <span class="chip no_show">No-Show</span>
+          {% elif st == "archived" %}
+            <span class="chip archived">Archivada</span>
+          {% else %}
+            <span class="chip">{{ st }}</span>
+          {% endif %}
         </td>
 
+        <!-- MENÚ DE ACCIONES (TODO EN ESPAÑOL) -->
         <td>
-          <button class="btn btn-edit" onclick="editReservation({{ r | tojson }})">Editar</button>
-          <button class="btn btn-delete" onclick="cancelReservation('{{ r.reservation_id }}')">Cancelar</button>
+          <div class="menu-wrapper" onclick="event.stopPropagation()">
+            <button class="menu-btn" onclick="toggleMenu(this);event.stopPropagation()">⋮</button>
+            <div class="dropdown-menu" onclick="event.stopPropagation()">
+
+              <button onclick="openEdit({{ r.reservation_id }}, `{{ r.datetime or '' }}`, {{ r.party_size or 1 }}, `{{ r.table_number or '' }}`, `{{ r.notes or '' }}`)">✏️ Editar</button>
+
+              <button onclick="markStatus({{ r.reservation_id }}, 'arrived')">✅ Marcar como Llegó</button>
+
+              <button onclick="markStatus({{ r.reservation_id }}, 'no_show')">⚠️ Marcar No-Show</button>
+
+              <button onclick="doArchive({{ r.reservation_id }})">🗄️ Archivar</button>
+
+              <button onclick="doCancel({{ r.reservation_id }})">❌ Cancelar</button>
+
+            </div>
+          </div>
         </td>
+
       </tr>
       {% endfor %}
-    </tbody>
-  </table>
+
+      </tbody>
+    </table>
+  </div>
+  <!-- INSIGHTS / ESTADÍSTICAS -->
+  <h2 style="margin-top:24px;">📊 Estadísticas</h2>
+
+  <div class="cards" style="grid-template-columns:repeat(3,1fr);">
+    <div class="card">
+      <h3>Promedio de Personas</h3>
+      <p id="avgParty">–</p>
+    </div>
+
+    <div class="card">
+      <h3>Hora Pico</h3>
+      <p id="peakTime">–</p>
+    </div>
+
+    <div class="card">
+      <h3>Tasa de Cancelación</h3>
+      <p id="cancelRate">–</p>
+    </div>
+  </div>
+</div> <!-- wrap end -->
+
+<!-- MODAL: EDITAR RESERVA -->
+<div class="modal-backdrop" id="editModal">
+  <div class="modal">
+    <header><h3>Editar Reserva</h3></header>
+    <div style="padding:16px;">
+
+      <div class="form-row">
+        <div class="field">
+          <label for="dt">Fecha y Hora</label>
+          <input id="dt" type="datetime-local">
+        </div>
+
+        <div class="field">
+          <label for="ps">Número de Personas</label>
+          <input id="ps" type="number" min="1" value="1">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="field">
+          <label for="table">Mesa</label>
+          <input id="table">
+        </div>
+
+        <div class="field">
+          <label for="notes">Notas</label>
+          <textarea id="notes"></textarea>
+        </div>
+      </div>
+
+    </div>
+
+    <footer>
+      <button class="btn" onclick="closeEdit()">Cancelar</button>
+      <button class="btn primary" id="saveBtn">Guardar</button>
+    </footer>
+  </div>
 </div>
 
-<!-- WebSocket Auto Refresh -->
+
+<!-- MODAL: NUEVA RESERVA -->
+<div class="modal-backdrop" id="newModal">
+  <div class="modal">
+    <header><h3>Nueva Reserva</h3></header>
+
+    <div style="padding:16px;">
+
+      <div class="form-row">
+        <div class="field">
+          <label for="new_name">Nombre *</label>
+          <input id="new_name" required>
+        </div>
+
+        <div class="field">
+          <label for="new_email">Correo</label>
+          <input id="new_email" type="email">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="field">
+          <label for="new_phone">Teléfono</label>
+          <input id="new_phone" type="tel">
+        </div>
+
+        <div class="field">
+          <label for="new_party">Personas *</label>
+          <input id="new_party" type="number" min="1" value="2">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="field">
+          <label for="new_dt">Fecha & Hora *</label>
+          <input id="new_dt" type="datetime-local">
+        </div>
+
+        <div class="field">
+          <label for="new_table">Mesa</label>
+          <input id="new_table">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="new_notes">Notas</label>
+        <textarea id="new_notes"></textarea>
+      </div>
+
+    </div>
+
+    <footer>
+      <button class="btn" id="closeNewBtn">Cancelar</button>
+      <button class="btn primary" id="createBtn">Crear</button>
+    </footer>
+  </div>
+</div>
+
+
 <script>
-const ws = new WebSocket("wss://" + window.location.host + "/ws");
-ws.onmessage = () => location.reload();
+/* ===========================
+      MENÚ DE ACCIONES
+=========================== */
+function toggleMenu(el){
+  const menu = el.nextElementSibling;
+  document.querySelectorAll(".dropdown-menu").forEach(m => {
+    if (m !== menu) m.style.display = "none";
+  });
+  menu.style.display = menu.style.display === "block" ? "none" : "block";
+}
+document.body.addEventListener("click", ()=>{
+  document.querySelectorAll(".dropdown-menu").forEach(m=> m.style.display="none");
+});
 
-function editReservation(r) {
-  const newDate = prompt("Nueva fecha y hora:", r.datetime);
-  if (!newDate) return;
 
-  const newTable = prompt("Nueva mesa:", r.table_number);
-  const newParty = prompt("Nuevo número de personas:", r.party_size);
+/* ===========================
+          FILTROS
+=========================== */
+const tbody = document.getElementById("tbody");
+const q = document.getElementById("q");
+const dateF = document.getElementById("dateFilter");
+const statusF = document.getElementById("statusFilter");
 
-  fetch("/updateReservation", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      reservation_id: r.reservation_id,
-      datetime: newDate,
-      table_number: newTable,
-      party_size: newParty,
-      notes: r.notes,
-      status: "updated"
-    })
-  }).then(() => location.reload());
+function filter(){
+  const qv = q.value.toLowerCase();
+  const dv = dateF.value;
+  const sv = statusF.value;
+
+  [...tbody.rows].forEach(r=>{
+    const okQ = r.dataset.name.includes(qv);
+    const okD = !dv || r.dataset.date === dv;
+    const s = r.dataset.status;
+
+    const okS =
+      (sv === "active" && s !== "archived") ||
+      (sv === "archived" && s === "archived") ||
+      (sv === "all") ||
+      (sv === s);
+
+    r.style.display = (okQ && okD && okS) ? "" : "none";
+  });
+
+  buildTableGrid();
+  computeInsights();
 }
 
-function cancelReservation(id) {
-  if (!confirm("¿Cancelar esta reserva?")) return;
+q.oninput = filter;
+dateF.onchange = filter;
+statusF.onchange = filter;
 
-  fetch("/cancelReservation", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ reservation_id: id })
-  }).then(() => location.reload());
+document.getElementById("todayBtn").onclick = ()=>{
+  dateF.value = new Date().toISOString().slice(0,10);
+  filter();
+};
+
+
+/* ===========================
+    DISPONIBILIDAD DE MESAS
+=========================== */
+const TABLE_IDS = ["T1","T2","T3","T4","T5","T6","T7","T8","T9","T10"];
+
+function buildTableGrid(){
+  const grid = document.getElementById("tableGrid");
+  const rows = [...tbody.rows];
+
+  grid.innerHTML = "";
+
+  TABLE_IDS.forEach(id =>{
+    const reserved = rows.filter(r =>
+      r.style.display !== "none" &&
+      r.dataset.table === id &&
+      r.dataset.status !== "cancelled"
+    );
+
+    const div = document.createElement("div");
+    div.className = "tcard";
+    div.onclick = ()=> filterByTable(id);
+
+    div.innerHTML = `
+      <span style="font-weight:700;">${id}</span>
+      <span class="${reserved.length ? 'occupied' : 'free'}">
+        ${reserved.length ? "Ocupada" : "Libre"}
+      </span>
+    `;
+
+    grid.appendChild(div);
+  });
 }
+
+function filterByTable(table){
+  q.value = "";
+  dateF.value = "";
+  statusF.value = "active";
+
+  [...tbody.rows].forEach(r=>{
+    r.style.display = r.dataset.table === table ? "" : "none";
+  });
+
+  buildTableGrid();
+  computeInsights();
+}
+
+
+/* ===========================
+        ACCIONES DEL CRUD
+=========================== */
+async function markStatus(id, s){
+  await fetch("/updateReservation", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({reservation_id:id, status:s})
+  });
+  location.reload();
+}
+
+async function doArchive(id){
+  await fetch("/updateReservation", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({reservation_id:id, status:"archived"})
+  });
+  location.reload();
+}
+
+async function doCancel(id){
+  await fetch("/cancelReservation", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({reservation_id:id})
+  });
+  location.reload();
+}
+
+
+/* ===========================
+    CONTACTO (LLAMAR / WA)
+=========================== */
+function callCustomer(phone){
+  if(!phone) return alert("No hay número telefónico.");
+  window.location.href = `tel:${phone}`;
+}
+
+function sendWhatsApp(phone,name,dt){
+  if(!phone) return alert("No hay número telefónico.");
+  const msg = `Hola ${name}, confirmamos tu reserva para ${dt}.`;
+  window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
+}
+
+
+/* ===========================
+    REFRESCO AUTOMÁTICO (WS)
+=========================== */
+document.getElementById("refreshBtn").onclick = ()=> location.reload();
+
+(function(){
+  try{
+    const ws = new WebSocket(
+      `${location.protocol==="https:"?"wss":"ws"}://${location.host}/ws`
+    );
+    ws.onmessage = ()=> location.reload();
+  }catch(e){}
+})();
+
+
+/* ===========================
+      NUEVA RESERVA (POST)
+=========================== */
+document.getElementById("newBtn").onclick = ()=>{
+  document.getElementById("newModal").style.display = "flex";
+};
+
+document.getElementById("closeNewBtn").onclick = ()=>{
+  document.getElementById("newModal").style.display = "none";
+};
+
+document.getElementById("createBtn").onclick = async ()=>{
+  const name = document.getElementById("new_name").value.trim();
+  const party = Number(document.getElementById("new_party").value || 1);
+  const dtVal = document.getElementById("new_dt").value;
+
+  if(!name || !dtVal){
+    alert("El nombre y la fecha/hora son obligatorios.");
+    return;
+  }
+
+  const payload = {
+    customer_name: name,
+    customer_email: document.getElementById("new_email").value.trim() || null,
+    contact_phone: document.getElementById("new_phone").value.trim() || null,
+    datetime: new Date(dtVal).toISOString(),
+    party_size: party,
+    table_number: document.getElementById("new_table").value.trim() || null,
+    notes: document.getElementById("new_notes").value.trim() || null
+  };
+
+  await fetch("/createReservation", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(payload)
+  });
+
+  document.getElementById("newModal").style.display = "none";
+  location.reload();
+};
+
+
+/* ===========================
+         EDITAR RESERVA
+=========================== */
+let currentId = null;
+
+function openEdit(id, dt, ps, table, notes){
+  currentId = id;
+
+  document.getElementById("dt").value =
+    dt && dt.includes("T") ? dt.slice(0,16) : "";
+
+  document.getElementById("ps").value = ps || 1;
+  document.getElementById("table").value = table || "";
+  document.getElementById("notes").value = notes || "";
+
+  document.getElementById("editModal").style.display = "flex";
+}
+
+function closeEdit(){
+  document.getElementById("editModal").style.display = "none";
+}
+
+
+document.getElementById("saveBtn").onclick = async ()=>{
+  const payload = {
+    reservation_id: currentId,
+    datetime: document.getElementById("dt").value
+      ? new Date(document.getElementById("dt").value).toISOString()
+      : undefined,
+    party_size: document.getElementById("ps").value
+      ? Number(document.getElementById("ps").value)
+      : undefined,
+    table_number: document.getElementById("table").value || undefined,
+    notes: document.getElementById("notes").value || undefined,
+    status: "updated"
+  };
+
+  await fetch("/updateReservation",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(payload)
+  });
+
+  closeEdit();
+  location.reload();
+};
+
+
+/* ===========================
+    EXPORTAR CSV
+=========================== */
+document.getElementById("exportBtn").onclick = ()=>{
+  const header = ["Fecha","Hora","Cliente","Contacto","Personas","Mesa","Notas","Estado"];
+  const rows = [header];
+
+  [...tbody.rows].forEach(r=>{
+    if(r.style.display==="none") return;
+    const cells = [...r.cells];
+    rows.push([
+      cells[0].innerText.trim(),
+      cells[1].innerText.trim(),
+      cells[2].innerText.trim(),
+      cells[3].innerText.trim(),
+      cells[4].innerText.trim(),
+      cells[5].innerText.trim(),
+      cells[6].innerText.trim(),
+      cells[7].innerText.trim()
+    ]);
+  });
+
+  const csv = rows
+    .map(r => r.map(v => `"${(v||"").replace(/"/g,'""')}"`).join(","))
+    .join("\n");
+
+  const a = document.createElement("a");
+  a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+  a.download = "reservas.csv";
+  a.click();
+};
+
+
+/* ===========================
+          INSIGHTS
+=========================== */
+function computeInsights(){
+  const rows = [...tbody.rows];
+
+  const total = rows.length;
+  if(!total){
+    document.getElementById("avgParty").innerText = "0";
+    document.getElementById("peakTime").innerText = "N/A";
+    document.getElementById("cancelRate").innerText = "0%";
+    return;
+  }
+
+  let sumParty = 0, countParty = 0;
+  const timeFreq = {};
+  let cancelled = 0;
+
+  rows.forEach(r=>{
+    const p = parseInt(r.cells[4].innerText.trim() || "0", 10);
+    if(!isNaN(p) && p>0){
+      sumParty += p;
+      countParty++;
+    }
+
+    const t = r.cells[1].innerText.trim();
+    if(t && t !== "-"){
+      timeFreq[t] = (timeFreq[t] || 0) + 1;
+    }
+
+    const s = r.dataset.status || "";
+    if(s === "cancelled") cancelled++;
+  });
+
+  const avg = countParty ? (sumParty / countParty) : 0;
+
+  let peak = "N/A";
+  let best = 0;
+  Object.entries(timeFreq).forEach(([t,c])=>{
+    if(c > best){
+      best = c;
+      peak = t;
+    }
+  });
+
+  const cancelRate = total ? ((cancelled / total) * 100) : 0;
+
+  document.getElementById("avgParty").innerText = avg.toFixed(1);
+  document.getElementById("peakTime").innerText = peak;
+  document.getElementById("cancelRate").innerText = cancelRate.toFixed(1) + "%";
+}
+
+
+/* ===========================
+           INIT
+=========================== */
+document.addEventListener("DOMContentLoaded", ()=>{
+  buildTableGrid();
+  computeInsights();
+});
 </script>
 
 </body>
