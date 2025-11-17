@@ -19,7 +19,6 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 from twilio.twiml.messaging_response import MessagingResponse
 
 
-
 # ---------------------------------------------------------
 # APP INIT
 # ---------------------------------------------------------
@@ -37,44 +36,11 @@ app.add_middleware(
 )
 
 
-
 # ---------------------------------------------------------
-# SESSION MEMORY PER USER
+# GLOBAL SESSION MEMORY
 # ---------------------------------------------------------
-session_state = {}  # stores conversation + reservation progress
-
-LOCAL_TZ = ZoneInfo(os.getenv("LOCAL_TZ", "America/Bogota"))
-
-
-
-# ---------------------------------------------------------
-# DATE HELPERS
-# ---------------------------------------------------------
-def parse_to_utc(text: str):
-    try:
-        dt = dateparser.parse(
-            text,
-            settings={
-                "TIMEZONE": "America/Bogota",
-                "RETURN_AS_TIMEZONE_AWARE": True,
-                "TO_TIMEZONE": "UTC"
-            }
-        )
-        if not dt:
-            return None
-        return dt.astimezone(timezone.utc)
-    except:
-        return None
-
-
-def utc_to_local(utc_dt: datetime):
-    return utc_dt.astimezone(LOCAL_TZ)
-
-
-def readable(dt_utc: datetime):
-    dt_local = utc_to_local(dt_utc)
-    return dt_local.strftime("%A %d %B, %I:%M %p")
-
+session_state = {}
+LOCAL_TZ = ZoneInfo("America/Bogota")
 
 
 # ---------------------------------------------------------
@@ -86,7 +52,6 @@ supabase: Client = create_client(
 )
 
 TABLE_LIMIT = 10
-
 
 
 # ---------------------------------------------------------
@@ -102,15 +67,17 @@ def assign_table(iso_utc: str):
     return None
 
 
-
 # ---------------------------------------------------------
 # SAVE RESERVATION
 # ---------------------------------------------------------
 def save_reservation(data: dict):
 
-    dt_utc = parse_to_utc(data["datetime"])
-    if not dt_utc:
-        return "❌ No pude entender la fecha/hora."
+    try:
+        # datetime already comes as ISO Bogotá → convert to UTC
+        dt_local = datetime.fromisoformat(data["datetime"])
+        dt_utc = dt_local.astimezone(timezone.utc)
+    except:
+        return "❌ No pude procesar la fecha/hora."
 
     iso = dt_utc.isoformat().replace("+00:00", "Z")
 
@@ -133,188 +100,122 @@ def save_reservation(data: dict):
         "✅ *¡Reserva confirmada!*\n"
         f"👤 {data['customer_name']}\n"
         f"👥 {data['party_size']} personas\n"
-        f"🗓 {readable(dt_utc)}\n"
+        f"🗓 {dt_local.strftime('%A %d %B, %I:%M %p')}\n"
         f"🍽 Mesa: {table}"
     )
 
 
+# ---------------------------------------------------------
+# UNIVERSAL AI EXTRACTION (NAME + DATE + TIME + PARTY)
+# ---------------------------------------------------------
+def extract_with_ai(user_msg: str):
+    prompt = f"""
+Eres un agente de reservas para un restaurante en Colombia.
+
+Tu tarea:
+- Detectar el *nombre*
+- Detectar la *fecha y hora exactas* en formato ISO Bogotá (America/Bogota)
+- Detectar el *número de personas*
+
+Responde SOLO JSON así:
+
+{{
+  "customer_name": "",
+  "datetime": "",
+  "party_size": ""
+}}
+
+Reglas:
+- Si no encuentras un campo, déjalo vacío.
+- datetime DEBE ser ISO, ejemplo:
+  "2025-01-26T19:00:00-05:00"
+
+Mensaje del usuario:
+"{user_msg}"
+"""
+
+    try:
+        r = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0,
+            messages=[{"role": "system", "content": prompt}]
+        )
+        return json.loads(r.choices[0].message.content)
+    except:
+        return {"customer_name": "", "datetime": "", "party_size": ""}
+
 
 # ---------------------------------------------------------
-# WHATSAPP ROUTE — FULL LOGIC
+# WHATSAPP ROUTE
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
 
     resp = MessagingResponse()
-    msg = Body.strip().lower()
+    msg = Body.strip()
 
-    user_id = "default_user"  # later assign real user via phone #
+    user_id = "default_user"
 
-    # ---------------------------
-    # INIT SESSION
-    # ---------------------------
     if user_id not in session_state:
         session_state[user_id] = {
-            "step": "none",
-            "data": {
-                "customer_name": None,
-                "datetime": None,
-                "party_size": None,
-                "notes": None,
-            },
-            "expires": None
+            "customer_name": None,
+            "datetime": None,
+            "party_size": None
         }
 
-    state = session_state[user_id]
-    step = state["step"]
-    data = state["data"]
+    memory = session_state[user_id]
 
+    # GREETINGS
+    if msg.lower() in ["hola", "hello", "buenas", "hey", "holaa", "ola"]:
+        resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy?\n¿Quieres *información* o deseas *hacer una reserva*?")
+        return Response(str(resp), media_type="application/xml")
 
-    # ---------------------------
-    # RESET IF RESERVATION EXPIRED
-    # ---------------------------
-    if state["expires"]:
-        if datetime.now(LOCAL_TZ) > state["expires"]:
-            session_state[user_id] = {
-                "step": "none",
-                "data": {
-                    "customer_name": None,
-                    "datetime": None,
-                    "party_size": None,
-                    "notes": None,
-                },
-                "expires": None
-            }
-            state = session_state[user_id]
-            data = state["data"]
-
-
-    # ---------------------------
-    # GREETING FLOW EXACTLY LIKE BEFORE
-    # ---------------------------
-    if step == "none":
-        if any(w in msg for w in ["hola", "buenas", "hey"]):
-            resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy? ¿Quieres información o deseas hacer una reserva?")
-            state["step"] = "awaiting_intent"
-            return Response(str(resp), media_type="application/xml")
-
-    if step == "awaiting_intent":
-        if "reserv" in msg:
-            resp.message("Perfecto 😊 empecemos con tu reserva. ¿Cuál es tu nombre?")
-            state["step"] = "need_name"
-            return Response(str(resp), media_type="application/xml")
-
-        resp.message("¿Deseas hacer una reserva? 😊")
+    # DETECT INTENT
+    if "reserv" in msg.lower() and not any(memory.values()):
+        resp.message("Perfecto 😊 Para continuar, necesito:\n👉 Fecha y hora\n👉 Nombre\n👉 Número de personas")
         return Response(str(resp), media_type="application/xml")
 
 
-    # ---------------------------------------------------------
-    # STEP 1: NAME
-    # ---------------------------------------------------------
-    if step == "need_name":
+    # AI EXTRACTION (1 CALL)
+    extracted = extract_with_ai(msg)
 
-        # extract name with AI
-        ai_prompt = f"""
-Extrae el nombre del usuario del siguiente mensaje. 
-Responde SOLO JSON así:
-{{"customer_name": "Luis"}}
+    # UPDATE MEMORY
+    if extracted.get("customer_name"):
+        memory["customer_name"] = extracted["customer_name"]
 
-Mensaje: "{Body}"
-        """
+    if extracted.get("datetime"):
+        memory["datetime"] = extracted["datetime"]
 
-        try:
-            r = client.chat.completions.create(
-                model="gpt-4o-mini",
-                temperature=0,
-                messages=[{"role": "system", "content": ai_prompt}]
-            )
-            j = json.loads(r.choices[0].message.content)
-            if j.get("customer_name"):
-                data["customer_name"] = j["customer_name"]
-        except:
-            pass
+    if extracted.get("party_size"):
+        memory["party_size"] = extracted["party_size"]
 
-        if not data["customer_name"]:
-            resp.message("¿Cuál es tu nombre para la reserva?")
-            return Response(str(resp), media_type="application/xml")
 
-        # go to next question
-        resp.message("¿Para qué fecha y hora es la reserva?")
-        state["step"] = "need_datetime"
+    # ASK FOR WHAT'S MISSING
+    if not memory["customer_name"]:
+        resp.message("¿A nombre de quién sería la reserva?")
+        return Response(str(resp), media_type="application/xml")
+
+    if not memory["datetime"]:
+        resp.message("¿Para qué fecha y hora deseas la reserva?")
+        return Response(str(resp), media_type="application/xml")
+
+    if not memory["party_size"]:
+        resp.message("¿Para cuántas personas sería la reserva?")
         return Response(str(resp), media_type="application/xml")
 
 
-    # ---------------------------------------------------------
-    # STEP 2: DATE & TIME
-    # ---------------------------------------------------------
-    if step == "need_datetime":
+    # ALL INFO PRESENT → SAVE
+    confirmation = save_reservation(memory)
+    resp.message(confirmation)
 
-        # Extract datetime from message
-        dt = parse_to_utc(Body)
-        if dt:
-            data["datetime"] = Body
-        else:
-            resp.message("¿Para qué día y a qué hora deseas la reserva?")
-            return Response(str(resp), media_type="application/xml")
+    # RESET AFTER BOOKING
+    session_state[user_id] = {
+        "customer_name": None,
+        "datetime": None,
+        "party_size": None
+    }
 
-        # next question
-        resp.message("¿Para cuántas personas es la reserva?")
-        state["step"] = "need_party"
-        return Response(str(resp), media_type="application/xml")
-
-
-    # ---------------------------------------------------------
-    # STEP 3: PARTY SIZE
-    # ---------------------------------------------------------
-    if step == "need_party":
-
-        # AI extract number
-        ai_prompt = f"""
-Extrae SOLO el número de personas.
-Responde formato JSON:
-{{"party_size": "4"}}
-
-Mensaje: "{Body}"
-        """
-
-        try:
-            r = client.chat.completions.create(
-                model="gpt-4o-mini",
-                temperature=0,
-                messages=[{"role": "system", "content": ai_prompt}]
-            )
-            j = json.loads(r.choices[0].message.content)
-            if j.get("party_size"):
-                data["party_size"] = j["party_size"]
-        except:
-            pass
-
-        if not data["party_size"]:
-            resp.message("¿Para cuántas personas sería?")
-            return Response(str(resp), media_type="application/xml")
-
-        # -------------------
-        # ALL DATA READY → BOOK
-        # -------------------
-        confirmation = save_reservation(data)
-        resp.message(confirmation)
-
-        # set expiration silently
-        dt_utc = parse_to_utc(data["datetime"])
-        if dt_utc:
-            state["expires"] = utc_to_local(dt_utc) + timedelta(hours=1)
-
-        state["step"] = "none"
-        return Response(str(resp), media_type="application/xml")
-
-
-
-    # ---------------------------------------------------------
-    # DEFAULT FALLBACK (rarely used)
-    # ---------------------------------------------------------
-    resp.message("¿Podrías repetirlo por favor?")
     return Response(str(resp), media_type="application/xml")
-
 
 
 # ---------------------------------------------------------
@@ -325,16 +226,11 @@ async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
     rows = res.data or []
 
-    for r in rows:
-        dt = dateparser.parse(r["datetime"])
-        r["datetime"] = readable(dt)
-
     return templates.TemplateResponse("dashboard.html", {"request": request, "reservations": rows})
 
 
-
 # ---------------------------------------------------------
-# WEBSOCKET LIVE REFRESH
+# WEBSOCKET (optional)
 # ---------------------------------------------------------
 clients = []
 
@@ -349,17 +245,8 @@ async def ws(websocket: WebSocket):
         clients.remove(websocket)
 
 
-async def notify_refresh():
-    for ws in clients:
-        try:
-            await ws.send_text("refresh")
-        except:
-            pass
-
-
-
 # ---------------------------------------------------------
-# RENDER STARTUP (REQUIRED)
+# RENDER STARTUP
 # ---------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
