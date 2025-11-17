@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import json, os, asyncio, time
 import dateparser
@@ -37,7 +37,7 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------
-# SESSION MEMORY (store conversation info)
+# MEMORY PER USER
 # ---------------------------------------------------------
 session_state = {}
 
@@ -45,11 +45,10 @@ session_state = {}
 # ---------------------------------------------------------
 # TIMEZONE
 # ---------------------------------------------------------
-LOCAL_TZ_NAME = os.getenv("LOCAL_TZ", "America/Bogota")
-LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
+LOCAL_TZ = ZoneInfo("America/Bogota")
 
 
-def _safe_fromiso(s: str):
+def _safe_fromiso(s):
     try:
         if not s:
             return None
@@ -60,21 +59,16 @@ def _safe_fromiso(s: str):
         return None
 
 
-def _to_utc_iso(dt_str: str | None):
+def _to_utc_iso(dt_str):
     if not dt_str:
         return None
-    dti = _safe_fromiso(dt_str)
-    if dti:
-        if dti.tzinfo is None:
-            dti = dti.replace(tzinfo=LOCAL_TZ)
-        return dti.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     try:
         parsed = dateparser.parse(
             dt_str,
             settings={
                 "RETURN_AS_TIMEZONE_AWARE": True,
-                "TIMEZONE": LOCAL_TZ_NAME,
-                "TO_TIMEZONE": "UTC",
+                "TIMEZONE": "America/Bogota",
+                "TO_TIMEZONE": "UTC"
             }
         )
         if not parsed:
@@ -84,22 +78,11 @@ def _to_utc_iso(dt_str: str | None):
         return None
 
 
-def _utc_iso_to_local_iso(iso_utc):
-    dtu = _safe_fromiso(iso_utc or "")
+def _readable(dt_utc):
+    dtu = _safe_fromiso(dt_utc)
     if not dtu:
-        return None
-    return dtu.astimezone(LOCAL_TZ).isoformat()
-
-
-def _readable_local(iso_utc):
-    dtu = _safe_fromiso(iso_utc)
-    if not dtu:
-        return "Horario inválido"
+        return "Fecha inválida"
     return dtu.astimezone(LOCAL_TZ).strftime("%A %d %B, %I:%M %p")
-
-
-def _norm_name(name: str):
-    return (name or "").strip().casefold()
 
 
 # ---------------------------------------------------------
@@ -113,240 +96,161 @@ supabase: Client = create_client(
 TABLE_LIMIT = 10
 
 
-# ---------------------------------------------------------
-# IDEMPOTENCY CACHE (avoid duplicates)
-# ---------------------------------------------------------
-_recent_keys = {}
-IDEMPOTENCY_TTL = 60
-
-
-def _cache_check_and_add(key: str):
-    now = time.time()
-    if key in _recent_keys and _recent_keys[key] > now:
-        return True
-    _recent_keys[key] = now + IDEMPOTENCY_TTL
-    return False
-
-
-# ---------------------------------------------------------
-# TABLE ASSIGNMENT + SAVE
-# ---------------------------------------------------------
-def assign_table(iso_utc: str):
-    booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
+def assign_table(dt):
+    booked = supabase.table("reservations").select("table_number").eq("datetime", dt).execute()
     taken = {r["table_number"] for r in (booked.data or [])}
-
     for i in range(1, TABLE_LIMIT + 1):
         t = f"T{i}"
         if t not in taken:
             return t
-
     return None
 
 
-def _find_existing(utc_iso: str, name: str):
-    rows = supabase.table("reservations").select("*").eq("datetime", utc_iso).execute().data or []
-    for r in rows:
-        if _norm_name(r.get("customer_name")) == _norm_name(name):
-            return r
-    return None
-
-
-def save_reservation(data: dict):
-    dt = _to_utc_iso(data.get("datetime"))
-    if not dt:
+def save_reservation(data):
+    dt_utc = _to_utc_iso(data["datetime"])
+    if not dt_utc:
         return "❌ Fecha u hora inválida."
 
-    name = data.get("customer_name", "")
-    key = f"{name}|{dt}"
-
-    if _cache_check_and_add(key):
-        return "ℹ️ Esta reserva ya estaba registrada."
-
-    table = assign_table(dt)
+    table = assign_table(dt_utc)
     if not table:
-        return "❌ No hay mesas disponibles para ese horario."
+        return "❌ No hay mesas disponibles en ese horario."
 
     supabase.table("reservations").insert({
-        "customer_name": name,
-        "customer_email": data.get("customer_email", ""),
-        "contact_phone": data.get("contact_phone", ""),
-        "datetime": dt,
-        "party_size": int(data.get("party_size", 1)),
+        "customer_name": data["customer_name"],
+        "datetime": dt_utc,
+        "party_size": int(data["party_size"]),
         "table_number": table,
         "notes": data.get("notes", ""),
-        "status": "confirmed",
+        "status": "confirmed"
     }).execute()
-
-    readable = _readable_local(dt)
 
     return (
         "✅ *¡Reserva confirmada!*\n"
-        f"👤 {name}\n"
-        f"👥 {data.get('party_size')} personas\n"
-        f"🗓 {readable}\n"
+        f"👤 {data['customer_name']}\n"
+        f"👥 {data['party_size']} personas\n"
+        f"🗓 {_readable(dt_utc)}\n"
         f"🍽 Mesa: {table}"
     )
 
 
 # ---------------------------------------------------------
-# WHATSAPP ROUTE — COMPLETE FIX
+# WHATSAPP BOT
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
-    print("📩 Incoming WhatsApp:", Body)
     resp = MessagingResponse()
-
-    user_id = "default"  # single user mode (later we use phone)
     text = Body.lower().strip()
+    user_id = "default"
 
-    # Create session state if not exists
+    # Create session
     if user_id not in session_state:
         session_state[user_id] = {
             "mode": "none",
             "data": {
                 "customer_name": None,
+                "date": None,
+                "time": None,
                 "datetime": None,
                 "party_size": None,
-                "contact_phone": None,
                 "notes": None
             }
         }
 
     state = session_state[user_id]
-    mode = state["mode"]
     data = state["data"]
+    mode = state["mode"]
 
-    # ----------------------------------
-    # GREETING
-    # ----------------------------------
+    # ---------------- GREETING ----------------
     if any(g in text for g in ["hola", "buenas", "buenos días", "buenas tardes"]) and mode == "none":
-        resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy? ¿Quieres información o deseas hacer una reserva?")
+        resp.message("¡Hola! 😊 ¿Quieres hacer una reserva?")
         return Response(str(resp), media_type="application/xml")
 
-    # ----------------------------------
-    # ENTER RESERVATION MODE
-    # ----------------------------------
+    # ---------------- ENTER RESERVATION ----------------
     if "reserv" in text and mode != "reservation":
         state["mode"] = "reservation"
-        resp.message("Perfecto 😊 empecemos con la reserva. ¿Cuál es tu nombre?")
+        resp.message("Perfecto 😊 ¿Cuál es tu nombre?")
         return Response(str(resp), media_type="application/xml")
 
-    # If not reservation mode yet
     if state["mode"] != "reservation":
         resp.message("¿Te gustaría hacer una reserva? 😊")
         return Response(str(resp), media_type="application/xml")
 
-    # ----------------------------------
-    # AI EXTRACTION WITH MEMORY
-    # ----------------------------------
+    # ---------------------------------------------------------
+    # AI EXTRACTION LOGIC — STRICT (Option B)
+    # ---------------------------------------------------------
     ai_prompt = f"""
-Eres un asistente que extrae información de reservas.
+Extrae información de una reserva SIN asumir nada.
 
-INFORMACIÓN YA CONOCIDA:
+ESTADO ACTUAL:
 {json.dumps(data, indent=2, ensure_ascii=False)}
 
-Nuevo mensaje del usuario:
+MENSAJE NUEVO:
 "{Body}"
 
-Tu tarea:
-- Extrae SOLO la información nueva.
-- NO borres campos ya completados.
-- Si aún falta información, pregúntala así:
-  {{"ask": "pregunta"}}
-- Si ya tenemos TODO, responde:
-  {{"complete": true}}
+REGLAS:
+- SOLO extrae:
+  customer_name, date, time, party_size, notes
+- NO asumas que un número = personas.
+- SOLO es party_size si el mensaje menciona "personas", "somos", "para", "ppl".
+- Si el usuario dice solo fecha → NO completar hora.
+- Si el usuario dice solo hora → NO completar fecha.
+- Cuando tengamos date y time → formar:
+    datetime = "<date> <time>"
+- Si falta nombre → ask: "¿Cuál es tu nombre?"
+- Si falta fecha → ask: "¿Para qué fecha sería?"
+- Si falta hora → ask: "¿A qué hora sería?"
+- Si falta party_size → ask: "¿Para cuántas personas sería?"
 
-Campos requeridos:
-- customer_name
-- datetime
-- party_size
-- contact_phone
-- notes
+Cuando todo esté completo (date, time, customer_name, party_size), responde:
+{"complete": true}
 
-Responde SOLO con JSON.
+Responde únicamente JSON.
 """
 
     try:
-        response = client.chat.completions.create(
+        ai_response = client.chat.completions.create(
             model="gpt-4.1-mini",
             temperature=0,
             messages=[{"role": "system", "content": ai_prompt}]
         )
-        extracted = json.loads(response.choices[0].message.content.strip())
+        extracted = json.loads(ai_response.choices[0].message.content)
     except:
-        resp.message("❌ No pude entender. ¿Podrías repetirlo?")
+        resp.message("❌ No entendí eso, ¿podrías repetirlo?")
         return Response(str(resp), media_type="application/xml")
 
-    # Update known data
-    for key in data.keys():
+    # Update memory
+    for key in ["customer_name", "date", "time", "party_size", "notes"]:
         if key in extracted and extracted[key]:
             data[key] = extracted[key]
+
+    # Build datetime if ready
+    if data["date"] and data["time"]:
+        data["datetime"] = f"{data['date']} {data['time']}"
 
     # Ask for missing info
     if "ask" in extracted:
         resp.message(extracted["ask"])
         return Response(str(resp), media_type="application/xml")
 
-    # All info complete → book reservation
-    if extracted.get("complete"):
-        confirmation = save_reservation(data)
-        resp.message(confirmation)
+    # Complete
+    if extracted.get("complete") and data["datetime"]:
+        message = save_reservation(data)
+        resp.message(message)
 
-        # Reset for next reservation
+        # Reset
         session_state[user_id] = {
             "mode": "none",
             "data": {
                 "customer_name": None,
+                "date": None,
+                "time": None,
                 "datetime": None,
                 "party_size": None,
-                "contact_phone": None,
                 "notes": None
             }
         }
 
-        asyncio.create_task(notify_refresh())
         return Response(str(resp), media_type="application/xml")
 
-    resp.message("¿Podrías repetir eso?")
+    resp.message("¿Podrías repetirlo?")
     return Response(str(resp), media_type="application/xml")
-
-
-# ---------------------------------------------------------
-# DASHBOARD + WS
-# ---------------------------------------------------------
-@app.get("/")
-def home():
-    return "<h2>Backend activo</h2>"
-
-
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
-    rows = res.data or []
-
-    for r in rows:
-        r["datetime"] = _utc_iso_to_local_iso(r["datetime"])
-
-    return templates.TemplateResponse("dashboard.html", {"request": request, "reservations": rows})
-
-
-clients = []
-
-
-@app.websocket("/ws")
-async def ws(websocket: WebSocket):
-    await websocket.accept()
-    clients.append(websocket)
-    try:
-        while True:
-            await websocket.receive_text()
-    except:
-        clients.remove(websocket)
-
-
-async def notify_refresh():
-    for ws in clients:
-        try:
-            await ws.send_text("refresh")
-        except:
-            pass
