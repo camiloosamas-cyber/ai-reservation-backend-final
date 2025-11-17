@@ -113,7 +113,7 @@ TABLE_LIMIT = 10
 
 
 # ---------------------------------------------------------
-# IDEMPOTENCY CACHE (anti-duplicados)
+# IDEMPOTENCY CACHE
 # ---------------------------------------------------------
 _recent_keys: dict[str, float] = {}
 IDEMPOTENCY_TTL = 60
@@ -251,18 +251,31 @@ async def dashboard(request: Request):
 
 
 # ---------------------------------------------------------
-# WHATSAPP AI WEBHOOK — SPANISH ONLY
+# WHATSAPP AI WEBHOOK — SPANISH + GREETING
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
     print("📩 WhatsApp:", Body)
     resp = MessagingResponse()
 
-    system_prompt = """
-Eres un asistente que extrae **detalles de reservas** en español.
-Responde SIEMPRE con JSON. Si falta información, responde:
+    lower = Body.lower().strip()
 
-{"ask":"<pregunta>"}
+    # ---- GREETING LOGIC ----
+    greeting_words = ["hola", "buenas", "buenos días", "buenas tardes", "buenas noches", "qué tal", "hey"]
+
+    if any(word in lower for word in greeting_words):
+        resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy? ¿Quieres información del restaurante o hacer una reserva?")
+        return Response(str(resp), media_type="application/xml")
+
+    # ---- Reservation intent ----
+    if "reserv" not in lower:
+        resp.message("¿Te gustaría hacer una reserva? 😊")
+        return Response(str(resp), media_type="application/xml")
+
+    # ---------- AI EXTRACTION ----------
+    system_prompt = """
+Eres un asistente que extrae detalles de reservas en español.
+Responde SOLO con JSON.
 
 Datos necesarios:
 - customer_name
@@ -270,8 +283,10 @@ Datos necesarios:
 - datetime (fecha + hora)
 - contact_phone
 
-Formato final:
+Si falta información:
+{"ask":"<pregunta>"}
 
+Formato final:
 {
  "customer_name": "",
  "customer_email": "",
@@ -280,8 +295,6 @@ Formato final:
  "datetime": "",
  "notes": ""
 }
-
-Si falta algo, NO inventes. Solo pregunta exactamente lo que falta.
 """
 
     try:
@@ -317,9 +330,10 @@ Si falta algo, NO inventes. Solo pregunta exactamente lo que falta.
 
 
 # ---------------------------------------------------------
-# LIVE REFRESH (WebSocket)
+# LIVE REFRESH
 # ---------------------------------------------------------
 clients = []
+
 
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
