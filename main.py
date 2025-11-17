@@ -259,20 +259,32 @@ async def whatsapp(Body: str = Form(...)):
     resp = MessagingResponse()
 
     lower = Body.lower().strip()
+    user_id = "default_user"  # using one session for now
 
-    # ---- GREETING LOGIC ----
-    greeting_words = ["hola", "buenas", "buenos días", "buenas tardes", "buenas noches", "qué tal", "hey"]
+    # Initialize state
+    if user_id not in session_state:
+        session_state[user_id] = {"mode": "none"}
 
-    if any(word in lower for word in greeting_words):
+    mode = session_state[user_id]["mode"]
+
+    # ---- GREETING BLOCK ----
+    greeting_words = ["hola", "buenas", "buenos días", "buenas tardes", "buenas noches", "hey"]
+
+    if any(word in lower for word in greeting_words) and mode == "none":
         resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy? ¿Quieres información del restaurante o hacer una reserva?")
         return Response(str(resp), media_type="application/xml")
 
-    # ---- Reservation intent ----
-    if "reserv" not in lower:
+    # ---- If user expresses reservation intent ----
+    if "reserv" in lower and mode != "reservation":
+        session_state[user_id]["mode"] = "reservation"
+        mode = "reservation"
+
+    # ---- If we are NOT in reservation mode ----
+    if mode != "reservation":
         resp.message("¿Te gustaría hacer una reserva? 😊")
         return Response(str(resp), media_type="application/xml")
 
-    # ---------- AI EXTRACTION ----------
+    # ---- RESERVATION MODE (AI extraction) ----
     system_prompt = """
 Eres un asistente que extrae detalles de reservas en español.
 Responde SOLO con JSON.
@@ -280,7 +292,7 @@ Responde SOLO con JSON.
 Datos necesarios:
 - customer_name
 - party_size
-- datetime (fecha + hora)
+- datetime
 - contact_phone
 
 Si falta información:
@@ -318,12 +330,17 @@ Formato final:
         resp.message("❌ No pude entender el mensaje. Intenta nuevamente.")
         return Response(str(resp), media_type="application/xml")
 
+    # ---- If AI needs more info ----
     if "ask" in data:
         resp.message(data["ask"])
         return Response(str(resp), media_type="application/xml")
 
+    # ---- Finalize reservation ----
     msg = save_reservation(data)
     resp.message(msg)
+
+    # End reservation mode
+    session_state[user_id]["mode"] = "none"
 
     asyncio.create_task(notify_refresh())
     return Response(str(resp), media_type="application/xml")
