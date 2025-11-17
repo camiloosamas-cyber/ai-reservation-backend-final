@@ -35,6 +35,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------------------------------------------------------
+# MEMORY STATE (IMPORTANT!)
+# ---------------------------------------------------------
+session_state = {}   # <--- THIS WAS MISSING BEFORE
+
 
 # ---------------------------------------------------------
 # TIMEZONE
@@ -251,7 +256,7 @@ async def dashboard(request: Request):
 
 
 # ---------------------------------------------------------
-# WHATSAPP AI WEBHOOK — SPANISH + GREETING
+# WHATSAPP ROUTE — FIXED + WORKING
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
@@ -259,46 +264,46 @@ async def whatsapp(Body: str = Form(...)):
     resp = MessagingResponse()
 
     lower = Body.lower().strip()
-    user_id = "default_user"  # using one session for now
+    user_id = "default"   # single-session mode
 
-    # Initialize state
+    # Create user state if not exists
     if user_id not in session_state:
         session_state[user_id] = {"mode": "none"}
 
     mode = session_state[user_id]["mode"]
 
-    # ---- GREETING BLOCK ----
-    greeting_words = ["hola", "buenas", "buenos días", "buenas tardes", "buenas noches", "hey"]
+    # --- GREETING ---
+    greeting_words = ["hola", "buenas", "buenos días", "buenas tardes", "buenas noches"]
 
-    if any(word in lower for word in greeting_words) and mode == "none":
+    if any(g in lower for g in greeting_words) and mode == "none":
         resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy? ¿Quieres información del restaurante o hacer una reserva?")
         return Response(str(resp), media_type="application/xml")
 
-    # ---- If user expresses reservation intent ----
+    # --- Enter reservation mode ---
     if "reserv" in lower and mode != "reservation":
         session_state[user_id]["mode"] = "reservation"
         mode = "reservation"
 
-    # ---- If we are NOT in reservation mode ----
+    # --- Not in reservation mode yet ---
     if mode != "reservation":
         resp.message("¿Te gustaría hacer una reserva? 😊")
         return Response(str(resp), media_type="application/xml")
 
-    # ---- RESERVATION MODE (AI extraction) ----
+    # --- AI Extraction ---
     system_prompt = """
 Eres un asistente que extrae detalles de reservas en español.
 Responde SOLO con JSON.
 
-Datos necesarios:
+Campos requeridos:
 - customer_name
 - party_size
 - datetime
 - contact_phone
 
-Si falta información:
+Si falta algo:
 {"ask":"<pregunta>"}
 
-Formato final:
+Formato:
 {
  "customer_name": "",
  "customer_email": "",
@@ -320,6 +325,7 @@ Formato final:
         )
 
         output = result.choices[0].message.content.strip()
+
         if output.startswith("```"):
             output = output.replace("```json", "").replace("```", "").strip()
 
@@ -330,16 +336,16 @@ Formato final:
         resp.message("❌ No pude entender el mensaje. Intenta nuevamente.")
         return Response(str(resp), media_type="application/xml")
 
-    # ---- If AI needs more info ----
+    # --- Missing information ---
     if "ask" in data:
         resp.message(data["ask"])
         return Response(str(resp), media_type="application/xml")
 
-    # ---- Finalize reservation ----
+    # --- Final Booking ---
     msg = save_reservation(data)
     resp.message(msg)
 
-    # End reservation mode
+    # Reset mode
     session_state[user_id]["mode"] = "none"
 
     asyncio.create_task(notify_refresh())
