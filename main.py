@@ -5,39 +5,44 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from urllib.parse import quote
-import json, os, asyncio, time, re
+import json, os, asyncio, time
 import dateparser
 
-# ---------- External Clients ----------
+# ---------- Supabase ----------
 from supabase import create_client, Client
+
+# ---------- OpenAI ----------
 from openai import OpenAI
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# ---------- Twilio ----------
 from twilio.twiml.messaging_response import MessagingResponse
 
-# ---------- Env ----------
-OPENAI_API_KEY        = os.getenv("OPENAI_API_KEY")
-SUPABASE_URL          = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE")
 
-PUBLIC_BASE_URL       = os.getenv("PUBLIC_BASE_URL", "")
-LOCAL_TZ_NAME         = os.getenv("LOCAL_TZ", "America/Bogota")
-
-# ---------- Init ----------
-client        = OpenAI(api_key=OPENAI_API_KEY)
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
-
+# ---------------------------------------------------------
+# APP INIT
+# ---------------------------------------------------------
 app = FastAPI()
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
-app.add_middleware(CORSORMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ---------------------------------------------------------
+# TIMEZONE
+# ---------------------------------------------------------
+LOCAL_TZ_NAME = os.getenv("LOCAL_TZ", "America/Bogota")
 LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
-TABLE_LIMIT = 10
 
-# -----------------------------------------------------
-#                     TIME HELPERS
-# -----------------------------------------------------
+
 def _safe_fromiso(s: str):
     try:
         if not s:
@@ -48,91 +53,151 @@ def _safe_fromiso(s: str):
     except:
         return None
 
-def _explicit_year_in(text):
-    return bool(text and re.search(r"\b20\d{2}\b", text))
 
-def _to_utc_iso(dt_str):
+def _to_utc_iso(dt_str: str | None):
     if not dt_str:
         return None
-
-    # If it's already an ISO datetime
-    existing = _safe_fromiso(dt_str)
-    if existing:
-        if existing.tzinfo is None:
-            existing = existing.replace(tzinfo=LOCAL_TZ)
-        return existing.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-    now_local = datetime.now(LOCAL_TZ)
-    current_year = datetime.now().year
-
+    dti = _safe_fromiso(dt_str)
+    if dti:
+        if dti.tzinfo is None:
+            dti = dti.replace(tzinfo=LOCAL_TZ)
+        dtu = dti.astimezone(timezone.utc)
+        return dtu.isoformat().replace("+00:00", "Z")
     try:
         parsed = dateparser.parse(
             dt_str,
             settings={
-                "PREFER_DATES_FROM": "future",
                 "RETURN_AS_TIMEZONE_AWARE": True,
                 "TIMEZONE": LOCAL_TZ_NAME,
                 "TO_TIMEZONE": "UTC",
-                "RELATIVE_BASE": now_local,
-            },
+            }
         )
         if not parsed:
             return None
-
-        if not _explicit_year_in(dt_str):
-            parsed = parsed.replace(year=current_year)
-
         return parsed.isoformat().replace("+00:00", "Z")
     except:
         return None
 
+
+def _utc_iso_to_local_iso(iso_utc):
+    dtu = _safe_fromiso(iso_utc or "")
+    if not dtu:
+        return None
+    if dtu.tzinfo is None:
+        dtu = dtu.replace(tzinfo=timezone.utc)
+    return dtu.astimezone(LOCAL_TZ).isoformat()
+
+
 def _readable_local(iso_utc):
     dtu = _safe_fromiso(iso_utc)
     if not dtu:
-        return "Fecha inválida"
+        return "Horario inválido"
     if dtu.tzinfo is None:
         dtu = dtu.replace(tzinfo=timezone.utc)
-    return dtu.astimezone(LOCAL_TZ).strftime("%A %I:%M %p")
+    return dtu.astimezone(LOCAL_TZ).strftime("%A %d %B, %I:%M %p")
 
-# -----------------------------------------------------
-#              CONVERSATION MEMORY
-# -----------------------------------------------------
-CONVO_MEMORY = {}  
 
-def reset_memory_if_expired(phone):
-    if phone not in CONVO_MEMORY:
-        return
-    dt = CONVO_MEMORY[phone].get("datetime_utc")
-    if dt:
-        dt_obj = _safe_fromiso(dt)
-        if dt_obj and datetime.now(timezone.utc) > dt_obj:
-            CONVO_MEMORY.pop(phone, None)
+def _norm_name(name: str | None):
+    return (name or "").strip().casefold()
 
-def memory_clear(phone):
-    if phone in CONVO_MEMORY:
-        CONVO_MEMORY.pop(phone, None)
 
-# -----------------------------------------------------
-#              DATABASE HELPERS
-# -----------------------------------------------------
-def assign_table(iso_utc):
+# ---------------------------------------------------------
+# SUPABASE
+# ---------------------------------------------------------
+supabase: Client = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_SERVICE_ROLE")
+)
+
+TABLE_LIMIT = 10
+
+
+# ---------------------------------------------------------
+# IDEMPOTENCY CACHE (anti-duplicados)
+# ---------------------------------------------------------
+_recent_keys: dict[str, float] = {}
+IDEMPOTENCY_TTL = 60
+
+
+def _cache_prune_now():
+    now = time.time()
+    for k, exp in list(_recent_keys.items()):
+        if exp <= now:
+            _recent_keys.pop(k, None)
+
+
+def _cache_check_and_add(key: str) -> bool:
+    _cache_prune_now()
+    now = time.time()
+    exp = now + IDEMPOTENCY_TTL
+    if key in _recent_keys and _recent_keys[key] > now:
+        return True
+    _recent_keys[key] = exp
+    return False
+
+
+# ---------------------------------------------------------
+# TABLE ASSIGN + SAVE
+# ---------------------------------------------------------
+def assign_table(iso_utc: str):
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
-    taken = {row["table_number"] for row in (booked.data or [])}
-
+    taken = {r["table_number"] for r in (booked.data or [])}
     for i in range(1, TABLE_LIMIT + 1):
         t = f"T{i}"
         if t not in taken:
             return t
     return None
 
-def save_reservation(data):
+
+def _find_existing(utc_iso: str, name: str):
+    rows = (
+        supabase.table("reservations")
+        .select("*")
+        .eq("datetime", utc_iso)
+        .execute()
+        .data
+        or []
+    )
+
+    n = _norm_name(name)
+    for r in rows:
+        if _norm_name(r.get("customer_name")) == n and r.get("status") not in ("cancelled", "archived"):
+            return r
+    return None
+
+
+def save_reservation(data: dict) -> str:
     iso_utc = _to_utc_iso(data.get("datetime"))
     if not iso_utc:
-        return "❌ La fecha u hora no es válida."
+        return "❌ Fecha u hora inválida. Por favor incluye **fecha y hora exacta**."
 
-    name  = data.get("customer_name") or ""
-    party = data.get("party_size")   or ""
-    phone = data.get("contact_phone", "")
+    name = data.get("customer_name", "")
+    key = f"{_norm_name(name)}|{iso_utc}"
+
+    if _cache_check_and_add(key):
+        existing = _find_existing(iso_utc, name)
+        if existing:
+            table = existing.get("table_number")
+            readable = _readable_local(existing.get("datetime"))
+            return (
+                "ℹ️ Esta reserva ya estaba registrada.\n"
+                f"👤 {existing.get('customer_name')}\n"
+                f"👥 {existing.get('party_size')} personas\n"
+                f"🗓 {readable}\n"
+                f"🍽 Mesa: {table}"
+            )
+
+    existing = _find_existing(iso_utc, name)
+    if existing:
+        table = existing.get("table_number")
+        readable = _readable_local(existing.get("datetime"))
+        return (
+            "ℹ️ Esta reserva ya existe.\n"
+            f"👤 {existing.get('customer_name')}\n"
+            f"👥 {existing.get('party_size')} personas\n"
+            f"🗓 {readable}\n"
+            f"🍽 Mesa: {table}"
+        )
 
     table = assign_table(iso_utc)
     if not table:
@@ -140,134 +205,136 @@ def save_reservation(data):
 
     supabase.table("reservations").insert({
         "customer_name": name,
-        "contact_phone": phone,
+        "customer_email": data.get("customer_email", ""),
+        "contact_phone": data.get("contact_phone", ""),
         "datetime": iso_utc,
-        "party_size": int(party),
+        "party_size": int(data.get("party_size", 1)),
         "table_number": table,
-        "status": "confirmed"
+        "notes": data.get("notes", ""),
+        "status": "confirmed",
     }).execute()
 
     readable = _readable_local(iso_utc)
-
     return (
-        "✅ ¡Listo! Tu reserva está confirmada\n"
+        "✅ *¡Reserva confirmada!*\n"
         f"👤 {name}\n"
-        f"👥 {party} personas\n"
+        f"👥 {data.get('party_size', 1)} personas\n"
         f"🗓 {readable}\n"
         f"🍽 Mesa: {table}"
     )
 
-# -----------------------------------------------------
-#        WHATSAPP WEBHOOK — SPANISH ONLY
-# -----------------------------------------------------
+
+# ---------------------------------------------------------
+# HOME
+# ---------------------------------------------------------
+@app.get("/", response_class=HTMLResponse)
+def home():
+    return "<h3>Backend activo ✅</h3>"
+
+
+# ---------------------------------------------------------
+# DASHBOARD
+# ---------------------------------------------------------
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
+    reservations = res.data or []
+
+    view_rows = []
+    for r in reservations:
+        row = dict(r)
+        local = _utc_iso_to_local_iso(r.get("datetime"))
+        row["datetime"] = local or r.get("datetime")
+        view_rows.append(row)
+
+    return templates.TemplateResponse("dashboard.html", {"request": request, "reservations": view_rows})
+
+
+# ---------------------------------------------------------
+# WHATSAPP AI WEBHOOK — SPANISH ONLY
+# ---------------------------------------------------------
 @app.post("/whatsapp")
-async def whatsapp_webhook(
-    Body: str = Form(...),
-    WaId: str = Form(None),
-    From: str = Form(None)
-):
+async def whatsapp(Body: str = Form(...)):
+    print("📩 WhatsApp:", Body)
     resp = MessagingResponse()
 
-    phone = ""
-    if WaId:
-        phone = WaId if WaId.startswith("+") else f"+{WaId}"
-    elif From:
-        phone = From.replace("whatsapp:", "")
-
-    reset_memory_if_expired(phone)
-
-    text   = Body.strip()
-    lower  = text.lower()
-
-    # Greeting
-    if any(lower.startswith(g) for g in ["hola", "buenas", "holi"]):
-        resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy? ¿Quieres información o hacer una reserva?")
-        return Response(str(resp), media_type="application/xml")
-
-    # --------------- SYSTEM PROMPT ---------------------
     system_prompt = """
-Eres un asistente de reservas para restaurante, extremadamente preciso.
+Eres un asistente que extrae **detalles de reservas** en español.
+Responde SIEMPRE con JSON. Si falta información, responde:
 
-REGLAS IMPORTANTES:
+{"ask":"<pregunta>"}
 
-1. SOLO debes extraer:
-   - nombre del cliente
-   - fecha y hora exacta
-   - número de personas
+Datos necesarios:
+- customer_name
+- party_size
+- datetime (fecha + hora)
+- contact_phone
 
-2. NUNCA respondas en inglés. SOLO español.
-
-3. NO repitas información que el cliente ya dio.
-
-4. Si falta uno o más datos:
-   - Si falta todo → pregunta: "¿Podrías indicarme la fecha, hora y cuántas personas serían?"
-   - Si falta nombre      → pregunta solo por el nombre.
-   - Si falta fecha/hora  → pregunta solo por la fecha/hora.
-   - Si falta número      → pregunta por cuántas personas.
-   - Si faltan dos datos  → pregunta ambos en una sola frase.
-
-5. FECHAS AMBIGUAS:
-   Si el usuario dice cosas como:
-   - "el 20"
-   - "el viernes"
-   - "la próxima semana"
-   - "más tarde"
-   NO des JSON.
-   Pide la fecha exacta: "¿Podrías confirmarme la fecha exacta de la reserva?"
-
-6. SOLO debes dar JSON cuando:
-   ✔ nombre está completo
-   ✔ fecha y hora son exactas y parseables
-   ✔ número de personas es claro
-
-7. El JSON FINAL debe ser en este formato EXACTO:
+Formato final:
 
 {
  "customer_name": "",
+ "customer_email": "",
+ "contact_phone": "",
  "party_size": "",
  "datetime": "",
- "contact_phone": ""
+ "notes": ""
 }
 
-8. SI NO tienes los 3 datos correctos → NO des JSON.
+Si falta algo, NO inventes. Solo pregunta exactamente lo que falta.
 """
 
-    # ---------------- CALL OPENAI -----------------------
     try:
-        ai = client.chat.completions.create(
+        result = client.chat.completions.create(
             model="gpt-4.1-mini",
+            temperature=0,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": text}
+                {"role": "user", "content": Body}
             ]
         )
-        ai_msg = ai.choices[0].message.content.strip()
-    except:
-        resp.message("Error procesando el mensaje.")
+
+        output = result.choices[0].message.content.strip()
+        if output.startswith("```"):
+            output = output.replace("```json", "").replace("```", "").strip()
+
+        data = json.loads(output)
+
+    except Exception as e:
+        print("❌ JSON ERROR:", e)
+        resp.message("❌ No pude entender el mensaje. Intenta nuevamente.")
         return Response(str(resp), media_type="application/xml")
 
-    # If it's NOT JSON → send it as-is
-    if not ai_msg.startswith("{"):
-        resp.message(ai_msg)
+    if "ask" in data:
+        resp.message(data["ask"])
         return Response(str(resp), media_type="application/xml")
 
-    # Parse JSON safely
-    try:
-        data = json.loads(ai_msg)
-    except:
-        resp.message("No entendí bien la fecha/hora, ¿podrías repetirla?")
-        return Response(str(resp), media_type="application/xml")
+    msg = save_reservation(data)
+    resp.message(msg)
 
-    # Validate JSON
-    if not data.get("customer_name") or not data.get("party_size") or not data.get("datetime"):
-        resp.message("Me faltan algunos datos, ¿puedes confirmarlos?")
-        return Response(str(resp), media_type="application/xml")
-
-    data["contact_phone"] = phone
-
-    # Save reservation
-    message = save_reservation(data)
-    resp.message(message)
-
-    memory_clear(phone)
+    asyncio.create_task(notify_refresh())
     return Response(str(resp), media_type="application/xml")
+
+
+# ---------------------------------------------------------
+# LIVE REFRESH (WebSocket)
+# ---------------------------------------------------------
+clients = []
+
+@app.websocket("/ws")
+async def ws(websocket: WebSocket):
+    await websocket.accept()
+    clients.append(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except:
+        clients.remove(websocket)
+
+
+async def notify_refresh():
+    for ws in clients:
+        try:
+            await ws.send_text("refresh")
+        except:
+            pass
