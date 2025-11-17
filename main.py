@@ -40,8 +40,9 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
 TABLE_LIMIT = 10
 
+
 # -----------------------------------------------------
-#                   TIME HELPERS
+#                TIME HELPERS
 # -----------------------------------------------------
 def _safe_fromiso(s: str) -> datetime | None:
     try:
@@ -53,8 +54,10 @@ def _safe_fromiso(s: str) -> datetime | None:
     except:
         return None
 
+
 def _explicit_year_in(text: str | None) -> bool:
     return bool(text and re.search(r"\b20\d{2}\b", text))
+
 
 def _to_utc_iso(dt_str: str | None) -> str | None:
     if not dt_str:
@@ -90,6 +93,7 @@ def _to_utc_iso(dt_str: str | None) -> str | None:
     except:
         return None
 
+
 def _utc_iso_to_local_iso(iso_utc: str | None) -> str | None:
     dtu = _safe_fromiso(iso_utc or "")
     if not dtu:
@@ -97,6 +101,7 @@ def _utc_iso_to_local_iso(iso_utc: str | None) -> str | None:
     if dtu.tzinfo is None:
         dtu = dtu.replace(tzinfo=timezone.utc)
     return dtu.astimezone(LOCAL_TZ).isoformat()
+
 
 def _readable_local(iso_utc: str | None) -> str:
     dtu = _safe_fromiso(iso_utc or "")
@@ -106,28 +111,77 @@ def _readable_local(iso_utc: str | None) -> str:
         dtu = dtu.replace(tzinfo=timezone.utc)
     return dtu.astimezone(LOCAL_TZ).strftime("%A %I:%M %p")
 
+
 def _norm_name(name: str | None) -> str:
     return (name or "").strip().casefold()
-
 # -----------------------------------------------------
-#                     INPUT CLEANING
+#                INPUT CLEANING HELPERS
 # -----------------------------------------------------
 def clean_name_input(text: str) -> str:
     text = (text or "").lower()
-    for r in ["my name is", "i am", "i'm", "its", "it's", "this is", "name is", "soy", "me llamo", "mi nombre es"]:
+    for r in ["my name is", "i am", "i'm", "soy", "me llamo", "nombre es", "this is"]:
         text = text.replace(r, " ")
     text = re.sub(r"[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ ]", "", text)
     return re.sub(r"\s+", " ", text).strip().title()
 
+
 def clean_datetime_input(text: str) -> str:
     text = (text or "").lower()
-    for f in ["around", "ish", "maybe", "let's do", "lets do", "mmm", "uh", "uhh", "uhhh"]:
+    for f in ["around", "ish", "maybe", "let's do", "lets do", "mmm", "uh", "uhh"]:
         text = text.replace(f, " ")
     text = re.sub(r"\bat\b", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
+
 # -----------------------------------------------------
-#                   IDEMPOTENCY
+#                 CONVERSATION MEMORY
+# -----------------------------------------------------
+# This saves partial reservation data per user (WhatsApp ID)
+CONVO_MEMORY = {}   # { phone: { 'name':..., 'date':..., 'party':..., 'time':..., 'expires': datetime } }
+
+def reset_memory_if_expired(phone: str):
+    """
+    Auto-reset memory AFTER the reservation time has passed.
+    """
+    if phone not in CONVO_MEMORY:
+        return
+
+    mem = CONVO_MEMORY[phone]
+
+    dt = mem.get("datetime_utc")
+    if not dt:
+        return
+
+    dt_obj = _safe_fromiso(dt)
+    if not dt_obj:
+        return
+
+    now_utc = datetime.now(timezone.utc)
+
+    # If the reservation time is in the past → reset
+    if now_utc > dt_obj:
+        CONVO_MEMORY.pop(phone, None)
+
+
+def memory_set(phone: str, key: str, value):
+    if phone not in CONVO_MEMORY:
+        CONVO_MEMORY[phone] = {}
+    CONVO_MEMORY[phone][key] = value
+
+
+def memory_get(phone: str, key: str):
+    if phone not in CONVO_MEMORY:
+        return None
+    return CONVO_MEMORY[phone].get(key)
+
+
+def memory_clear(phone: str):
+    if phone in CONVO_MEMORY:
+        CONVO_MEMORY.pop(phone, None)
+
+
+# -----------------------------------------------------
+#                   IDEMPOTENCY LOGIC
 # -----------------------------------------------------
 _recent_keys: dict[str, float] = {}
 IDEMPOTENCY_TTL = 60
@@ -139,8 +193,10 @@ def _cache_check_and_add(key: str) -> bool:
         return True
     _recent_keys[key] = exp
     return False
+
+
 # -----------------------------------------------------
-#                     DB HELPERS
+#                    DATABASE HELPERS
 # -----------------------------------------------------
 def assign_table(iso_utc: str):
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
@@ -151,6 +207,7 @@ def assign_table(iso_utc: str):
             return t
     return None
 
+
 def _find_existing(utc_iso: str, name: str):
     result = supabase.table("reservations").select("*").eq("datetime", utc_iso).execute()
     rows = result.data or []
@@ -160,8 +217,9 @@ def _find_existing(utc_iso: str, name: str):
             return r
     return None
 
+
 # -----------------------------------------------------
-#              SAVE RESERVATION (FINAL + CLEAN)
+#              SAVE RESERVATION (BILINGUAL)
 # -----------------------------------------------------
 def save_reservation(data: dict):
     iso_utc = _to_utc_iso(data.get("datetime"))
@@ -171,10 +229,10 @@ def save_reservation(data: dict):
             "en": "❌ Invalid date/time. Please specify date AND time."
         }
 
-    name = data.get("customer_name", "").strip().title()
+    name = data.get("customer_name", "")
     key = f"{_norm_name(name)}|{iso_utc}"
 
-    # ----- IDEMPOTENCY CHECK -----
+    # Idempotency: avoid duplicate spam
     if _cache_check_and_add(key):
         existing = _find_existing(iso_utc, name)
         if existing:
@@ -197,7 +255,7 @@ def save_reservation(data: dict):
                 )
             }
 
-    # ----- CHECK AGAIN FOR DUPLICATES -----
+    # Check duplicates
     existing = _find_existing(iso_utc, name)
     if existing:
         readable = _readable_local(existing.get("datetime"))
@@ -219,7 +277,7 @@ def save_reservation(data: dict):
             )
         }
 
-    # ----- TABLE ASSIGNMENT -----
+    # Table assignment
     table = data.get("table_number") or assign_table(iso_utc)
     if not table:
         return {
@@ -227,10 +285,10 @@ def save_reservation(data: dict):
             "en": "❌ No tables available at that time."
         }
 
-    # ----- SAVE TO DB -----
+    # Save to database
     supabase.table("reservations").insert({
         "customer_name": name,
-        "customer_email": "",
+        "customer_email": data.get("customer_email", "") or "",
         "contact_phone": data.get("contact_phone", "") or "",
         "datetime": iso_utc,
         "party_size": int(data.get("party_size", 1)),
@@ -257,8 +315,6 @@ def save_reservation(data: dict):
             f"🍽 Table: {table}"
         )
     }
-
-
 # -----------------------------------------------------
 #                     ROUTES
 # -----------------------------------------------------
@@ -330,6 +386,8 @@ async def dashboard(request: Request):
             "peak_time": "N/A",
             "cancel_rate": 0,
         })
+
+
 # -----------------------------------------------------
 #        SMART & FRIENDLY WHATSAPP AI ROUTE
 # -----------------------------------------------------
@@ -340,14 +398,14 @@ async def whatsapp_webhook(
     From: str = Form(None)
 ):
     """
-    PERFECT WHATSAPP BEHAVIOR (like your screenshot):
-    - Spanish-first (English only if user speaks English)
-    - SUPER natural, warm, short messages
-    - If user greets → friendly intro
-    - If user gives full reservation info → confirm immediately
-    - If ANY data missing → ask ONLY for the missing part
-    - NEVER ask for email or phone
-    - Tone EXACTLY like your screenshot: human, warm, simple
+    Smart WhatsApp Assistant:
+    - Warm and natural
+    - Only 1 emoji in the greeting
+    - Spanish or English depending on user
+    - Asks only for missing info (name, datetime, party_size)
+    - Remembers info across messages
+    - Confirms instantly when all data is complete
+    - Memory resets automatically after reservation time passes
     """
 
     resp = MessagingResponse()
@@ -359,6 +417,9 @@ async def whatsapp_webhook(
     elif From:
         phone = (From or "").replace("whatsapp:", "").strip()
 
+    # Reset expired memory if reservation is old
+    reset_memory_if_expired(phone)
+
     text = Body.strip()
     text_lower = text.lower()
 
@@ -366,69 +427,54 @@ async def whatsapp_webhook(
     is_spanish = bool(re.search(r"[áéíóúñ¿¡]|hola|buenas|quiero|reserv|mesa", text_lower))
     lang = "es" if is_spanish else "en"
 
-    # -------- Friendly intro only when user greets --------
+    # -------- Greetings → one-time warm intro --------
     greetings = ["hola", "buenas", "hello", "hi", "holi", "hey"]
-
     if any(text_lower.startswith(g) for g in greetings):
         if lang == "es":
             intro = "¡Hola! 😊 ¿En qué puedo ayudarte hoy? ¿Quieres información del restaurante o hacer una reserva?"
         else:
-            intro = "Hi! 😊 How can I help you today? Want restaurant info or make a reservation?"
+            intro = "Hi! 😊 How can I help you today? Do you want restaurant information or make a reservation?"
         resp.message(intro)
         return Response(str(resp), media_type="application/xml")
 
-    # -----------------------------------------------------
-    #   SUPER NATURAL BRAIN — EXACT STYLE YOU WANTED
-    # -----------------------------------------------------
+
+    # -------------------------------------------------
+    #  STEP 1: Extract info using OpenAI
+    # -------------------------------------------------
     system_prompt = f"""
-Eres un asistente de reservas extremadamente natural, cálido y sencillo.
-Tu tono debe sonar EXACTAMENTE como WhatsApp real (como en el screenshot del cliente).
+You are a warm, natural restaurant reservation assistant.
+Always respond in the user's language: {"Spanish" if lang=="es" else "English"}.
 
-Usa SIEMPRE el idioma del usuario: {"español" if lang=="es" else "inglés"}.
+RULES:
+- You do NOT output emojis unless the user uses the greeting (we handled that separately).
+- You ONLY ask for missing information.
+- If the user gives everything (name + date+time + people), output ONLY the JSON.
 
-REGLAS DE ORO:
-- Respuestas muy cortas, cálidas, simples.
-- No hables como robot.
-- No escribas párrafos largos.
-- No hables inglés si el usuario escribe en español.
-- No pidas email ni número.
+MISSING INFO QUESTIONS (no emojis):
+• Name missing → "¿A nombre de quién sería la reserva?"
+• Date/time missing → "¿Para qué fecha y hora te gustaría la reserva?"
+• Party size missing → "¿Para cuántas personas sería la reserva?"
 
-OBJETIVO:
-Recolectar estos 3 datos:
-1) nombre del cliente  
-2) fecha+hora  
-3) número de personas  
+When asking for multiple missing items:
+Ask them together, example:
+"Perfecto, ¿para qué fecha, hora y cuántas personas sería la reserva?"
 
-Si el usuario YA dio los 3 → NO preguntes nada, NO escribas texto.
-→ Devuelve SOLO este JSON:
-
-{{
+JSON FORMAT WHEN COMPLETE:
+{
  "customer_name": "",
  "party_size": "",
  "datetime": "",
  "customer_email": "",
  "contact_phone": "",
  "notes": ""
-}}
+}
 
-SI FALTA INFORMACIÓN:
-- Si falta nombre → responde:
-  "Perfecto 😊 ¿A nombre de quién sería la reserva?"
-
-- Si falta fecha/hora → responde:
-  "Genial 😊 ¿Para qué día y hora te gustaría la reserva?"
-
-- Si faltan personas → responde:
-  "Claro 😊 ¿Para cuántas personas sería?"
-
-Elige SIEMPRE la respuesta más corta y cálida posible.
-
-No inventes datos. No adivines. No asumas.
+Never ask for email.
+Never ask for phone.
+Understand natural language.
+Be friendly, short, and human.
 """
 
-    # -----------------------------------------------------
-    #   CALL OPENAI
-    # -----------------------------------------------------
     try:
         ai = client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -439,38 +485,44 @@ No inventes datos. No adivines. No asumas.
             ],
         )
         ai_msg = ai.choices[0].message.content.strip()
-
     except Exception:
-        resp.message("❌ Hubo un error procesando tu mensaje.")
+        resp.message("Hubo un problema procesando el mensaje.")
         return Response(str(resp), media_type="application/xml")
 
-    # -----------------------------------------------------
-    #   CASE A: AI responded normally (missing info)
-    # -----------------------------------------------------
+
+    # -------------------------------------------------
+    #  STEP 2 — If AI gives conversational text
+    # -------------------------------------------------
     if not ai_msg.startswith("{"):
         resp.message(ai_msg)
         return Response(str(resp), media_type="application/xml")
 
-    # -----------------------------------------------------
-    #   CASE B: AI returned JSON → save reservation
-    # -----------------------------------------------------
+
+    # -------------------------------------------------
+    #  STEP 3 — AI returned JSON → process reservation
+    # -------------------------------------------------
     try:
-        data = json.loads(ai_msg)
+        new_data = json.loads(ai_msg)
     except:
-        if lang == "es":
-            resp.message("❌ No entendí la fecha/hora 😅 ¿Podrías repetirla?")
-        else:
-            resp.message("❌ Couldn't understand the date/time 😅 Try again?")
+        resp.message("No entendí la fecha/hora, ¿podrías repetirla?")
         return Response(str(resp), media_type="application/xml")
 
-    # Attach phone automatically if missing
-    if phone and not data.get("contact_phone"):
-        data["contact_phone"] = phone
+    # Attach phone if needed
+    if phone and not new_data.get("contact_phone"):
+        new_data["contact_phone"] = phone
 
     # Save reservation
-    result = save_reservation(data)
-    final_msg = result[lang]
+    result = save_reservation(new_data)
 
+    # Save memory data for post-confirmation modifications
+    mem = CONVO_MEMORY.get(phone, {})
+    mem["name"] = new_data.get("customer_name")
+    mem["party"] = new_data.get("party_size")
+    mem["datetime"] = new_data.get("datetime")
+    mem["datetime_utc"] = _to_utc_iso(new_data.get("datetime"))
+    CONVO_MEMORY[phone] = mem
+
+    final_msg = result[lang]
     resp.message(final_msg)
 
     # Live dashboard refresh
@@ -498,7 +550,7 @@ async def update_reservation(update: dict):
         "status": update.get("status", "updated"),
     }).eq("reservation_id", update["reservation_id"]).execute()
 
-    asyncio.create_task(notify_refresh())  # live refresh
+    asyncio.create_task(notify_refresh())
     return {"success": True}
 
 
@@ -510,6 +562,7 @@ async def cancel_reservation(update: dict):
 
     asyncio.create_task(notify_refresh())
     return {"success": True}
+
 
 
 # -----------------------------------------------------
@@ -651,6 +704,7 @@ async def voice_notes(request: Request, name: str, phone: str, party: str, dt: s
     return Response(str(vr), media_type="application/xml")
 
 
+
 # -----------------------------------------------------
 #              LIVE WEBSOCKET REFRESH
 # -----------------------------------------------------
@@ -677,6 +731,7 @@ async def notify_refresh():
                 clients.remove(ws)
             except:
                 pass
+
 
 
 # ---------------- END OF FILE ----------------
