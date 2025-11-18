@@ -238,13 +238,36 @@ async def whatsapp(Body: str = Form(...)):
 # ---------------------------------------------------------
 # DASHBOARD
 # ---------------------------------------------------------
+from dateutil import parser
+
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
     rows = res.data or []
-    return templates.TemplateResponse("dashboard.html", {"request": request, "reservations": rows})
 
+    fixed_rows = []
 
+    for r in rows:
+        row = r.copy()
+        try:
+            # Parse UTC datetime
+            dt_utc = parser.isoparse(r["datetime"])
+
+            # Convert to Colombia time
+            dt_local = dt_utc.astimezone(LOCAL_TZ)
+
+            # Replace datetime displayed in dashboard
+            row["datetime"] = dt_local.strftime("%Y-%m-%d %H:%M:%S")
+
+        except:
+            pass
+
+        fixed_rows.append(row)
+
+    return templates.TemplateResponse("dashboard.html", {
+        "request": request,
+        "reservations": fixed_rows
+    })
 # ---------------------------------------------------------
 # API FOR DASHBOARD ACTIONS
 # ---------------------------------------------------------
