@@ -3,9 +3,9 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-import json, os, time, asyncio
+import json, os
 
 # ---------- Supabase ----------
 from supabase import create_client, Client
@@ -18,8 +18,9 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 from twilio.twiml.messaging_response import MessagingResponse
 
 
+
 # ---------------------------------------------------------
-# APP INIT
+# INIT APP
 # ---------------------------------------------------------
 app = FastAPI()
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -34,16 +35,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ---------------------------------------------------------
-# GLOBAL SESSION MEMORY
-# ---------------------------------------------------------
-session_state = {}
 LOCAL_TZ = ZoneInfo("America/Bogota")
 
 
+
 # ---------------------------------------------------------
-# SUPABASE INIT
+# MEMORY PER USER
+# ---------------------------------------------------------
+session_state = {}
+
+
+
+# ---------------------------------------------------------
+# SUPABASE
 # ---------------------------------------------------------
 supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
@@ -53,9 +57,7 @@ supabase: Client = create_client(
 TABLE_LIMIT = 10
 
 
-# ---------------------------------------------------------
-# ASSIGN TABLE
-# ---------------------------------------------------------
+
 def assign_table(iso_utc: str):
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
     taken = {r["table_number"] for r in (booked.data or [])}
@@ -66,21 +68,16 @@ def assign_table(iso_utc: str):
     return None
 
 
-# ---------------------------------------------------------
-# SAVE RESERVATION
-# ---------------------------------------------------------
-def save_reservation(data: dict):
 
+def save_reservation(data: dict):
     try:
-        # datetime comes as ISO Bogotá → convert to UTC
         dt_local = datetime.fromisoformat(data["datetime"])
         dt_utc = dt_local.astimezone(timezone.utc)
     except:
-        return "❌ No pude procesar la fecha/hora."
+        return "❌ No pude procesar fecha/hora."
 
-    iso = dt_utc.isoformat().replace("+00:00", "Z")
-
-    table = assign_table(iso)
+    iso_utc = dt_utc.isoformat().replace("+00:00", "Z")
+    table = assign_table(iso_utc)
     if not table:
         return "❌ No hay mesas disponibles para ese horario."
 
@@ -88,10 +85,10 @@ def save_reservation(data: dict):
         "customer_name": data["customer_name"],
         "customer_email": "",
         "contact_phone": "",
-        "datetime": iso,
+        "datetime": iso_utc,
         "party_size": int(data["party_size"]),
         "table_number": table,
-        "notes": data.get("notes", ""),
+        "notes": "",
         "status": "confirmed",
     }).execute()
 
@@ -104,30 +101,68 @@ def save_reservation(data: dict):
     )
 
 
-# ---------------------------------------------------------
-# UNIVERSAL AI EXTRACTION
-# ---------------------------------------------------------
-def extract_with_ai(user_msg: str):
-    prompt = f"""
-Eres un agente de reservas para un restaurante en Colombia.
 
-Tu tarea:
-- Detectar el *nombre*
-- Detectar la *fecha y hora exactas* en formato ISO Bogotá (America/Bogota)
-- Detectar el *número de personas*
+# ---------------------------------------------------------
+# SUPER AI EXTRACTION
+# ---------------------------------------------------------
+def ai_extract(user_msg: str):
+    superprompt = f"""
+Eres un asistente de reservas para un restaurante colombiano vía WhatsApp.
 
-Responde SOLO JSON así:
+Tu tarea es interpretar cualquier mensaje del usuario y extraer:
+
+- "intent": "reserve" | "info" | "other"
+- "customer_name": nombre del cliente (si está presente)
+- "datetime": fecha + hora exactas en ISO America/Bogota (ej: "2025-01-26T19:00:00-05:00")
+- "party_size": número de personas (string)
+
+RESPONDE SIEMPRE SOLO EN JSON.
+
+REGLAS IMPORTANTES:
+
+1. "quiero reservar", "quiero hacer una reserva", "me gustaría reservar", "reservar mesa" → intent = "reserve"
+
+2. Si hay fecha/hora como:
+   - "lunes a las 7"
+   - "mañana 9am"
+   - "el viernes en la noche"
+   - "pasado mañana a las 3"
+   - "este sábado tipo 7"
+   → conviértelo a ISO Bogotá SI y SOLO SI la hora es exacta.
+
+3. Si la hora NO es exacta:
+   - "en la noche"
+   - "en la tarde"
+   - "tipo 7"
+   → datetime = "".
+
+4. Si hay solo fecha sin hora → datetime = "".
+
+5. "yo", "para mí", "a mi nombre" → customer_name = "".
+
+6. "somos varios", "unos cuantos", "varios" → party_size = "".
+
+7. Si hay número:
+   - "somos 4"
+   - "para 3 personas"
+   - "seríamos 2"
+   → party_size = número.
+
+8. Si el usuario da TODO JUNTO:
+   "Quiero reservar para Luis el lunes a las 7pm somos 4"
+   → llena todos los campos.
+
+9. NO inventes datos.  
+   Si NO lo encuentras → déjalo vacío.
+
+FORMATO DE RESPUESTA:
 
 {{
+  "intent": "",
   "customer_name": "",
   "datetime": "",
   "party_size": ""
 }}
-
-Reglas:
-- Si no encuentras un campo, déjalo vacío.
-- datetime DEBE ser ISO así:
-  "2025-01-26T19:00:00-05:00"
 
 Mensaje del usuario:
 "{user_msg}"
@@ -137,11 +172,13 @@ Mensaje del usuario:
         r = client.chat.completions.create(
             model="gpt-4o-mini",
             temperature=0,
-            messages=[{"role": "system", "content": prompt}]
+            messages=[{"role": "system", "content": superprompt}]
         )
         return json.loads(r.choices[0].message.content)
+
     except:
-        return {"customer_name": "", "datetime": "", "party_size": ""}
+        return {"intent": "", "customer_name": "", "datetime": "", "party_size": ""}
+
 
 
 # ---------------------------------------------------------
@@ -158,39 +195,37 @@ async def whatsapp(Body: str = Form(...)):
         session_state[user_id] = {
             "customer_name": None,
             "datetime": None,
-            "party_size": None
+            "party_size": None,
+            "awaiting_info": False
         }
 
     memory = session_state[user_id]
 
-    # GREETINGS
-    if msg.lower() in ["hola", "hello", "buenas", "hey", "holaa", "ola"]:
+    # GREETING
+    if msg.lower() in ["hola", "hello", "holaa", "buenas", "hey", "ola"]:
         resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy?\n¿Quieres *información* o deseas *hacer una reserva*?")
         return Response(str(resp), media_type="application/xml")
 
-    # USER WANTS TO RESERVE
-    if "reserv" in msg.lower() and not any(memory.values()):
-        resp.message("Perfecto 😊 Para continuar, necesito:\n👉 Fecha y hora\n👉 Nombre\n👉 Número de personas")
-        # DO NOT RETURN — WE LET AI PROCESS THIS MESSAGE TOO
-        # (THIS FIXES YOUR PROBLEM)
-        # continue to extraction below
+    # AI INTERPRETATION
+    extracted = ai_extract(msg)
 
-
-    # AI EXTRACTION
-    extracted = extract_with_ai(msg)
+    # INTENT MANAGEMENT
+    if extracted["intent"] == "reserve" and not memory["awaiting_info"]:
+        memory["awaiting_info"] = True
+        resp.message("Perfecto 😊 Para continuar necesito:\n👉 Fecha y hora\n👉 Nombre\n👉 Número de personas")
+        return Response(str(resp), media_type="application/xml")
 
     # UPDATE MEMORY
-    if extracted.get("customer_name"):
+    if extracted["customer_name"]:
         memory["customer_name"] = extracted["customer_name"]
 
-    if extracted.get("datetime"):
+    if extracted["datetime"]:
         memory["datetime"] = extracted["datetime"]
 
-    if extracted.get("party_size"):
+    if extracted["party_size"]:
         memory["party_size"] = extracted["party_size"]
 
-
-    # ASK FOR WHAT'S MISSING
+    # ASK FOR MISSING PARTS
     if not memory["customer_name"]:
         resp.message("¿A nombre de quién sería la reserva?")
         return Response(str(resp), media_type="application/xml")
@@ -203,19 +238,20 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("¿Para cuántas personas sería la reserva?")
         return Response(str(resp), media_type="application/xml")
 
-
-    # ALL INFO PRESENT → SAVE
+    # EVERYTHING READY → SAVE
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
-    # RESET AFTER BOOKING
+    # RESET
     session_state[user_id] = {
         "customer_name": None,
         "datetime": None,
-        "party_size": None
+        "party_size": None,
+        "awaiting_info": False
     }
 
     return Response(str(resp), media_type="application/xml")
+
 
 
 # ---------------------------------------------------------
@@ -225,14 +261,13 @@ async def whatsapp(Body: str = Form(...)):
 async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
     rows = res.data or []
-
     return templates.TemplateResponse("dashboard.html", {"request": request, "reservations": rows})
 
 
+
 # ---------------------------------------------------------
-# RENDER STARTUP
+# RUN
 # ---------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
