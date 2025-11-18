@@ -1,10 +1,10 @@
 fastapi
 uvicorn
-python-dotenv
-dateparser
-python-dateutil
 supabase
 twilio
 openai
 jinja2
+python-dateutil
+dateparser
+python-dotenv
 requests
