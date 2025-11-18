@@ -19,7 +19,6 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 from twilio.twiml.messaging_response import MessagingResponse
 
 
-
 # ---------------------------------------------------------
 # INIT APP
 # ---------------------------------------------------------
@@ -39,12 +38,10 @@ app.add_middleware(
 LOCAL_TZ = ZoneInfo("America/Bogota")
 
 
-
 # ---------------------------------------------------------
 # MEMORY PER USER
 # ---------------------------------------------------------
 session_state = {}
-
 
 
 # ---------------------------------------------------------
@@ -68,9 +65,8 @@ def assign_table(iso_utc: str):
     return None
 
 
-
 # ---------------------------------------------------------
-# SPANISH DATE FORMAT FIX
+# SPANISH DATE FORMAT
 # ---------------------------------------------------------
 spanish_weekdays = {
     "Monday": "lunes",
@@ -103,7 +99,7 @@ def spanish_date(dt: datetime):
 
 
 # ---------------------------------------------------------
-# SAVE RESERVATION (with Spanish date)
+# SAVE RESERVATION
 # ---------------------------------------------------------
 def save_reservation(data: dict):
     try:
@@ -137,9 +133,8 @@ def save_reservation(data: dict):
     )
 
 
-
 # ---------------------------------------------------------
-# AI EXTRACTION — CORRECTED DATE LOGIC
+# AI EXTRACTION — CORRECT DATE LOGIC
 # ---------------------------------------------------------
 def ai_extract(user_msg: str):
     from dateutil.relativedelta import relativedelta, MO, TU, WE, TH, FR, SA, SU
@@ -192,6 +187,8 @@ Mensaje:
             detected_weekday = rr
             break
 
+    import dateparser
+
     if detected_weekday:
         target_date = today + relativedelta(weekday=detected_weekday(+1))
 
@@ -225,7 +222,6 @@ Mensaje:
     }
 
 
-
 # ---------------------------------------------------------
 # WHATSAPP ROUTE
 # ---------------------------------------------------------
@@ -246,21 +242,17 @@ async def whatsapp(Body: str = Form(...)):
 
     memory = session_state[user_id]
 
-    # GREETING
     if msg.lower() in ["hola", "hello", "holaa", "buenas", "hey", "ola"]:
         resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy?\n¿Quieres *información* o deseas *hacer una reserva*?")
         return Response(str(resp), media_type="application/xml")
 
-    # AI INTERPRETATION
     extracted = ai_extract(msg)
 
-    # START PROCESS
     if extracted["intent"] == "reserve" and not memory["awaiting_info"]:
         memory["awaiting_info"] = True
         resp.message("Perfecto 😊 Para continuar necesito:\n👉 Fecha y hora\n👉 Nombre\n👉 Número de personas")
         return Response(str(resp), media_type="application/xml")
 
-    # UPDATE MEMORY
     if extracted.get("customer_name"):
         memory["customer_name"] = extracted["customer_name"]
 
@@ -270,7 +262,6 @@ async def whatsapp(Body: str = Form(...)):
     if extracted.get("party_size"):
         memory["party_size"] = extracted["party_size"]
 
-    # ASK FOR MISSING FIELDS
     if not memory["customer_name"]:
         resp.message("¿A nombre de quién sería la reserva?")
         return Response(str(resp), media_type="application/xml")
@@ -283,11 +274,9 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("¿Para cuántas personas sería la reserva?")
         return Response(str(resp), media_type="application/xml")
 
-    # SAVE
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
-    # RESET MEMORY
     session_state[user_id] = {
         "customer_name": None,
         "datetime": None,
@@ -296,7 +285,6 @@ async def whatsapp(Body: str = Form(...)):
     }
 
     return Response(str(resp), media_type="application/xml")
-
 
 
 # ---------------------------------------------------------
@@ -341,54 +329,53 @@ async def dashboard(request: Request):
     })
 
 
+# ---------------------------------------------------------
+# SAFE DASHBOARD ACTION BUTTONS — FIXED
+# ---------------------------------------------------------
 
-# ---------------------------------------------------------
-# SAFE DASHBOARD ACTION BUTTONS
-# ---------------------------------------------------------
+def safe_update(reservation_id: int, fields: dict):
+    clean = {k: v for k, v in fields.items() if v not in [None, "null", "", "-", "None"]}
+    if clean:
+        supabase.table("reservations").update(clean).eq("reservation_id", reservation_id).execute()
+
 
 @app.post("/cancelReservation")
 async def cancel_reservation(update: dict):
-    supabase.table("reservations").update({
-        "status": "cancelado"
-    }).eq("reservation_id", update["reservation_id"]).execute()
+    safe_update(update["reservation_id"], {"status": "cancelado"})
     return {"success": True}
 
 
 @app.post("/markArrived")
 async def mark_arrived(update: dict):
-    supabase.table("reservations").update({
-        "status": "llegó"
-    }).eq("reservation_id", update["reservation_id"]).execute()
+    safe_update(update["reservation_id"], {"status": "llegó"})
     return {"success": True}
 
 
 @app.post("/markNoShow")
 async def mark_no_show(update: dict):
-    supabase.table("reservations").update({
-        "status": "no llegó"
-    }).eq("reservation_id", update["reservation_id"]).execute()
+    safe_update(update["reservation_id"], {"status": "no llegó"})
     return {"success": True}
 
 
 @app.post("/archiveReservation")
 async def archive_reservation(update: dict):
-    supabase.table("reservations").update({
-        "status": "archivado"
-    }).eq("reservation_id", update["reservation_id"]).execute()
+    safe_update(update["reservation_id"], {"status": "archivado"})
     return {"success": True}
 
 
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
-    # This is ONLY used when editing manually in the dashboard popup
-    supabase.table("reservations").update({
+    reservation_id = update["reservation_id"]
+
+    safe_update(reservation_id, {
         "customer_name": update.get("customer_name"),
         "party_size": update.get("party_size"),
         "datetime": update.get("datetime"),
         "notes": update.get("notes"),
         "table_number": update.get("table_number"),
         "status": update.get("status")
-    }).eq("reservation_id", update["reservation_id"]).execute()
+    })
+
     return {"success": True}
 
 
@@ -396,7 +383,6 @@ async def update_reservation(update: dict):
 async def create_reservation(payload: dict):
     msg = save_reservation(payload)
     return {"success": True, "message": msg}
-
 
 
 # ---------------------------------------------------------
