@@ -195,7 +195,6 @@ Mensaje:
     if detected_weekday:
         target_date = today + relativedelta(weekday=detected_weekday(+1))
 
-        import dateparser
         tparsed = dateparser.parse(
             text,
             settings={"RETURN_AS_TIMEZONE_AWARE": True, "TIMEZONE": "America/Bogota"}
@@ -207,7 +206,6 @@ Mensaje:
         final_iso = target_date.isoformat()
 
     else:
-        import dateparser
         dt_local = dateparser.parse(
             text,
             settings={
@@ -229,7 +227,7 @@ Mensaje:
 
 
 # ---------------------------------------------------------
-# WHATSAPP ROUTE (unchanged logic)
+# WHATSAPP ROUTE
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
@@ -302,7 +300,7 @@ async def whatsapp(Body: str = Form(...)):
 
 
 # ---------------------------------------------------------
-# DASHBOARD — show date & time correctly
+# DASHBOARD — DATE/TIME FIX
 # ---------------------------------------------------------
 from dateutil import parser
 
@@ -345,16 +343,44 @@ async def dashboard(request: Request):
 
 
 # ---------------------------------------------------------
-# DASHBOARD ACTIONS (fixed)
+# SAFE DASHBOARD ACTION BUTTONS
 # ---------------------------------------------------------
-@app.post("/createReservation")
-async def create_reservation(payload: dict):
-    msg = save_reservation(payload)
-    return {"success": True, "message": msg}
+
+@app.post("/cancelReservation")
+async def cancel_reservation(update: dict):
+    supabase.table("reservations").update({
+        "status": "cancelado"
+    }).eq("reservation_id", update["reservation_id"]).execute()
+    return {"success": True}
+
+
+@app.post("/markArrived")
+async def mark_arrived(update: dict):
+    supabase.table("reservations").update({
+        "status": "llegó"
+    }).eq("reservation_id", update["reservation_id"]).execute()
+    return {"success": True}
+
+
+@app.post("/markNoShow")
+async def mark_no_show(update: dict):
+    supabase.table("reservations").update({
+        "status": "no llegó"
+    }).eq("reservation_id", update["reservation_id"]).execute()
+    return {"success": True}
+
+
+@app.post("/archiveReservation")
+async def archive_reservation(update: dict):
+    supabase.table("reservations").update({
+        "status": "archivado"
+    }).eq("reservation_id", update["reservation_id"]).execute()
+    return {"success": True}
 
 
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
+    # This is ONLY used when editing manually in the dashboard popup
     supabase.table("reservations").update({
         "customer_name": update.get("customer_name"),
         "party_size": update.get("party_size"),
@@ -366,28 +392,10 @@ async def update_reservation(update: dict):
     return {"success": True}
 
 
-@app.post("/cancelReservation")
-async def cancel_reservation(update: dict):
-    supabase.table("reservations").update({"status": "cancelado"}).eq("reservation_id", update["reservation_id"]).execute()
-    return {"success": True}
-
-
-@app.post("/markArrived")
-async def mark_arrived(update: dict):
-    supabase.table("reservations").update({"status": "llegó"}).eq("reservation_id", update["reservation_id"]).execute()
-    return {"success": True}
-
-
-@app.post("/markNoShow")
-async def mark_no_show(update: dict):
-    supabase.table("reservations").update({"status": "no llegó"}).eq("reservation_id", update["reservation_id"]).execute()
-    return {"success": True}
-
-
-@app.post("/archiveReservation")
-async def archive_reservation(update: dict):
-    supabase.table("reservations").update({"status": "archivado"}).eq("reservation_id", update["reservation_id"]).execute()
-    return {"success": True}
+@app.post("/createReservation")
+async def create_reservation(payload: dict):
+    msg = save_reservation(payload)
+    return {"success": True, "message": msg}
 
 
 
