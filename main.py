@@ -195,15 +195,16 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy?\n¿Quieres *información* o deseas *hacer una reserva*?")
         return Response(str(resp), media_type="application/xml")
 
-    # AI extraction
+    # AI INTERPRETATION
     extracted = ai_extract(msg)
 
+    # USER SAID THEY WANT TO RESERVE
     if extracted["intent"] == "reserve" and not memory["awaiting_info"]:
         memory["awaiting_info"] = True
         resp.message("Perfecto 😊 Para continuar necesito:\n👉 Fecha y hora\n👉 Nombre\n👉 Número de personas")
         return Response(str(resp), media_type="application/xml")
 
-    # STORE INFO
+    # UPDATE MEMORY
     if extracted["customer_name"]:
         memory["customer_name"] = extracted["customer_name"]
 
@@ -213,7 +214,7 @@ async def whatsapp(Body: str = Form(...)):
     if extracted["party_size"]:
         memory["party_size"] = extracted["party_size"]
 
-    # ASK MISSING INFO
+    # ASK WHAT'S MISSING
     if not memory["customer_name"]:
         resp.message("¿A nombre de quién sería la reserva?")
         return Response(str(resp), media_type="application/xml")
@@ -226,7 +227,7 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("¿Para cuántas personas sería la reserva?")
         return Response(str(resp), media_type="application/xml")
 
-    # SAVE RESERVATION
+    # BOOK
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
@@ -239,7 +240,6 @@ async def whatsapp(Body: str = Form(...)):
     }
 
     return Response(str(resp), media_type="application/xml")
-
 
 # ---------------------------------------------------------
 # DASHBOARD
