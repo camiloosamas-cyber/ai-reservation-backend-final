@@ -310,10 +310,7 @@ async def dashboard(request: Request):
             else:
                 dt_utc = parser.isoparse(dt_value)
 
-                # Always normalize to UTC first
-                dt_utc = dt_utc.astimezone(timezone.utc)
-
-                # Convert to Colombia time
+                # FIX: Supabase already stores UTC ("Z"), so convert directly to local time
                 dt_local = dt_utc.astimezone(LOCAL_TZ)
 
                 row["date"] = dt_local.strftime("%Y-%m-%d")
