@@ -100,46 +100,44 @@ def save_reservation(data: dict):
 # SUPER AI EXTRACTION (WITH DATE FIX)
 # ---------------------------------------------------------
 # ---------------------------------------------------------
-# SUPER AI EXTRACTION (IMPROVED NAME + DATE HANDLING)
+# SUPER AI EXTRACTION (FIXED DAY-OF-WEEK CALCULATION)
 # ---------------------------------------------------------
 def ai_extract(user_msg: str):
-    today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+    today_obj = datetime.now(LOCAL_TZ)
 
     superprompt = f"""
 Eres un asistente de reservas vía WhatsApp para un restaurante colombiano.
 
-HOY es {today} (America/Bogota).
+HOY es {today_obj.strftime("%Y-%m-%d")} (America/Bogota).
 
 Tu tarea es extraer:
 - intent
 - customer_name
-- datetime (en ISO local, ej: 2025-01-26T19:00:00-05:00)
+- datetime (ISO local, ej: 2025-01-26T19:00:00-05:00)
 - party_size
 
-Responde SOLO en JSON.
+Responde SOLO JSON.
 
-Reglas importantes:
+REGLAS IMPORTANTES:
 
-• Nombres válidos incluyen cualquier palabra que parezca nombre humano:
-  Ej: "Marcos", "Luis", "Ana", "Juan Pablo", "Carlos Andrés"
-  → customer_name = ese texto
+• Días de la semana SIEMPRE deben ir al PRÓXIMO día futuro.
+  Ej:
+  - Hoy es martes.
+  - Usuario dice "viernes".
+  - Usa el viernes más cercano en el futuro SIN saltarte semanas.
 
-• Si el usuario dice:
-  "a nombre de Marcos"
-  "para Marcos"
-  "soy Marcos"
-  → customer_name = Marcos
+• Ejemplos:
+   "viernes 5am" → fecha exacta del próximo viernes a las 05:00.
 
-• Si hay día y hora:
-  "lunes a las 7pm"
-  "viernes 9am"
-  → convertir a fecha futura más cercana
+• Si no da hora → datetime = "".
 
-• Si falta la hora → datetime = ""
+• Nombres válidos:
+   "a nombre de Marcos"
+   "soy Luis"
+   "reserva para Ana"
+   → customer_name = el nombre detectado.
 
-• Si el usuario no da nombre → customer_name = ""
-
-• No inventes datos.
+• No inventes datos. Si un dato no está → "".
 
 FORMATO:
 {{
@@ -236,7 +234,7 @@ async def whatsapp(Body: str = Form(...)):
 
     return Response(str(resp), media_type="application/xml")
 # ---------------------------------------------------------
-# DASHBOARD
+# DASHBOARD (FIXED TIMEZONE + BLANK DATE BUG)
 # ---------------------------------------------------------
 from dateutil import parser
 
@@ -249,18 +247,28 @@ async def dashboard(request: Request):
 
     for r in rows:
         row = r.copy()
+        dt_value = r.get("datetime")
+
         try:
-            # Parse UTC datetime
-            dt_utc = parser.isoparse(r["datetime"])
+            # Skip invalid values
+            if not dt_value or dt_value in ["EMPTY", "None", "-", ""]:
+                row["datetime"] = ""
+            else:
+                # Parse UTC datetime
+                dt_utc = parser.isoparse(dt_value)
 
-            # Convert to Colombia time
-            dt_local = dt_utc.astimezone(LOCAL_TZ)
+                if dt_utc.tzinfo is None:
+                    dt_utc = dt_utc.replace(tzinfo=timezone.utc)
 
-            # Replace datetime displayed in dashboard
-            row["datetime"] = dt_local.strftime("%Y-%m-%d %H:%M:%S")
+                # Convert to Colombia time
+                dt_local = dt_utc.astimezone(LOCAL_TZ)
 
-        except:
-            pass
+                # Format clean for dashboard
+                row["datetime"] = dt_local.strftime("%Y-%m-%d %H:%M")
+
+        except Exception as e:
+            # If anything fails, show empty
+            row["datetime"] = ""
 
         fixed_rows.append(row)
 
