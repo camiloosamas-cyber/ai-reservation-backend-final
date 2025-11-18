@@ -99,64 +99,59 @@ def save_reservation(data: dict):
 # ---------------------------------------------------------
 # SUPER AI EXTRACTION (WITH DATE FIX)
 # ---------------------------------------------------------
+# ---------------------------------------------------------
+# SUPER AI EXTRACTION (IMPROVED NAME + DATE HANDLING)
+# ---------------------------------------------------------
 def ai_extract(user_msg: str):
     today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
 
     superprompt = f"""
-Eres un asistente de reservas para un restaurante colombiano vía WhatsApp.
+Eres un asistente de reservas vía WhatsApp para un restaurante colombiano.
 
-HOY es {today} en zona America/Bogota.
-Interpreta SIEMPRE cualquier fecha relativa usando esta fecha actual.
+HOY es {today} (America/Bogota).
 
 Tu tarea es extraer:
-- "intent": "reserve" | "info" | "other"
-- "customer_name"
-- "datetime": fecha + hora exactas en ISO America/Bogota
-- "party_size"
+- intent
+- customer_name
+- datetime (en ISO local, ej: 2025-01-26T19:00:00-05:00)
+- party_size
 
 Responde SOLO en JSON.
 
----------------------------
-REGLAS PARA FECHAS
----------------------------
+Reglas importantes:
 
-1. "hoy" → {today}
-2. "mañana" → hoy + 1 día
-3. "pasado mañana" → hoy + 2 días
+• Nombres válidos incluyen cualquier palabra que parezca nombre humano:
+  Ej: "Marcos", "Luis", "Ana", "Juan Pablo", "Carlos Andrés"
+  → customer_name = ese texto
 
-4. Si dice un día:
-   - "martes"
-   - "viernes"
-   - "domingo"
-   → Usar SIEMPRE el PRÓXIMO día hacia el futuro.
+• Si el usuario dice:
+  "a nombre de Marcos"
+  "para Marcos"
+  "soy Marcos"
+  → customer_name = Marcos
 
-5. Si dice:
-   - "este sábado"
-   - "este viernes"
-   → También usar la fecha futura más cercana.
+• Si hay día y hora:
+  "lunes a las 7pm"
+  "viernes 9am"
+  → convertir a fecha futura más cercana
 
-6. Si la hora NO es exacta:
-   - "en la noche"
-   - "en la tarde"
-   - "tipo 7"
-   → datetime = ""
+• Si falta la hora → datetime = ""
 
-7. Si solo dice fecha sin hora → datetime = "".
+• Si el usuario no da nombre → customer_name = ""
 
----------------------------
-OTRAS REGLAS
----------------------------
+• No inventes datos.
 
-- "yo", "a mi nombre", "para mí" → customer_name = ""
-- "somos varios", "unos cuantos" → party_size = ""
+FORMATO:
+{{
+ "intent": "",
+ "customer_name": "",
+ "datetime": "",
+ "party_size": ""
+}}
 
-- Si usuario dice todo junto: "martes 7pm Luis 4 personas"
-  → Llenar todo correctamente.
-
-- Nunca inventes datos.
-
-Mensaje del usuario:
-\"\"\"{user_msg}\"\"\""""
+Mensaje:
+\"\"\"{user_msg}\"\"\"
+"""
 
     try:
         r = client.chat.completions.create(
@@ -165,13 +160,13 @@ Mensaje del usuario:
             messages=[{"role": "system", "content": superprompt}]
         )
         return json.loads(r.choices[0].message.content)
-
     except:
         return {"intent": "", "customer_name": "", "datetime": "", "party_size": ""}
-
-
 # ---------------------------------------------------------
 # WHATSAPP ROUTE
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+# WHATSAPP ROUTE (FIXED NAME MEMORY + FLOW)
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
@@ -198,23 +193,23 @@ async def whatsapp(Body: str = Form(...)):
     # AI INTERPRETATION
     extracted = ai_extract(msg)
 
-    # USER SAID THEY WANT TO RESERVE
+    # START RESERVATION PROCESS
     if extracted["intent"] == "reserve" and not memory["awaiting_info"]:
         memory["awaiting_info"] = True
         resp.message("Perfecto 😊 Para continuar necesito:\n👉 Fecha y hora\n👉 Nombre\n👉 Número de personas")
         return Response(str(resp), media_type="application/xml")
 
-    # UPDATE MEMORY
-    if extracted["customer_name"]:
+    # UPDATE MEMORY SAFELY
+    if extracted.get("customer_name"):
         memory["customer_name"] = extracted["customer_name"]
 
-    if extracted["datetime"]:
+    if extracted.get("datetime"):
         memory["datetime"] = extracted["datetime"]
 
-    if extracted["party_size"]:
+    if extracted.get("party_size"):
         memory["party_size"] = extracted["party_size"]
 
-    # ASK WHAT'S MISSING
+    # ASK MISSING FIELDS
     if not memory["customer_name"]:
         resp.message("¿A nombre de quién sería la reserva?")
         return Response(str(resp), media_type="application/xml")
@@ -227,11 +222,11 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("¿Para cuántas personas sería la reserva?")
         return Response(str(resp), media_type="application/xml")
 
-    # BOOK
+    # ALL INFO READY → SAVE
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
-    # RESET
+    # RESET MEMORY FOR NEXT RESERVATION
     session_state[user_id] = {
         "customer_name": None,
         "datetime": None,
@@ -240,7 +235,6 @@ async def whatsapp(Body: str = Form(...)):
     }
 
     return Response(str(resp), media_type="application/xml")
-
 # ---------------------------------------------------------
 # DASHBOARD
 # ---------------------------------------------------------
