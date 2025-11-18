@@ -201,10 +201,24 @@ async def whatsapp(Body: str = Form(...)):
     # UPDATE MEMORY SAFELY
     if extracted.get("customer_name"):
         memory["customer_name"] = extracted["customer_name"]
+        
+# HANDLE PYTHON DATE CONVERSION
+if extracted.get("datetime"):
+    memory["datetime"] = extracted["datetime"]  # already ISO
 
-    if extracted.get("datetime"):
-        memory["datetime"] = extracted["datetime"]
-
+elif extracted.get("datetime_text"):
+    import dateparser
+    dt_local = dateparser.parse(
+        extracted["datetime_text"],
+        settings={
+            "PREFER_DATES_FROM": "future",
+            "TIMEZONE": "America/Bogota",
+            "RETURN_AS_TIMEZONE_AWARE": True
+        }
+    )
+    if dt_local:
+        memory["datetime"] = dt_local.isoformat()
+        
     if extracted.get("party_size"):
         memory["party_size"] = extracted["party_size"]
 
