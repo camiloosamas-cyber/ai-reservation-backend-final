@@ -197,30 +197,17 @@ async def whatsapp(Body: str = Form(...)):
         memory["awaiting_info"] = True
         resp.message("Perfecto 😊 Para continuar necesito:\n👉 Fecha y hora\n👉 Nombre\n👉 Número de personas")
         return Response(str(resp), media_type="application/xml")
-
-    # UPDATE MEMORY SAFELY
-    if extracted.get("customer_name"):
-        memory["customer_name"] = extracted["customer_name"]
         
-# HANDLE PYTHON DATE CONVERSION
+# UPDATE MEMORY SAFELY
+if extracted.get("customer_name"):
+    memory["customer_name"] = extracted["customer_name"]
+
+# datetime already processed in ai_extract()
 if extracted.get("datetime"):
-    memory["datetime"] = extracted["datetime"]  # already ISO
+    memory["datetime"] = extracted["datetime"]
 
-elif extracted.get("datetime_text"):
-    import dateparser
-    dt_local = dateparser.parse(
-        extracted["datetime_text"],
-        settings={
-            "PREFER_DATES_FROM": "future",
-            "TIMEZONE": "America/Bogota",
-            "RETURN_AS_TIMEZONE_AWARE": True
-        }
-    )
-    if dt_local:
-        memory["datetime"] = dt_local.isoformat()
-        
-    if extracted.get("party_size"):
-        memory["party_size"] = extracted["party_size"]
+if extracted.get("party_size"):
+    memory["party_size"] = extracted["party_size"]
 
     # ASK MISSING FIELDS
     if not memory["customer_name"]:
