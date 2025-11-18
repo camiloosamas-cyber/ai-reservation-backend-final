@@ -99,12 +99,21 @@ def spanish_date(dt: datetime):
 
 
 # ---------------------------------------------------------
-# SAVE RESERVATION
+# SAVE RESERVATION (ONLY FIXED PART)
 # ---------------------------------------------------------
 def save_reservation(data: dict):
     try:
-        dt_local = datetime.fromisoformat(data["datetime"])
+        raw_dt = datetime.fromisoformat(data["datetime"])
+
+        # FIX: If missing timezone → assume Bogotá
+        if raw_dt.tzinfo is None:
+            dt_local = raw_dt.replace(tzinfo=LOCAL_TZ)
+        else:
+            dt_local = raw_dt.astimezone(LOCAL_TZ)
+
+        # Convert to UTC for storage (correct!)
         dt_utc = dt_local.astimezone(timezone.utc)
+
     except:
         return "❌ No pude procesar fecha/hora."
 
@@ -310,7 +319,7 @@ async def dashboard(request: Request):
             else:
                 dt_utc = parser.isoparse(dt_value)
 
-                # FIX: Supabase already stores UTC ("Z"), so convert directly to local time
+                # Supabase stores UTC → convert to Bogotá
                 dt_local = dt_utc.astimezone(LOCAL_TZ)
 
                 row["date"] = dt_local.strftime("%Y-%m-%d")
