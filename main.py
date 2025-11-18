@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import json, os
@@ -67,8 +68,9 @@ def assign_table(iso_utc: str):
     return None
 
 
+
 # ---------------------------------------------------------
-# FIX #1 — SPANISH DATE FORMATTING
+# SPANISH DATE FORMAT FIX
 # ---------------------------------------------------------
 spanish_weekdays = {
     "Monday": "lunes",
@@ -184,24 +186,23 @@ Mensaje:
     text = extracted.get("datetime_text", "").lower()
     final_iso = ""
 
-    # Detect weekday
     detected_weekday = None
-    for name, rr_weekday in weekday_map.items():
+    for name, rr in weekday_map.items():
         if name in text:
-            detected_weekday = rr_weekday
+            detected_weekday = rr
             break
 
-    if detected_weekday is not None:
+    if detected_weekday:
         target_date = today + relativedelta(weekday=detected_weekday(+1))
 
         import dateparser
-        time_parse = dateparser.parse(
+        tparsed = dateparser.parse(
             text,
             settings={"RETURN_AS_TIMEZONE_AWARE": True, "TIMEZONE": "America/Bogota"}
         )
 
-        if time_parse:
-            target_date = target_date.replace(hour=time_parse.hour, minute=time_parse.minute)
+        if tparsed:
+            target_date = target_date.replace(hour=tparsed.hour, minute=tparsed.minute)
 
         final_iso = target_date.isoformat()
 
@@ -228,7 +229,7 @@ Mensaje:
 
 
 # ---------------------------------------------------------
-# WHATSAPP ROUTE (unchanged)
+# WHATSAPP ROUTE (unchanged logic)
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
@@ -255,7 +256,7 @@ async def whatsapp(Body: str = Form(...)):
     # AI INTERPRETATION
     extracted = ai_extract(msg)
 
-    # START RESERVATION PROCESS
+    # START PROCESS
     if extracted["intent"] == "reserve" and not memory["awaiting_info"]:
         memory["awaiting_info"] = True
         resp.message("Perfecto 😊 Para continuar necesito:\n👉 Fecha y hora\n👉 Nombre\n👉 Número de personas")
@@ -271,7 +272,7 @@ async def whatsapp(Body: str = Form(...)):
     if extracted.get("party_size"):
         memory["party_size"] = extracted["party_size"]
 
-    # ASK MISSING FIELDS
+    # ASK FOR MISSING FIELDS
     if not memory["customer_name"]:
         resp.message("¿A nombre de quién sería la reserva?")
         return Response(str(resp), media_type="application/xml")
@@ -284,7 +285,7 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("¿Para cuántas personas sería la reserva?")
         return Response(str(resp), media_type="application/xml")
 
-    # ALL INFO READY → SAVE
+    # SAVE
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
@@ -301,7 +302,7 @@ async def whatsapp(Body: str = Form(...)):
 
 
 # ---------------------------------------------------------
-# DASHBOARD — FIX #2 (date and time now show correctly)
+# DASHBOARD — show date & time correctly
 # ---------------------------------------------------------
 from dateutil import parser
 
@@ -310,7 +311,7 @@ async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
     rows = res.data or []
 
-    fixed_rows = []
+    fixed = []
 
     for r in rows:
         row = r.copy()
@@ -334,17 +335,17 @@ async def dashboard(request: Request):
             row["date"] = "-"
             row["time"] = "-"
 
-        fixed_rows.append(row)
+        fixed.append(row)
 
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
-        "reservations": fixed_rows
+        "reservations": fixed
     })
 
 
 
 # ---------------------------------------------------------
-# DASHBOARD ACTIONS (FIX #3 — preserve name)
+# DASHBOARD ACTIONS (fixed)
 # ---------------------------------------------------------
 @app.post("/createReservation")
 async def create_reservation(payload: dict):
@@ -385,7 +386,7 @@ async def mark_no_show(update: dict):
 
 @app.post("/archiveReservation")
 async def archive_reservation(update: dict):
-    supabase.table("reservations"].update({"status": "archivado"}).eq("reservation_id", update["reservation_id"]).execute()
+    supabase.table("reservations").update({"status": "archivado"}).eq("reservation_id", update["reservation_id"]).execute()
     return {"success": True}
 
 
