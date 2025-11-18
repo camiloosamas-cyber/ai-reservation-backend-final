@@ -40,7 +40,7 @@ LOCAL_TZ = ZoneInfo("America/Bogota")
 
 
 # ---------------------------------------------------------
-# MEMORY PER USER
+# SESSION MEMORY
 # ---------------------------------------------------------
 session_state = {}
 
@@ -74,7 +74,7 @@ def save_reservation(data: dict):
         dt_local = datetime.fromisoformat(data["datetime"])
         dt_utc = dt_local.astimezone(timezone.utc)
     except:
-        return "❌ No pude procesar fecha/hora."
+        return "❌ No pude procesar la fecha/hora."
 
     iso_utc = dt_utc.isoformat().replace("+00:00", "Z")
     table = assign_table(iso_utc)
@@ -103,66 +103,65 @@ def save_reservation(data: dict):
 
 
 # ---------------------------------------------------------
-# SUPER AI EXTRACTION
+# SUPER AI EXTRACTION (NOW WITH CURRENT DATE FIX)
 # ---------------------------------------------------------
 def ai_extract(user_msg: str):
+    today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+
     superprompt = f"""
 Eres un asistente de reservas para un restaurante colombiano vía WhatsApp.
 
-Tu tarea es interpretar cualquier mensaje del usuario y extraer:
+HOY es {today} en zona America/Bogota.
+Debes interpretar cualquier fecha relativa usando esta fecha actual.
 
+Tu tarea es extraer:
 - "intent": "reserve" | "info" | "other"
-- "customer_name": nombre del cliente (si está presente)
-- "datetime": fecha + hora exactas en ISO America/Bogota (ej: "2025-01-26T19:00:00-05:00")
-- "party_size": número de personas (string)
+- "customer_name"
+- "datetime": fecha + hora exactas en ISO America/Bogota
+- "party_size"
 
-RESPONDE SIEMPRE SOLO EN JSON.
+SIEMPRE responde SOLO JSON.
 
-REGLAS IMPORTANTES:
+-----------------------------------------------
+REGLAS PARA INTERPRETAR FECHAS:
+-----------------------------------------------
 
-1. "quiero reservar", "quiero hacer una reserva", "me gustaría reservar", "reservar mesa" → intent = "reserve"
+1. Palabras relativas:
+   - "hoy" → {today}
+   - "mañana"
+   - "pasado mañana"
+   - "el martes"
+   - "este sábado"
+   → Calcula SIEMPRE una fecha futura o del mismo día, NUNCA del pasado.
 
-2. Si hay fecha/hora como:
-   - "lunes a las 7"
-   - "mañana 9am"
-   - "el viernes en la noche"
-   - "pasado mañana a las 3"
-   - "este sábado tipo 7"
-   → conviértelo a ISO Bogotá SI y SOLO SI la hora es exacta.
+2. Si el usuario solo dice "martes", "viernes", etc.:
+   - Usa el día más cercano hacia el futuro (o hoy mismo si coincide).
 
 3. Si la hora NO es exacta:
-   - "en la noche"
-   - "en la tarde"
-   - "tipo 7"
+   - "en la noche", "en la tarde", "tipo 7"
+   → datetime = "" (vacío)
+
+4. Si no hay hora exacta:
    → datetime = "".
 
-4. Si hay solo fecha sin hora → datetime = "".
+-----------------------------------------------
+REGLAS GENERALES:
+-----------------------------------------------
 
-5. "yo", "para mí", "a mi nombre" → customer_name = "".
+- "yo", "para mí", "a mi nombre" → NO asumas nombre.
+- "somos varios", "unos cuantos" → NO asumas número.
+- Si viene todo junto ("martes 7pm Luis 4 personas") → llena todo.
+- NO inventes nada. Si no está claro → deja ""
 
-6. "somos varios", "unos cuantos", "varios" → party_size = "".
-
-7. Si hay número:
-   - "somos 4"
-   - "para 3 personas"
-   - "seríamos 2"
-   → party_size = número.
-
-8. Si el usuario da TODO JUNTO:
-   "Quiero reservar para Luis el lunes a las 7pm somos 4"
-   → llena todos los campos.
-
-9. NO inventes datos.  
-   Si NO lo encuentras → déjalo vacío.
-
-FORMATO DE RESPUESTA:
-
+-----------------------------------------------
+FORMATO OBLIGATORIO:
 {{
   "intent": "",
   "customer_name": "",
   "datetime": "",
   "party_size": ""
 }}
+-----------------------------------------------
 
 Mensaje del usuario:
 "{user_msg}"
@@ -201,15 +200,15 @@ async def whatsapp(Body: str = Form(...)):
 
     memory = session_state[user_id]
 
-    # GREETING
+    # GREETINGS
     if msg.lower() in ["hola", "hello", "holaa", "buenas", "hey", "ola"]:
         resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy?\n¿Quieres *información* o deseas *hacer una reserva*?")
-        return Response(str(resp), media_type="application/xml")
+       return Response(str(resp), media_type="application/xml")
 
     # AI INTERPRETATION
     extracted = ai_extract(msg)
 
-    # INTENT MANAGEMENT
+    # INTENT
     if extracted["intent"] == "reserve" and not memory["awaiting_info"]:
         memory["awaiting_info"] = True
         resp.message("Perfecto 😊 Para continuar necesito:\n👉 Fecha y hora\n👉 Nombre\n👉 Número de personas")
@@ -225,7 +224,7 @@ async def whatsapp(Body: str = Form(...)):
     if extracted["party_size"]:
         memory["party_size"] = extracted["party_size"]
 
-    # ASK FOR MISSING PARTS
+    # ASK FOR MISSING
     if not memory["customer_name"]:
         resp.message("¿A nombre de quién sería la reserva?")
         return Response(str(resp), media_type="application/xml")
@@ -238,11 +237,11 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("¿Para cuántas personas sería la reserva?")
         return Response(str(resp), media_type="application/xml")
 
-    # EVERYTHING READY → SAVE
+    # READY → SAVE
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
-    # RESET
+    # RESET AFTER BOOKING
     session_state[user_id] = {
         "customer_name": None,
         "datetime": None,
