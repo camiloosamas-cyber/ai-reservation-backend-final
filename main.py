@@ -288,7 +288,7 @@ async def whatsapp(Body: str = Form(...)):
 
 
 # ---------------------------------------------------------
-# DASHBOARD — DATE/TIME FIX
+# DASHBOARD — FIXED TIME LOGIC
 # ---------------------------------------------------------
 from dateutil import parser
 
@@ -309,9 +309,11 @@ async def dashboard(request: Request):
                 row["time"] = "-"
             else:
                 dt_utc = parser.isoparse(dt_value)
-                if dt_utc.tzinfo is None:
-                    dt_utc = dt_utc.replace(tzinfo=timezone.utc)
 
+                # Always normalize to UTC first
+                dt_utc = dt_utc.astimezone(timezone.utc)
+
+                # Convert to Colombia time
                 dt_local = dt_utc.astimezone(LOCAL_TZ)
 
                 row["date"] = dt_local.strftime("%Y-%m-%d")
