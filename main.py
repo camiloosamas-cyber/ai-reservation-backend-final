@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, WebSocket, Form
+from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -16,6 +16,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ---------- Twilio ----------
 from twilio.twiml.messaging_response import MessagingResponse
+
 
 
 # ---------------------------------------------------------
@@ -37,10 +38,12 @@ app.add_middleware(
 LOCAL_TZ = ZoneInfo("America/Bogota")
 
 
+
 # ---------------------------------------------------------
 # MEMORY PER USER
 # ---------------------------------------------------------
 session_state = {}
+
 
 
 # ---------------------------------------------------------
@@ -62,6 +65,7 @@ def assign_table(iso_utc: str):
         if t not in taken:
             return t
     return None
+
 
 
 def save_reservation(data: dict):
@@ -94,33 +98,45 @@ def save_reservation(data: dict):
         f"🗓 {dt_local.strftime('%A %d %B, %I:%M %p')}\n"
         f"🍽 Mesa: {table}"
     )
+
+
+
 # ---------------------------------------------------------
-# SUPER AI EXTRACTION (REAL PYTHON DATE CALCULATION)
+# SUPER AI EXTRACTION — CORRECTED DATE LOGIC
 # ---------------------------------------------------------
 def ai_extract(user_msg: str):
+    from dateutil.relativedelta import relativedelta, MO, TU, WE, TH, FR, SA, SU
+    import dateparser
+
     today = datetime.now(LOCAL_TZ)
 
-    # Step 1: Get raw AI extraction (name, party size, intent, text for datetime)
+    weekday_map = {
+        "lunes": MO,
+        "martes": TU,
+        "miércoles": WE,
+        "miercoles": WE,
+        "jueves": TH,
+        "viernes": FR,
+        "sábado": SA,
+        "sabado": SA,
+        "domingo": SU
+    }
+
+    # --------- STEP 1: Extract raw text (no date conversions by AI) ----------
     superprompt = f"""
-Eres un extractor de datos. No conviertas fechas.
-Solamente identifica si el usuario mencionó:
+Eres un extractor de datos. NO conviertas fechas.
+Solo devuelve texto exacto.
 
-- intent: "reserve", "info" o "other"
-- customer_name
-- party_size
-- datetime_text: exactamente el texto que el usuario dijo sobre fecha/hora (sin convertirlo)
-
-Ejemplo de salida:
+Devuelve:
 {{
- "intent": "reserve",
- "customer_name": "Marcos",
- "party_size": "4",
- "datetime_text": "viernes a las 5am"
+ "intent": "",
+ "customer_name": "",
+ "party_size": "",
+ "datetime_text": ""
 }}
 
-NUNCA conviertas fechas. SOLO devuelve el texto.
 Mensaje:
-\"\"\"{user_msg}\"\"\"
+\"\"\"{user_msg}\"\"\" 
 """
 
     try:
@@ -131,27 +147,42 @@ Mensaje:
         )
         extracted = json.loads(r.choices[0].message.content)
     except:
-        return {"intent": "", "customer_name": "", "datetime": "", "party_size": ""}
+        return {"intent": "", "customer_name": "", "party_size": "", "datetime": ""}
 
-    # ---------------------------
-    # Step 2: REAL DATE CONVERSION IN PYTHON
-    # ---------------------------
-    datetime_text = extracted.get("datetime_text", "").lower().strip()
+    text = extracted.get("datetime_text", "").lower()
     final_iso = ""
 
-    if datetime_text:
-        # Python natural language parsing (SAFE)
-        import dateparser
+    # --------- STEP 2: Detect weekday if mentioned ----------
+    detected_weekday = None
+    for name, rr_weekday in weekday_map.items():
+        if name in text:
+            detected_weekday = rr_weekday
+            break
 
+    # --------- STEP 3: If weekday → force correct next weekday ----------
+    if detected_weekday is not None:
+        target_date = today + relativedelta(weekday=detected_weekday(+1))
+
+        time_parse = dateparser.parse(
+            text,
+            settings={"RETURN_AS_TIMEZONE_AWARE": True, "TIMEZONE": "America/Bogota"}
+        )
+
+        if time_parse:
+            target_date = target_date.replace(hour=time_parse.hour, minute=time_parse.minute)
+
+        final_iso = target_date.isoformat()
+
+    else:
+        # Normal natural language parsing
         dt_local = dateparser.parse(
-            datetime_text,
+            text,
             settings={
                 "PREFER_DATES_FROM": "future",
                 "TIMEZONE": "America/Bogota",
                 "RETURN_AS_TIMEZONE_AWARE": True
             }
         )
-
         if dt_local:
             final_iso = dt_local.isoformat()
 
@@ -161,11 +192,11 @@ Mensaje:
         "party_size": extracted.get("party_size", ""),
         "datetime": final_iso
     }
+
+
+
 # ---------------------------------------------------------
-# WHATSAPP ROUTE
-# ---------------------------------------------------------
-# ---------------------------------------------------------
-# WHATSAPP ROUTE (FIXED NAME MEMORY + FLOW)
+# WHATSAPP ROUTE (your working version preserved)
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
@@ -197,17 +228,16 @@ async def whatsapp(Body: str = Form(...)):
         memory["awaiting_info"] = True
         resp.message("Perfecto 😊 Para continuar necesito:\n👉 Fecha y hora\n👉 Nombre\n👉 Número de personas")
         return Response(str(resp), media_type="application/xml")
-        
-# UPDATE MEMORY SAFELY
-if extracted.get("customer_name"):
-    memory["customer_name"] = extracted["customer_name"]
 
-# datetime already processed in ai_extract()
-if extracted.get("datetime"):
-    memory["datetime"] = extracted["datetime"]
+    # UPDATE MEMORY
+    if extracted.get("customer_name"):
+        memory["customer_name"] = extracted["customer_name"]
 
-if extracted.get("party_size"):
-    memory["party_size"] = extracted["party_size"]
+    if extracted.get("datetime"):
+        memory["datetime"] = extracted["datetime"]
+
+    if extracted.get("party_size"):
+        memory["party_size"] = extracted["party_size"]
 
     # ASK MISSING FIELDS
     if not memory["customer_name"]:
@@ -226,7 +256,7 @@ if extracted.get("party_size"):
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
-    # RESET MEMORY FOR NEXT RESERVATION
+    # RESET MEMORY
     session_state[user_id] = {
         "customer_name": None,
         "datetime": None,
@@ -235,8 +265,11 @@ if extracted.get("party_size"):
     }
 
     return Response(str(resp), media_type="application/xml")
+
+
+
 # ---------------------------------------------------------
-# DASHBOARD (FIXED TIMEZONE + BLANK DATE BUG)
+# DASHBOARD (timezone-safe)
 # ---------------------------------------------------------
 from dateutil import parser
 
@@ -252,24 +285,18 @@ async def dashboard(request: Request):
         dt_value = r.get("datetime")
 
         try:
-            # Skip invalid values
-            if not dt_value or dt_value in ["EMPTY", "None", "-", ""]:
+            if not dt_value:
                 row["datetime"] = ""
             else:
-                # Parse UTC datetime
                 dt_utc = parser.isoparse(dt_value)
 
                 if dt_utc.tzinfo is None:
                     dt_utc = dt_utc.replace(tzinfo=timezone.utc)
 
-                # Convert to Colombia time
                 dt_local = dt_utc.astimezone(LOCAL_TZ)
-
-                # Format clean for dashboard
                 row["datetime"] = dt_local.strftime("%Y-%m-%d %H:%M")
 
-        except Exception as e:
-            # If anything fails, show empty
+        except:
             row["datetime"] = ""
 
         fixed_rows.append(row)
@@ -278,10 +305,12 @@ async def dashboard(request: Request):
         "request": request,
         "reservations": fixed_rows
     })
-# ---------------------------------------------------------
-# API FOR DASHBOARD ACTIONS
-# ---------------------------------------------------------
 
+
+
+# ---------------------------------------------------------
+# DASHBOARD ACTIONS
+# ---------------------------------------------------------
 @app.post("/createReservation")
 async def create_reservation(payload: dict):
     msg = save_reservation(payload)
@@ -298,7 +327,6 @@ async def update_reservation(update: dict):
         "table_number": update.get("table_number"),
         "status": update.get("status")
     }).eq("reservation_id", update["reservation_id"]).execute()
-
     return {"success": True}
 
 
@@ -324,6 +352,7 @@ async def mark_no_show(update: dict):
 async def archive_reservation(update: dict):
     supabase.table("reservations").update({"status": "archivado"}).eq("reservation_id", update["reservation_id"]).execute()
     return {"success": True}
+
 
 
 # ---------------------------------------------------------
