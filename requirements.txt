@@ -8,3 +8,4 @@ python-dateutil
 dateparser
 python-dotenv
 requests
+python-multipart
