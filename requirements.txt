@@ -1,10 +1,10 @@
 fastapi
-uvicorn[standard]
-jinja2
+uvicorn
 python-dotenv
-httpx
-openai>=1.40.0
-python-multipart
+dateparser
+python-dateutil
 supabase
 twilio
-dateparser
+openai
+jinja2
+requests
