@@ -6,7 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import json, os, time, asyncio
-import dateparser
 
 # ---------- Supabase ----------
 from supabase import create_client, Client
@@ -73,7 +72,7 @@ def assign_table(iso_utc: str):
 def save_reservation(data: dict):
 
     try:
-        # datetime already comes as ISO Bogotá → convert to UTC
+        # datetime comes as ISO Bogotá → convert to UTC
         dt_local = datetime.fromisoformat(data["datetime"])
         dt_utc = dt_local.astimezone(timezone.utc)
     except:
@@ -106,7 +105,7 @@ def save_reservation(data: dict):
 
 
 # ---------------------------------------------------------
-# UNIVERSAL AI EXTRACTION (NAME + DATE + TIME + PARTY)
+# UNIVERSAL AI EXTRACTION
 # ---------------------------------------------------------
 def extract_with_ai(user_msg: str):
     prompt = f"""
@@ -127,7 +126,7 @@ Responde SOLO JSON así:
 
 Reglas:
 - Si no encuentras un campo, déjalo vacío.
-- datetime DEBE ser ISO, ejemplo:
+- datetime DEBE ser ISO así:
   "2025-01-26T19:00:00-05:00"
 
 Mensaje del usuario:
@@ -150,7 +149,6 @@ Mensaje del usuario:
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
-
     resp = MessagingResponse()
     msg = Body.strip()
 
@@ -170,13 +168,15 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy?\n¿Quieres *información* o deseas *hacer una reserva*?")
         return Response(str(resp), media_type="application/xml")
 
-    # DETECT INTENT
+    # USER WANTS TO RESERVE
     if "reserv" in msg.lower() and not any(memory.values()):
         resp.message("Perfecto 😊 Para continuar, necesito:\n👉 Fecha y hora\n👉 Nombre\n👉 Número de personas")
-        return Response(str(resp), media_type="application/xml")
+        # DO NOT RETURN — WE LET AI PROCESS THIS MESSAGE TOO
+        # (THIS FIXES YOUR PROBLEM)
+        # continue to extraction below
 
 
-    # AI EXTRACTION (1 CALL)
+    # AI EXTRACTION
     extracted = extract_with_ai(msg)
 
     # UPDATE MEMORY
@@ -227,22 +227,6 @@ async def dashboard(request: Request):
     rows = res.data or []
 
     return templates.TemplateResponse("dashboard.html", {"request": request, "reservations": rows})
-
-
-# ---------------------------------------------------------
-# WEBSOCKET (optional)
-# ---------------------------------------------------------
-clients = []
-
-@app.websocket("/ws")
-async def ws(websocket: WebSocket):
-    await websocket.accept()
-    clients.append(websocket)
-    try:
-        while True:
-            await websocket.receive_text()
-    except:
-        clients.remove(websocket)
 
 
 # ---------------------------------------------------------
