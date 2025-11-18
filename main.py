@@ -94,59 +94,31 @@ def save_reservation(data: dict):
         f"🗓 {dt_local.strftime('%A %d %B, %I:%M %p')}\n"
         f"🍽 Mesa: {table}"
     )
-
-
 # ---------------------------------------------------------
-# SUPER AI EXTRACTION (WITH DATE FIX)
-# ---------------------------------------------------------
-# ---------------------------------------------------------
-# SUPER AI EXTRACTION (FIXED DAY-OF-WEEK CALCULATION)
+# SUPER AI EXTRACTION (REAL PYTHON DATE CALCULATION)
 # ---------------------------------------------------------
 def ai_extract(user_msg: str):
-    today_obj = datetime.now(LOCAL_TZ)
+    today = datetime.now(LOCAL_TZ)
 
+    # Step 1: Get raw AI extraction (name, party size, intent, text for datetime)
     superprompt = f"""
-Eres un asistente de reservas vía WhatsApp para un restaurante colombiano.
+Eres un extractor de datos. No conviertas fechas.
+Solamente identifica si el usuario mencionó:
 
-HOY es {today_obj.strftime("%Y-%m-%d")} (America/Bogota).
-
-Tu tarea es extraer:
-- intent
+- intent: "reserve", "info" o "other"
 - customer_name
-- datetime (ISO local, ej: 2025-01-26T19:00:00-05:00)
 - party_size
+- datetime_text: exactamente el texto que el usuario dijo sobre fecha/hora (sin convertirlo)
 
-Responde SOLO JSON.
-
-REGLAS IMPORTANTES:
-
-• Días de la semana SIEMPRE deben ir al PRÓXIMO día futuro.
-  Ej:
-  - Hoy es martes.
-  - Usuario dice "viernes".
-  - Usa el viernes más cercano en el futuro SIN saltarte semanas.
-
-• Ejemplos:
-   "viernes 5am" → fecha exacta del próximo viernes a las 05:00.
-
-• Si no da hora → datetime = "".
-
-• Nombres válidos:
-   "a nombre de Marcos"
-   "soy Luis"
-   "reserva para Ana"
-   → customer_name = el nombre detectado.
-
-• No inventes datos. Si un dato no está → "".
-
-FORMATO:
+Ejemplo de salida:
 {{
- "intent": "",
- "customer_name": "",
- "datetime": "",
- "party_size": ""
+ "intent": "reserve",
+ "customer_name": "Marcos",
+ "party_size": "4",
+ "datetime_text": "viernes a las 5am"
 }}
 
+NUNCA conviertas fechas. SOLO devuelve el texto.
 Mensaje:
 \"\"\"{user_msg}\"\"\"
 """
@@ -157,9 +129,38 @@ Mensaje:
             temperature=0,
             messages=[{"role": "system", "content": superprompt}]
         )
-        return json.loads(r.choices[0].message.content)
+        extracted = json.loads(r.choices[0].message.content)
     except:
         return {"intent": "", "customer_name": "", "datetime": "", "party_size": ""}
+
+    # ---------------------------
+    # Step 2: REAL DATE CONVERSION IN PYTHON
+    # ---------------------------
+    datetime_text = extracted.get("datetime_text", "").lower().strip()
+    final_iso = ""
+
+    if datetime_text:
+        # Python natural language parsing (SAFE)
+        import dateparser
+
+        dt_local = dateparser.parse(
+            datetime_text,
+            settings={
+                "PREFER_DATES_FROM": "future",
+                "TIMEZONE": "America/Bogota",
+                "RETURN_AS_TIMEZONE_AWARE": True
+            }
+        )
+
+        if dt_local:
+            final_iso = dt_local.isoformat()
+
+    return {
+        "intent": extracted.get("intent", ""),
+        "customer_name": extracted.get("customer_name", ""),
+        "party_size": extracted.get("party_size", ""),
+        "datetime": final_iso
+    }
 # ---------------------------------------------------------
 # WHATSAPP ROUTE
 # ---------------------------------------------------------
