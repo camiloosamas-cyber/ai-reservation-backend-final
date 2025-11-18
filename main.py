@@ -84,7 +84,7 @@ def save_reservation(data: dict):
         "party_size": int(data["party_size"]),
         "table_number": table,
         "notes": "",
-        "status": "confirmed",
+        "status": "confirmado",
     }).execute()
 
     return (
@@ -128,7 +128,7 @@ REGLAS PARA FECHAS
    - "martes"
    - "viernes"
    - "domingo"
-   → Usar SIEMPRE el PRÓXIMO día hacia el futuro (o hoy, si coincide).
+   → Usar SIEMPRE el PRÓXIMO día hacia el futuro.
 
 5. Si dice:
    - "este sábado"
@@ -139,7 +139,7 @@ REGLAS PARA FECHAS
    - "en la noche"
    - "en la tarde"
    - "tipo 7"
-   → datetime = "" (vacío)
+   → datetime = ""
 
 7. Si solo dice fecha sin hora → datetime = "".
 
@@ -154,21 +154,9 @@ OTRAS REGLAS
   → Llenar todo correctamente.
 
 - Nunca inventes datos.
-  Si NO está claro → deja "".
-
----------------------------
-FORMATO:
-{{
-  "intent": "",
-  "customer_name": "",
-  "datetime": "",
-  "party_size": ""
-}}
----------------------------
 
 Mensaje del usuario:
-\"\"\"{user_msg}\"\"\"
-"""
+\"\"\"{user_msg}\"\"\""""
 
     try:
         r = client.chat.completions.create(
@@ -207,16 +195,15 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy?\n¿Quieres *información* o deseas *hacer una reserva*?")
         return Response(str(resp), media_type="application/xml")
 
-    # AI INTERPRETATION
+    # AI extraction
     extracted = ai_extract(msg)
 
-    # USER SAID THEY WANT TO RESERVE
     if extracted["intent"] == "reserve" and not memory["awaiting_info"]:
         memory["awaiting_info"] = True
         resp.message("Perfecto 😊 Para continuar necesito:\n👉 Fecha y hora\n👉 Nombre\n👉 Número de personas")
         return Response(str(resp), media_type="application/xml")
 
-    # UPDATE MEMORY
+    # STORE INFO
     if extracted["customer_name"]:
         memory["customer_name"] = extracted["customer_name"]
 
@@ -226,7 +213,7 @@ async def whatsapp(Body: str = Form(...)):
     if extracted["party_size"]:
         memory["party_size"] = extracted["party_size"]
 
-    # ASK WHAT'S MISSING
+    # ASK MISSING INFO
     if not memory["customer_name"]:
         resp.message("¿A nombre de quién sería la reserva?")
         return Response(str(resp), media_type="application/xml")
@@ -239,7 +226,7 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("¿Para cuántas personas sería la reserva?")
         return Response(str(resp), media_type="application/xml")
 
-    # BOOK
+    # SAVE RESERVATION
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
@@ -262,6 +249,54 @@ async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
     rows = res.data or []
     return templates.TemplateResponse("dashboard.html", {"request": request, "reservations": rows})
+
+
+# ---------------------------------------------------------
+# API FOR DASHBOARD ACTIONS
+# ---------------------------------------------------------
+
+@app.post("/createReservation")
+async def create_reservation(payload: dict):
+    msg = save_reservation(payload)
+    return {"success": True, "message": msg}
+
+
+@app.post("/updateReservation")
+async def update_reservation(update: dict):
+    supabase.table("reservations").update({
+        "customer_name": update.get("customer_name"),
+        "party_size": update.get("party_size"),
+        "datetime": update.get("datetime"),
+        "notes": update.get("notes"),
+        "table_number": update.get("table_number"),
+        "status": update.get("status")
+    }).eq("reservation_id", update["reservation_id"]).execute()
+
+    return {"success": True}
+
+
+@app.post("/cancelReservation")
+async def cancel_reservation(update: dict):
+    supabase.table("reservations").update({"status": "cancelado"}).eq("reservation_id", update["reservation_id"]).execute()
+    return {"success": True}
+
+
+@app.post("/markArrived")
+async def mark_arrived(update: dict):
+    supabase.table("reservations").update({"status": "llegó"}).eq("reservation_id", update["reservation_id"]).execute()
+    return {"success": True}
+
+
+@app.post("/markNoShow")
+async def mark_no_show(update: dict):
+    supabase.table("reservations").update({"status": "no llegó"}).eq("reservation_id", update["reservation_id"]).execute()
+    return {"success": True}
+
+
+@app.post("/archiveReservation")
+async def archive_reservation(update: dict):
+    supabase.table("reservations").update({"status": "archivado"}).eq("reservation_id", update["reservation_id"]).execute()
+    return {"success": True}
 
 
 # ---------------------------------------------------------
