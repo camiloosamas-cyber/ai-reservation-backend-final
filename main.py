@@ -18,7 +18,6 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 from twilio.twiml.messaging_response import MessagingResponse
 
 
-
 # ---------------------------------------------------------
 # INIT APP
 # ---------------------------------------------------------
@@ -38,12 +37,10 @@ app.add_middleware(
 LOCAL_TZ = ZoneInfo("America/Bogota")
 
 
-
 # ---------------------------------------------------------
-# SESSION MEMORY
+# MEMORY PER USER
 # ---------------------------------------------------------
 session_state = {}
-
 
 
 # ---------------------------------------------------------
@@ -57,7 +54,6 @@ supabase: Client = create_client(
 TABLE_LIMIT = 10
 
 
-
 def assign_table(iso_utc: str):
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
     taken = {r["table_number"] for r in (booked.data or [])}
@@ -68,13 +64,12 @@ def assign_table(iso_utc: str):
     return None
 
 
-
 def save_reservation(data: dict):
     try:
         dt_local = datetime.fromisoformat(data["datetime"])
         dt_utc = dt_local.astimezone(timezone.utc)
     except:
-        return "❌ No pude procesar la fecha/hora."
+        return "❌ No pude procesar fecha/hora."
 
     iso_utc = dt_utc.isoformat().replace("+00:00", "Z")
     table = assign_table(iso_utc)
@@ -101,9 +96,8 @@ def save_reservation(data: dict):
     )
 
 
-
 # ---------------------------------------------------------
-# SUPER AI EXTRACTION (NOW WITH CURRENT DATE FIX)
+# SUPER AI EXTRACTION (WITH DATE FIX)
 # ---------------------------------------------------------
 def ai_extract(user_msg: str):
     today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
@@ -112,7 +106,7 @@ def ai_extract(user_msg: str):
 Eres un asistente de reservas para un restaurante colombiano vía WhatsApp.
 
 HOY es {today} en zona America/Bogota.
-Debes interpretar cualquier fecha relativa usando esta fecha actual.
+Interpreta SIEMPRE cualquier fecha relativa usando esta fecha actual.
 
 Tu tarea es extraer:
 - "intent": "reserve" | "info" | "other"
@@ -120,51 +114,60 @@ Tu tarea es extraer:
 - "datetime": fecha + hora exactas en ISO America/Bogota
 - "party_size"
 
-SIEMPRE responde SOLO JSON.
+Responde SOLO en JSON.
 
------------------------------------------------
-REGLAS PARA INTERPRETAR FECHAS:
------------------------------------------------
+---------------------------
+REGLAS PARA FECHAS
+---------------------------
 
-1. Palabras relativas:
-   - "hoy" → {today}
-   - "mañana"
-   - "pasado mañana"
-   - "el martes"
+1. "hoy" → {today}
+2. "mañana" → hoy + 1 día
+3. "pasado mañana" → hoy + 2 días
+
+4. Si dice un día:
+   - "martes"
+   - "viernes"
+   - "domingo"
+   → Usar SIEMPRE el PRÓXIMO día hacia el futuro (o hoy, si coincide).
+
+5. Si dice:
    - "este sábado"
-   → Calcula SIEMPRE una fecha futura o del mismo día, NUNCA del pasado.
+   - "este viernes"
+   → También usar la fecha futura más cercana.
 
-2. Si el usuario solo dice "martes", "viernes", etc.:
-   - Usa el día más cercano hacia el futuro (o hoy mismo si coincide).
-
-3. Si la hora NO es exacta:
-   - "en la noche", "en la tarde", "tipo 7"
+6. Si la hora NO es exacta:
+   - "en la noche"
+   - "en la tarde"
+   - "tipo 7"
    → datetime = "" (vacío)
 
-4. Si no hay hora exacta:
-   → datetime = "".
+7. Si solo dice fecha sin hora → datetime = "".
 
------------------------------------------------
-REGLAS GENERALES:
------------------------------------------------
+---------------------------
+OTRAS REGLAS
+---------------------------
 
-- "yo", "para mí", "a mi nombre" → NO asumas nombre.
-- "somos varios", "unos cuantos" → NO asumas número.
-- Si viene todo junto ("martes 7pm Luis 4 personas") → llena todo.
-- NO inventes nada. Si no está claro → deja ""
+- "yo", "a mi nombre", "para mí" → customer_name = ""
+- "somos varios", "unos cuantos" → party_size = ""
 
------------------------------------------------
-FORMATO OBLIGATORIO:
+- Si usuario dice todo junto: "martes 7pm Luis 4 personas"
+  → Llenar todo correctamente.
+
+- Nunca inventes datos.
+  Si NO está claro → deja "".
+
+---------------------------
+FORMATO:
 {{
   "intent": "",
   "customer_name": "",
   "datetime": "",
   "party_size": ""
 }}
------------------------------------------------
+---------------------------
 
 Mensaje del usuario:
-"{user_msg}"
+\"\"\"{user_msg}\"\"\"
 """
 
     try:
@@ -177,7 +180,6 @@ Mensaje del usuario:
 
     except:
         return {"intent": "", "customer_name": "", "datetime": "", "party_size": ""}
-
 
 
 # ---------------------------------------------------------
@@ -200,15 +202,15 @@ async def whatsapp(Body: str = Form(...)):
 
     memory = session_state[user_id]
 
-    # GREETINGS
+    # GREETING
     if msg.lower() in ["hola", "hello", "holaa", "buenas", "hey", "ola"]:
         resp.message("¡Hola! 😊 ¿En qué puedo ayudarte hoy?\n¿Quieres *información* o deseas *hacer una reserva*?")
-       return Response(str(resp), media_type="application/xml")
+        return Response(str(resp), media_type="application/xml")
 
     # AI INTERPRETATION
     extracted = ai_extract(msg)
 
-    # INTENT
+    # USER SAID THEY WANT TO RESERVE
     if extracted["intent"] == "reserve" and not memory["awaiting_info"]:
         memory["awaiting_info"] = True
         resp.message("Perfecto 😊 Para continuar necesito:\n👉 Fecha y hora\n👉 Nombre\n👉 Número de personas")
@@ -224,7 +226,7 @@ async def whatsapp(Body: str = Form(...)):
     if extracted["party_size"]:
         memory["party_size"] = extracted["party_size"]
 
-    # ASK FOR MISSING
+    # ASK WHAT'S MISSING
     if not memory["customer_name"]:
         resp.message("¿A nombre de quién sería la reserva?")
         return Response(str(resp), media_type="application/xml")
@@ -237,11 +239,11 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("¿Para cuántas personas sería la reserva?")
         return Response(str(resp), media_type="application/xml")
 
-    # READY → SAVE
+    # BOOK
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
-    # RESET AFTER BOOKING
+    # RESET
     session_state[user_id] = {
         "customer_name": None,
         "datetime": None,
@@ -252,7 +254,6 @@ async def whatsapp(Body: str = Form(...)):
     return Response(str(resp), media_type="application/xml")
 
 
-
 # ---------------------------------------------------------
 # DASHBOARD
 # ---------------------------------------------------------
@@ -261,7 +262,6 @@ async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
     rows = res.data or []
     return templates.TemplateResponse("dashboard.html", {"request": request, "reservations": rows})
-
 
 
 # ---------------------------------------------------------
