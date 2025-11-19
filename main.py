@@ -63,36 +63,34 @@ def assign_table(iso_utc: str):
         if t not in taken:
             return t
     return None
-
-
 # ---------------------------------------------------------
-# SAVE RESERVATION — BOGOTÁ → UTC
+# SAVE RESERVATION — STORE DIRECTLY IN BOGOTÁ TIME
 # ---------------------------------------------------------
 def save_reservation(data: dict):
     try:
         raw_dt = datetime.fromisoformat(data["datetime"])
 
-        # If missing tz → Bogotá
+        # If no timezone, assume Bogotá
         if raw_dt.tzinfo is None:
             dt_local = raw_dt.replace(tzinfo=LOCAL_TZ)
         else:
             dt_local = raw_dt.astimezone(LOCAL_TZ)
 
-        # Convert Bogotá → UTC
-        dt_utc = dt_local.astimezone(timezone.utc)
+        # Store local (Bogotá) time directly
+        dt_store = dt_local
 
         print("RAW:", data["datetime"])
-        print("LOCAL:", dt_local.isoformat())
-        print("UTC STORED:", dt_utc.isoformat())
+        print("LOCAL STORED:", dt_store.isoformat())
 
     except Exception as e:
         print("ERROR in save_reservation:", e)
         return "❌ Error procesando la fecha."
 
-    # Store UTC in DB
-    iso_utc = dt_utc.isoformat().replace("+00:00", "Z")
+    # Store Bogotá datetime into DB (no UTC conversion)
+    iso_to_store = dt_store.isoformat()
 
-    table = assign_table(iso_utc)
+    # Assign a table using the local datetime
+    table = assign_table(iso_to_store)
     if not table:
         return "❌ No hay mesas disponibles para ese horario."
 
@@ -100,7 +98,7 @@ def save_reservation(data: dict):
         "customer_name": data["customer_name"],
         "customer_email": "",
         "contact_phone": "",
-        "datetime": iso_utc,
+        "datetime": iso_to_store,  # store LOCAL
         "party_size": int(data["party_size"]),
         "table_number": table,
         "notes": "",
@@ -111,10 +109,9 @@ def save_reservation(data: dict):
         "✅ *¡Reserva confirmada!*\n"
         f"👤 {data['customer_name']}\n"
         f"👥 {data['party_size']} personas\n"
-        f"🗓 {dt_local.strftime('%Y-%m-%d %H:%M')}\n"
+        f"🗓 {dt_store.strftime('%Y-%m-%d %H:%M')}\n"
         f"🍽 Mesa: {table}"
     )
-
 
 # ---------------------------------------------------------
 # AI EXTRACTION
@@ -302,13 +299,11 @@ async def mark_arrived(update: dict):
 async def mark_no_show(update: dict):
     safe_update(update["reservation_id"], {"status": "no llegó"})
     return {"success": True}
-
-
+    
 @app.post("/archiveReservation")
 async def archive_reservation(update: dict):
     safe_update(update["reservation_id"], {"status": "archivado"})
-    return {"success": Yes}
-
+    return {"success": True}
 
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
