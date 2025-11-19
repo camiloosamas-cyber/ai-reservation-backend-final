@@ -99,22 +99,28 @@ def spanish_date(dt: datetime):
 
 
 # ---------------------------------------------------------
-# SAVE RESERVATION (ONLY FIXED PART)
+# SAVE RESERVATION (THIS IS THE ONLY PART CHANGED)
 # ---------------------------------------------------------
 def save_reservation(data: dict):
     try:
         raw_dt = datetime.fromisoformat(data["datetime"])
 
-        # FIX: If missing timezone → assume Bogotá
+        # If missing timezone → assume Bogotá
         if raw_dt.tzinfo is None:
             dt_local = raw_dt.replace(tzinfo=LOCAL_TZ)
         else:
             dt_local = raw_dt.astimezone(LOCAL_TZ)
 
-        # Convert to UTC for storage (correct!)
+        # Convert to UTC for Supabase storage
         dt_utc = dt_local.astimezone(timezone.utc)
 
-    except:
+        # DEBUG LOGS (SHOW IN RENDER LOGS)
+        print("🔵 RAW from AI:", data["datetime"])
+        print("🟣 LOCAL (Bogota):", dt_local.isoformat())
+        print("🟠 UTC stored:", dt_utc.isoformat())
+
+    except Exception as e:
+        print("❌ ERROR in save_reservation:", e)
         return "❌ No pude procesar fecha/hora."
 
     iso_utc = dt_utc.isoformat().replace("+00:00", "Z")
@@ -169,9 +175,9 @@ Devuelve:
 {{
  "intent": "",
  "customer_name": "",
- "party_size": "",
- "datetime_text": ""
-}}
+            "party_size": "",
+            "datetime_text": ""
+        }}
 
 Mensaje:
 \"\"\"{user_msg}\"\"\" 
@@ -319,7 +325,7 @@ async def dashboard(request: Request):
             else:
                 dt_utc = parser.isoparse(dt_value)
 
-                # Supabase stores UTC → convert to Bogotá
+                # Supabase stores in UTC → convert to Bogota
                 dt_local = dt_utc.astimezone(LOCAL_TZ)
 
                 row["date"] = dt_local.strftime("%Y-%m-%d")
@@ -338,9 +344,8 @@ async def dashboard(request: Request):
 
 
 # ---------------------------------------------------------
-# SAFE DASHBOARD ACTION BUTTONS — FIXED
+# SAFE UPDATE
 # ---------------------------------------------------------
-
 def safe_update(reservation_id: int, fields: dict):
     clean = {k: v for k, v in fields.items() if v not in [None, "null", "", "-", "None"]}
     if clean:
