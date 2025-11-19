@@ -35,7 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-LOCAL_TZ = ZoneInfo("America/Bogota")
+LOCAL_TZ = ZoneInfo("America/Bogota")   # <<<<<<<<<<<< FIXED
 
 
 # ---------------------------------------------------------
@@ -99,28 +99,27 @@ def spanish_date(dt: datetime):
 
 
 # ---------------------------------------------------------
-# SAVE RESERVATION (THIS IS THE ONLY PART CHANGED)
+# SAVE RESERVATION — Bogotá → UTC BEFORE STORE
 # ---------------------------------------------------------
 def save_reservation(data: dict):
     try:
         raw_dt = datetime.fromisoformat(data["datetime"])
 
-        # If missing timezone → assume Bogotá
+        # Assume Bogotá if missing timezone
         if raw_dt.tzinfo is None:
             dt_local = raw_dt.replace(tzinfo=LOCAL_TZ)
         else:
             dt_local = raw_dt.astimezone(LOCAL_TZ)
 
-        # Convert to UTC for Supabase storage
+        # Convert Bogotá → UTC
         dt_utc = dt_local.astimezone(timezone.utc)
 
-        # DEBUG LOGS (SHOW IN RENDER LOGS)
-        print("🔵 RAW from AI:", data["datetime"])
-        print("🟣 LOCAL (Bogota):", dt_local.isoformat())
-        print("🟠 UTC stored:", dt_utc.isoformat())
+        print("RAW:", data["datetime"])
+        print("LOCAL Bogotá:", dt_local)
+        print("UTC STORED:", dt_utc)
 
     except Exception as e:
-        print("❌ ERROR in save_reservation:", e)
+        print("ERROR in save_reservation:", e)
         return "❌ No pude procesar fecha/hora."
 
     iso_utc = dt_utc.isoformat().replace("+00:00", "Z")
@@ -149,7 +148,7 @@ def save_reservation(data: dict):
 
 
 # ---------------------------------------------------------
-# AI EXTRACTION — CORRECT DATE LOGIC
+# AI EXTRACTION
 # ---------------------------------------------------------
 def ai_extract(user_msg: str):
     from dateutil.relativedelta import relativedelta, MO, TU, WE, TH, FR, SA, SU
@@ -175,10 +174,9 @@ Devuelve:
 {{
  "intent": "",
  "customer_name": "",
-            "party_size": "",
-            "datetime_text": ""
-        }}
-
+ "party_size": "",
+ "datetime_text": ""
+}}
 Mensaje:
 \"\"\"{user_msg}\"\"\" 
 """
@@ -303,7 +301,7 @@ async def whatsapp(Body: str = Form(...)):
 
 
 # ---------------------------------------------------------
-# DASHBOARD — FIXED TIME LOGIC
+# DASHBOARD — SHOW ALWAYS IN BOGOTÁ
 # ---------------------------------------------------------
 from dateutil import parser
 
@@ -323,9 +321,8 @@ async def dashboard(request: Request):
                 row["date"] = "-"
                 row["time"] = "-"
             else:
+                # Stored UTC → convert to Bogotá
                 dt_utc = parser.isoparse(dt_value)
-
-                # Supabase stores in UTC → convert to Bogota
                 dt_local = dt_utc.astimezone(LOCAL_TZ)
 
                 row["date"] = dt_local.strftime("%Y-%m-%d")
