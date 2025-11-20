@@ -280,47 +280,61 @@ def safe_update(reservation_id: int, fields: dict):
     clean = {k: v for k, v in fields.items() if v not in [None, "", "null", "-", "None"]}
     if clean:
         supabase.table("reservations").update(clean).eq("reservation_id", reservation_id).execute()
-
-
+        
 # ---------------------------------------------------------
-# ACTION BUTTON ROUTES — store ENGLISH in DB
+# ACTION BUTTON ROUTES — EXACTLY LIKE BACKUP (WORKING)
 # ---------------------------------------------------------
+
 @app.post("/cancelReservation")
 async def cancel_reservation(update: dict):
-    safe_update(update["reservation_id"], {"status": "cancelled"})
+    supabase.table("reservations") \
+        .update({"status": "cancelled"}) \
+        .eq("reservation_id", update["reservation_id"]) \
+        .execute()
     return {"success": True}
 
 @app.post("/markArrived")
 async def mark_arrived(update: dict):
-    safe_update(update["reservation_id"], {"status": "arrived"})
+    supabase.table("reservations") \
+        .update({"status": "arrived"}) \
+        .eq("reservation_id", update["reservation_id"]) \
+        .execute()
     return {"success": True}
 
 @app.post("/markNoShow")
 async def mark_no_show(update: dict):
-    safe_update(update["reservation_id"], {"status": "no_show"})
+    supabase.table("reservations") \
+        .update({"status": "no_show"}) \
+        .eq("reservation_id", update["reservation_id"]) \
+        .execute()
     return {"success": True}
 
 @app.post("/archiveReservation")
 async def archive_reservation(update: dict):
-    safe_update(update["reservation_id"], {"status": "archived"})
+    supabase.table("reservations") \
+        .update({"status": "archived"}) \
+        .eq("reservation_id", update["reservation_id"]) \
+        .execute()
     return {"success": True}
 
 # ---------------------------------------------------------
-# UPDATE RESERVATION — DB USES ENGLISH STATUS
+# UPDATE RESERVATION — EXACT WORKING VERSION
 # ---------------------------------------------------------
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
+    new_dt = update.get("datetime")
 
-    clean = {k: v for k, v in update.items() if v not in [None, "", "null", "-", "None"]}
+    supabase.table("reservations") \
+        .update({
+            "datetime": new_dt,
+            "party_size": update.get("party_size"),
+            "table_number": update.get("table_number"),
+            "notes": update.get("notes"),
+            "status": update.get("status", "updated"),
+        }) \
+        .eq("reservation_id", update["reservation_id"]) \
+        .execute()
 
-    # English statuses the dashboard uses
-    valid_statuses = ["arrived", "no_show", "archived", "cancelled", "confirmed", "updated"]
-
-    # Only allow English status values into DB
-    if "status" in clean and clean["status"] not in valid_statuses:
-        del clean["status"]     # remove invalid Spanish values
-
-    safe_update(update["reservation_id"], clean)
     return {"success": True}
     
 @app.post("/createReservation")
