@@ -4,9 +4,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-import json, os
+import json, os, re
 
 # ---------- Supabase ----------
 from supabase import create_client, Client
@@ -17,7 +17,6 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ---------- Twilio ----------
 from twilio.twiml.messaging_response import MessagingResponse
-
 
 # ---------------------------------------------------------
 # INIT APP
@@ -35,14 +34,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-LOCAL_TZ = ZoneInfo("America/Bogota")   # ALWAYS BOGOTA
-
+LOCAL_TZ = ZoneInfo("America/Bogota")
 
 # ---------------------------------------------------------
 # MEMORY PER USER
 # ---------------------------------------------------------
 session_state = {}
-
 
 # ---------------------------------------------------------
 # SUPABASE
@@ -54,47 +51,69 @@ supabase: Client = create_client(
 
 TABLE_LIMIT = 10
 
-
-def assign_table(iso_utc: str):
-    booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
+def assign_table(iso_local: str):
+    booked = supabase.table("reservations").select("table_number").eq("datetime", iso_local).execute()
     taken = {r["table_number"] for r in (booked.data or [])}
+
     for i in range(1, TABLE_LIMIT + 1):
         t = f"T{i}"
         if t not in taken:
             return t
     return None
+
+
 # ---------------------------------------------------------
-# SAVE RESERVATION — STORE DIRECTLY IN BOGOTÁ TIME
+# PACKAGE DETECTION
+# ---------------------------------------------------------
+def detect_package(user_msg: str):
+    msg = user_msg.lower()
+
+    if "esencial" in msg:
+        return "Paquete Cuidado Esencial"
+    if "activa" in msg:
+        return "Paquete Salud Activa"
+    if "total" in msg or "completo" in msg:
+        return "Paquete Bienestar Total"
+
+    # Detect by price
+    if "45" in msg or "45." in msg or "45 mil" in msg:
+        return "Paquete Cuidado Esencial"
+
+    if "60" in msg or "60." in msg or "60 mil" in msg:
+        return "Paquete Salud Activa"
+
+    if "75" in msg or "75." in msg or "75 mil" in msg:
+        return "Paquete Bienestar Total"
+
+    return None
+
+
+# ---------------------------------------------------------
+# SAVE RESERVATION
 # ---------------------------------------------------------
 def save_reservation(data: dict):
     try:
         raw_dt = datetime.fromisoformat(data["datetime"])
-
-        # If no timezone, assume Bogotá
         if raw_dt.tzinfo is None:
             dt_local = raw_dt.replace(tzinfo=LOCAL_TZ)
         else:
             dt_local = raw_dt.astimezone(LOCAL_TZ)
 
-        dt_store = dt_local  # local Bogotá time
-        iso_to_store = dt_store.isoformat()
+        iso_to_store = dt_local.isoformat()
 
-    except Exception as e:
-        print("ERROR in save_reservation:", e)
+    except:
         return "❌ Error procesando la fecha."
 
-    # ---------------------------------------------------------
-    # CORRECT FIX: respect dashboard table_number if provided
-    # ---------------------------------------------------------
+    # table
     if data.get("table_number"):
-        table = data["table_number"]  # Dashboard
+        table = data["table_number"]
     else:
-        table = assign_table(iso_to_store)  # WhatsApp auto assign
+        table = assign_table(iso_to_store)
 
     if not table:
         return "❌ No hay mesas disponibles para ese horario."
 
-    # INSERT CORRECTLY
+    # Insert
     supabase.table("reservations").insert({
         "customer_name": data["customer_name"],
         "customer_email": "",
@@ -104,44 +123,40 @@ def save_reservation(data: dict):
         "table_number": table,
         "notes": "",
         "status": "confirmado",
-
-      # NEW FIELDS FOR IPS
+        "business_id": 2,  # ALWAYS IPS ID
         "package": data.get("package", ""),
-"school_name": data.get("school_name", ""),
-
+        "school_name": data.get("school_name", ""),
     }).execute()
 
     return (
         "✅ *¡Reserva confirmada!*\n"
         f"👤 {data['customer_name']}\n"
         f"👥 {data['party_size']} personas\n"
-        f"🗓 {dt_store.strftime('%Y-%m-%d %H:%M')}\n"
+        f"📦 {data.get('package','')}\n"
+        f"🏫 {data.get('school_name','')}\n"
+        f"🗓 {dt_local.strftime('%Y-%m-%d %H:%M')}\n"
         f"🍽 Mesa: {table}"
     )
-    
+
+
 # ---------------------------------------------------------
 # AI EXTRACTION
 # ---------------------------------------------------------
 def ai_extract(user_msg: str):
     import dateparser
-    from dateutil.relativedelta import relativedelta, MO, TU, WE, TH, FR, SA, SU
-
-    today = datetime.now(LOCAL_TZ)
-
-    weekday_map = {
-        "lunes": MO, "martes": TU, "miércoles": WE, "miercoles": WE,
-        "jueves": TH, "viernes": FR, "sábado": SA, "sabado": SA, "domingo": SU
-    }
 
     prompt = f"""
-Eres un extractor. NO conviertas fechas. NO cambies horas.
-Devuelve estrictamente JSON:
+Eres un extractor. NO interpretes ni cambies nada.
+SOLO devuelve JSON:
+
 {{
  "intent": "",
  "customer_name": "",
  "party_size": "",
+ "school_name": "",
  "datetime_text": ""
 }}
+
 Mensaje:
 \"\"\"{user_msg}\"\"\"
 """
@@ -154,12 +169,9 @@ Mensaje:
         )
         extracted = json.loads(r.choices[0].message.content)
     except:
-        return {"intent": "", "customer_name": "", "party_size": "", "datetime": ""}
+        return {}
 
-    text = extracted.get("datetime_text", "").lower()
-    final_iso = ""
-
-    # Parse as Bogotá time
+    text = extracted.get("datetime_text", "")
     dt_local = dateparser.parse(
         text,
         settings={
@@ -168,49 +180,48 @@ Mensaje:
             "RETURN_AS_TIMEZONE_AWARE": True
         }
     )
-
-    if dt_local:
-        final_iso = dt_local.isoformat()
+    iso = dt_local.isoformat() if dt_local else ""
 
     return {
         "intent": extracted.get("intent", ""),
         "customer_name": extracted.get("customer_name", ""),
         "party_size": extracted.get("party_size", ""),
-        "datetime": final_iso
+        "school_name": extracted.get("school_name", ""),
+        "datetime": iso
     }
 
 
 # ---------------------------------------------------------
-# WHATSAPP ROUTE
+# WHATSAPP HANDLER
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
     resp = MessagingResponse()
-    msg = Body.strip()
-
-    user_id = "default_user"
+    msg = Body.strip().lower()
+    user_id = "default"
 
     if user_id not in session_state:
         session_state[user_id] = {
             "customer_name": None,
             "datetime": None,
             "party_size": None,
-            "awaiting_info": False
+            "school_name": None,
+            "package": None,
+            "awaiting_info": False,
         }
 
     memory = session_state[user_id]
-
-    if msg.lower() in ["hola", "hello", "holaa", "buenas", "hey", "ola"]:
-        resp.message("¡Hola! ¿Quieres información o deseas hacer una reserva?")
-        return Response(str(resp), media_type="application/xml")
-
     extracted = ai_extract(msg)
 
-    if extracted["intent"] == "reserve" and not memory["awaiting_info"]:
+    # Intent
+    if extracted.get("intent") == "reserve" and not memory["awaiting_info"]:
         memory["awaiting_info"] = True
-        resp.message("Perfecto 😊 Dame fecha, nombre y número de personas.")
+        resp.message(
+            "Perfecto 😊\n\nPor favor envíame:\n• Nombre del estudiante\n• Colegio\n• Fecha y hora\n• Número de personas\n• Paquete deseado"
+        )
         return Response(str(resp), media_type="application/xml")
 
+    # Fill memory
     if extracted.get("customer_name"):
         memory["customer_name"] = extracted["customer_name"]
 
@@ -220,35 +231,62 @@ async def whatsapp(Body: str = Form(...)):
     if extracted.get("party_size"):
         memory["party_size"] = extracted["party_size"]
 
+    if extracted.get("school_name"):
+        memory["school_name"] = extracted["school_name"]
+
+    # Package detection
+    pkg = detect_package(msg)
+    if pkg:
+        memory["package"] = pkg
+
+    # Ask missing fields
     if not memory["customer_name"]:
-        resp.message("¿A nombre de quién sería la reserva?")
+        resp.message("¿Cuál es el nombre del estudiante?")
+        return Response(str(resp), media_type="application/xml")
+
+    if not memory["school_name"]:
+        resp.message("¿De qué colegio viene?")
         return Response(str(resp), media_type="application/xml")
 
     if not memory["datetime"]:
-        resp.message("¿Para qué fecha y hora?")
+        resp.message("¿Para qué fecha y hora deseas la cita?")
         return Response(str(resp), media_type="application/xml")
 
     if not memory["party_size"]:
         resp.message("¿Para cuántas personas?")
         return Response(str(resp), media_type="application/xml")
 
+    if not memory["package"]:
+        resp.message(
+            "¿Qué paquete deseas reservar?\n\n"
+            "• *Cuidado Esencial* – $45.000\n"
+            "• *Salud Activa* – $60.000\n"
+            "• *Bienestar Total* – $75.000"
+        )
+        return Response(str(resp), media_type="application/xml")
+
+    # Save reservation
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
+    # Reset
     session_state[user_id] = {
         "customer_name": None,
         "datetime": None,
         "party_size": None,
-        "awaiting_info": False
+        "school_name": None,
+        "package": None,
+        "awaiting_info": False,
     }
 
     return Response(str(resp), media_type="application/xml")
 
 
 # ---------------------------------------------------------
-# DASHBOARD — ALWAYS SHOW BOGOTÁ TIME
+# DASHBOARD (BOGOTÁ)
 # ---------------------------------------------------------
 from dateutil import parser
+
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
@@ -257,22 +295,19 @@ async def dashboard(request: Request):
     fixed = []
     weekly_count = 0
 
-    now_local = datetime.now(LOCAL_TZ)
-    week_ago = now_local - timedelta(days=7)
+    now = datetime.now(LOCAL_TZ)
+    week_ago = now - timedelta(days=7)
 
     for r in rows:
-        row = r.copy()
         iso = r.get("datetime")
+        row = r.copy()
 
         if iso:
-            dt_utc = parser.isoparse(iso)
-            dt_local = dt_utc.astimezone(LOCAL_TZ)
+            dt = parser.isoparse(iso).astimezone(LOCAL_TZ)
+            row["date"] = dt.strftime("%Y-%m-%d")
+            row["time"] = dt.strftime("%H:%M")
 
-            row["date"] = dt_local.strftime("%Y-%m-%d")
-            row["time"] = dt_local.strftime("%H:%M")
-
-            # Count reservations in the last 7 days
-            if dt_local >= week_ago:
+            if dt >= week_ago:
                 weekly_count += 1
         else:
             row["date"] = "-"
@@ -283,92 +318,46 @@ async def dashboard(request: Request):
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "reservations": fixed,
-        "weekly_count": weekly_count  # <<---- THIS FIXES “ESTA SEMANA”
+        "weekly_count": weekly_count
     })
 
+
 # ---------------------------------------------------------
-# SAFE UPDATE
+# UPDATE / ACTIONS
 # ---------------------------------------------------------
-def safe_update(reservation_id: int, fields: dict):
-    clean = {k: v for k, v in fields.items() if v not in [None, "", "null", "-", "None"]}
-    if clean:
-        supabase.table("reservations").update(clean).eq("reservation_id", reservation_id).execute()
-        
-# ---------------------------------------------------------
-# ACTION BUTTON ROUTES — EXACTLY LIKE BACKUP (WORKING)
-# ---------------------------------------------------------
+@app.post("/updateReservation")
+async def update_reservation(update: dict):
+    rid = update.get("reservation_id")
+    if not rid:
+        return {"success": False}
+
+    fields = {k: v for k, v in update.items() if k != "reservation_id" and v not in ["", None, "-", "null"]}
+
+    if fields:
+        supabase.table("reservations").update(fields).eq("reservation_id", rid).execute()
+
+    return {"success": True}
+
 
 @app.post("/cancelReservation")
 async def cancel_reservation(update: dict):
-    supabase.table("reservations") \
-        .update({"status": "cancelled"}) \
-        .eq("reservation_id", update["reservation_id"]) \
-        .execute()
-    return {"success": True}
-
-@app.post("/markArrived")
-async def mark_arrived(update: dict):
-    supabase.table("reservations") \
-        .update({"status": "arrived"}) \
-        .eq("reservation_id", update["reservation_id"]) \
-        .execute()
-    return {"success": True}
-
-@app.post("/markNoShow")
-async def mark_no_show(update: dict):
-    supabase.table("reservations") \
-        .update({"status": "no_show"}) \
-        .eq("reservation_id", update["reservation_id"]) \
-        .execute()
+    supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", update["reservation_id"]).execute()
     return {"success": True}
 
 @app.post("/archiveReservation")
 async def archive_reservation(update: dict):
-    supabase.table("reservations") \
-        .update({"status": "archived"}) \
-        .eq("reservation_id", update["reservation_id"]) \
-        .execute()
+    supabase.table("reservations").update({"status": "archived"}).eq("reservation_id", update["reservation_id"]).execute()
     return {"success": True}
 
-# ---------------------------------------------------------
-# UPDATE RESERVATION — EXACT WORKING VERSION
-@app.post("/updateReservation")
-async def update_reservation(update: dict):
-
-    reservation_id = update.get("reservation_id")
-    if not reservation_id:
-        return {"success": False, "error": "Missing reservation_id"}
-
-    fields = {}
-
-    if update.get("datetime"):
-        fields["datetime"] = update["datetime"]
-
-    if update.get("party_size"):
-        fields["party_size"] = update["party_size"]
-
-    if update.get("table_number"):
-        fields["table_number"] = update["table_number"]
-
-    if update.get("notes") is not None:
-        fields["notes"] = update["notes"]
-
-    # ALWAYS update status (actions like Cancelar, Llegó)
-    if update.get("status"):
-        fields["status"] = update["status"]
-
-    if fields:
-        supabase.table("reservations") \
-            .update(fields) \
-            .eq("reservation_id", reservation_id) \
-            .execute()
-
+@app.post("/markArrived")
+async def mark_arrived(update: dict):
+    supabase.table("reservations").update({"status": "arrived"}).eq("reservation_id", update["reservation_id"]).execute()
     return {"success": True}
-    
-@app.post("/createReservation")
-async def create_reservation(payload: dict):
-    msg = save_reservation(payload)
-    return {"success": True, "message": msg}
+
+@app.post("/markNoShow")
+async def mark_no_show(update: dict):
+    supabase.table("reservations").update({"status": "no_show"}).eq("reservation_id", update["reservation_id"]).execute()
+    return {"success": True}
 
 
 # ---------------------------------------------------------
