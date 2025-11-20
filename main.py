@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import json, os
 
@@ -87,16 +87,14 @@ def save_reservation(data: dict):
     # CORRECT FIX: respect dashboard table_number if provided
     # ---------------------------------------------------------
     if data.get("table_number"):
-        table = data["table_number"]   # USE EXACT TABLE THE DASHBOARD SENT
+        table = data["table_number"]  # Dashboard
     else:
-        table = assign_table(iso_to_store)  # auto assign for WhatsApp
+        table = assign_table(iso_to_store)  # WhatsApp auto assign
 
     if not table:
         return "❌ No hay mesas disponibles para ese horario."
 
-    # ---------------------------------------------------------
-    # Insert into Supabase
-    # ---------------------------------------------------------
+    # INSERT CORRECTLY
     supabase.table("reservations").insert({
         "customer_name": data["customer_name"],
         "customer_email": "",
