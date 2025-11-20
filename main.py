@@ -304,13 +304,26 @@ async def mark_no_show(update: dict):
 async def archive_reservation(update: dict):
     safe_update(update["reservation_id"], {"status": "archivado"})
     return {"success": True}
-
+    
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
-    safe_update(update["reservation_id"], update)
+    status_map = {
+        "arrived": "llegó",
+        "no_show": "no llegó",
+        "archived": "archivado",
+        "cancelled": "cancelado",
+        "confirmed": "confirmado",
+        "updated": "actualizado"
+    }
+
+    clean = update.copy()
+
+    if "status" in clean:
+        clean["status"] = status_map.get(clean["status"], clean["status"])
+
+    safe_update(update["reservation_id"], clean)
     return {"success": True}
-
-
+    
 @app.post("/createReservation")
 async def create_reservation(payload: dict):
     msg = save_reservation(payload)
