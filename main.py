@@ -1,12 +1,13 @@
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, WebSocket
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
-from datetime import datetime, timezone
+from datetime import datetime
 from zoneinfo import ZoneInfo
-import json, os
+from dateutil import parser
+import json, os, asyncio
 
 # ---------- Supabase ----------
 from supabase import create_client, Client
@@ -55,28 +56,42 @@ supabase: Client = create_client(
 TABLE_LIMIT = 10
 
 
-def assign_table(iso_utc: str):
-    booked = supabase.table("reservations").select("table_number").eq("datetime", iso_utc).execute()
+def assign_table(iso_local: str):
+    """
+    Given a local Bogotá datetime string (ISO), find a free table.
+    """
+    booked = supabase.table("reservations") \
+        .select("table_number") \
+        .eq("datetime", iso_local) \
+        .execute()
+
     taken = {r["table_number"] for r in (booked.data or [])}
     for i in range(1, TABLE_LIMIT + 1):
         t = f"T{i}"
         if t not in taken:
             return t
     return None
+
+
 # ---------------------------------------------------------
 # SAVE RESERVATION — STORE DIRECTLY IN BOGOTÁ TIME
 # ---------------------------------------------------------
 def save_reservation(data: dict):
+    """
+    Normalizes datetime to Bogotá local time, assigns table, and saves.
+    Used by WhatsApp flow and Dashboard 'Nueva reserva'.
+    """
     try:
-        raw_dt = datetime.fromisoformat(data["datetime"])
+        raw = data["datetime"]
+        # Handle Z or timezone correctly
+        dt_parsed = parser.isoparse(raw)
 
         # If no timezone, assume Bogotá
-        if raw_dt.tzinfo is None:
-            dt_local = raw_dt.replace(tzinfo=LOCAL_TZ)
+        if dt_parsed.tzinfo is None:
+            dt_local = dt_parsed.replace(tzinfo=LOCAL_TZ)
         else:
-            dt_local = raw_dt.astimezone(LOCAL_TZ)
+            dt_local = dt_parsed.astimezone(LOCAL_TZ)
 
-        # Store local (Bogotá) time directly
         dt_store = dt_local
 
         print("RAW:", data["datetime"])
@@ -95,23 +110,24 @@ def save_reservation(data: dict):
         return "❌ No hay mesas disponibles para ese horario."
 
     supabase.table("reservations").insert({
-        "customer_name": data["customer_name"],
-        "customer_email": "",
-        "contact_phone": "",
-        "datetime": iso_to_store,  # store LOCAL
-        "party_size": int(data["party_size"]),
+        "customer_name": data.get("customer_name", ""),
+        "customer_email": data.get("customer_email") or "",
+        "contact_phone": data.get("contact_phone") or "",
+        "datetime": iso_to_store,  # local Bogotá
+        "party_size": int(data.get("party_size", 1)),
         "table_number": table,
-        "notes": "",
-        "status": "confirmado",
+        "notes": data.get("notes") or "",
+        "status": data.get("status") or "confirmed",  # <-- ENGLISH in DB
     }).execute()
 
     return (
         "✅ *¡Reserva confirmada!*\n"
-        f"👤 {data['customer_name']}\n"
-        f"👥 {data['party_size']} personas\n"
+        f"👤 {data.get('customer_name','')}\n"
+        f"👥 {data.get('party_size','')} personas\n"
         f"🗓 {dt_store.strftime('%Y-%m-%d %H:%M')}\n"
         f"🍽 Mesa: {table}"
     )
+
 
 # ---------------------------------------------------------
 # AI EXTRACTION
@@ -147,7 +163,8 @@ Mensaje:
             messages=[{"role": "system", "content": prompt}]
         )
         extracted = json.loads(r.choices[0].message.content)
-    except:
+    except Exception as e:
+        print("ERROR in ai_extract:", e)
         return {"intent": "", "customer_name": "", "party_size": "", "datetime": ""}
 
     text = extracted.get("datetime_text", "").lower()
@@ -242,8 +259,6 @@ async def whatsapp(Body: str = Form(...)):
 # ---------------------------------------------------------
 # DASHBOARD — ALWAYS SHOW BOGOTÁ TIME
 # ---------------------------------------------------------
-from dateutil import parser
-
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
@@ -256,10 +271,8 @@ async def dashboard(request: Request):
         iso = r.get("datetime")
 
         if iso:
-            dt_utc = parser.isoparse(iso)
-            dt_local = dt_utc.astimezone(LOCAL_TZ)
-
-            # FINAL FIX — ALWAYS RETURN BOGOTÁ DATE/TIME
+            dt_any = parser.isoparse(iso)
+            dt_local = dt_any.astimezone(LOCAL_TZ)
             row["date"] = dt_local.strftime("%Y-%m-%d")
             row["time"] = dt_local.strftime("%H:%M")
         else:
@@ -273,6 +286,7 @@ async def dashboard(request: Request):
         "reservations": fixed
     })
 
+
 # ---------------------------------------------------------
 # SAFE UPDATE
 # ---------------------------------------------------------
@@ -281,72 +295,86 @@ def safe_update(reservation_id: int, fields: dict):
     if clean:
         supabase.table("reservations").update(clean).eq("reservation_id", reservation_id).execute()
 
+
 # ---------------------------------------------------------
 # ACTION BUTTON ROUTES — store ENGLISH in DB
 # ---------------------------------------------------------
 @app.post("/cancelReservation")
 async def cancel_reservation(update: dict):
     safe_update(update["reservation_id"], {"status": "cancelled"})
+    asyncio.create_task(notify_refresh())
     return {"success": True}
+
 
 @app.post("/markArrived")
 async def mark_arrived(update: dict):
     safe_update(update["reservation_id"], {"status": "arrived"})
+    asyncio.create_task(notify_refresh())
     return {"success": True}
+
 
 @app.post("/markNoShow")
 async def mark_no_show(update: dict):
     safe_update(update["reservation_id"], {"status": "no_show"})
+    asyncio.create_task(notify_refresh())
     return {"success": True}
+
 
 @app.post("/archiveReservation")
 async def archive_reservation(update: dict):
     safe_update(update["reservation_id"], {"status": "archived"})
+    asyncio.create_task(notify_refresh())
     return {"success": True}
 
+
 # ---------------------------------------------------------
-# DASHBOARD API (Create / Update / Cancel)
+# UPDATE RESERVATION — DB USES ENGLISH STATUS
+# ---------------------------------------------------------
+@app.post("/updateReservation")
+async def update_reservation(update: dict):
+    # Remove empty fields
+    clean = {k: v for k, v in update.items() if v not in [None, "", "null", "-", "None"]}
+
+    # English statuses the dashboard uses
+    valid_statuses = ["arrived", "no_show", "archived", "cancelled", "confirmed", "updated", "pending"]
+
+    # Only allow English status values into DB
+    if "status" in clean and clean["status"] not in valid_statuses:
+        del clean["status"]
+
+    # Normalize datetime to Bogotá local if provided
+    if "datetime" in clean:
+        try:
+            dt_any = parser.isoparse(clean["datetime"])
+            if dt_any.tzinfo is None:
+                dt_local = dt_any.replace(tzinfo=LOCAL_TZ)
+            else:
+                dt_local = dt_any.astimezone(LOCAL_TZ)
+            clean["datetime"] = dt_local.isoformat()
+        except Exception as e:
+            print("ERROR normalizing datetime in update_reservation:", e)
+            del clean["datetime"]
+
+    safe_update(update["reservation_id"], clean)
+    asyncio.create_task(notify_refresh())
+    return {"success": True}
+
+
+# ---------------------------------------------------------
+# DASHBOARD API (Create Reservation)
 # ---------------------------------------------------------
 @app.post("/createReservation")
 async def create_reservation(payload: dict):
-    msg = save_reservation(payload)   # dedupe + time normalization
+    msg = save_reservation(payload)
     asyncio.create_task(notify_refresh())
     return {"success": True, "message": msg}
-
-@app.post("/updateReservation")
-async def update_reservation(update: dict):
-    new_dt = update.get("datetime")
-    normalized = _to_utc_iso(new_dt) if new_dt else None
-
-    supabase.table("reservations") \
-        .update({
-            "datetime": normalized if normalized else new_dt,
-            "party_size": update.get("party_size"),
-            "table_number": update.get("table_number"),
-            "notes": update.get("notes"),
-            "status": update.get("status", "updated"),
-        }) \
-        .eq("reservation_id", update["reservation_id"]) \
-        .execute()
-
-    asyncio.create_task(notify_refresh())
-    return {"success": True}
-
-@app.post("/cancelReservation")
-async def cancel(update: dict):
-    supabase.table("reservations") \
-        .update({"status": "cancelled"}) \
-        .eq("reservation_id", update["reservation_id"]) \
-        .execute()
-
-    asyncio.create_task(notify_refresh())
-    return {"success": True}
 
 
 # ---------------------------------------------------------
 # WEBSOCKET LIVE REFRESH
 # ---------------------------------------------------------
 clients = []
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -355,12 +383,26 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             await websocket.receive_text()
-    except:
-        clients.remove(websocket)
+    except Exception:
+        if websocket in clients:
+            clients.remove(websocket)
+
 
 async def notify_refresh():
+    dead = []
     for ws in clients:
         try:
             await ws.send_text("refresh")
-        except:
-            pass
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        if ws in clients:
+            clients.remove(ws)
+
+
+# ---------------------------------------------------------
+# RUN
+# ---------------------------------------------------------
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
