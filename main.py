@@ -273,7 +273,6 @@ async def dashboard(request: Request):
         "reservations": fixed
     })
 
-
 # ---------------------------------------------------------
 # SAFE UPDATE
 # ---------------------------------------------------------
@@ -283,40 +282,43 @@ def safe_update(reservation_id: int, fields: dict):
         supabase.table("reservations").update(clean).eq("reservation_id", reservation_id).execute()
 
 
+# ---------------------------------------------------------
+# ACTION BUTTON ROUTES — store ENGLISH in DB
+# ---------------------------------------------------------
 @app.post("/cancelReservation")
 async def cancel_reservation(update: dict):
-    safe_update(update["reservation_id"], {"status": "cancelado"})
+    safe_update(update["reservation_id"], {"status": "cancelled"})
     return {"success": True}
-
 
 @app.post("/markArrived")
 async def mark_arrived(update: dict):
-    safe_update(update["reservation_id"], {"status": "llegó"})
+    safe_update(update["reservation_id"], {"status": "arrived"})
     return {"success": True}
-
 
 @app.post("/markNoShow")
 async def mark_no_show(update: dict):
-    safe_update(update["reservation_id"], {"status": "no llegó"})
+    safe_update(update["reservation_id"], {"status": "no_show"})
     return {"success": True}
-    
+
 @app.post("/archiveReservation")
 async def archive_reservation(update: dict):
-    safe_update(update["reservation_id"], {"status": "archivado"})
+    safe_update(update["reservation_id"], {"status": "archived"})
     return {"success": True}
-    
-# ---------------------------------------------------------
-# UPDATE RESERVATION — KEEP ENGLISH STATUS IN DB
-# ---------------------------------------------------------
-valid_statuses = ["arrived", "no_show", "archived", "cancelled", "confirmed", "updated"]
 
+# ---------------------------------------------------------
+# UPDATE RESERVATION — DB USES ENGLISH STATUS
+# ---------------------------------------------------------
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
-    clean = update.copy()
 
-    # Keep English status only
+    clean = {k: v for k, v in update.items() if v not in [None, "", "null", "-", "None"]}
+
+    # English statuses the dashboard uses
+    valid_statuses = ["arrived", "no_show", "archived", "cancelled", "confirmed", "updated"]
+
+    # Only allow English status values into DB
     if "status" in clean and clean["status"] not in valid_statuses:
-        clean["status"] = clean["status"]
+        del clean["status"]     # remove invalid Spanish values
 
     safe_update(update["reservation_id"], clean)
     return {"success": True}
