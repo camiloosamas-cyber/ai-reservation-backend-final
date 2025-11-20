@@ -104,6 +104,11 @@ def save_reservation(data: dict):
         "table_number": table,
         "notes": "",
         "status": "confirmado",
+
+      # NEW FIELDS FOR IPS
+        "package": data.get("package", ""),
+"school_name": data.get("school_name", ""),
+
     }).execute()
 
     return (
