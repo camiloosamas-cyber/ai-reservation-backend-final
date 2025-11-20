@@ -76,29 +76,32 @@ def save_reservation(data: dict):
         else:
             dt_local = raw_dt.astimezone(LOCAL_TZ)
 
-        # Store local (Bogotá) time directly
-        dt_store = dt_local
-
-        print("RAW:", data["datetime"])
-        print("LOCAL STORED:", dt_store.isoformat())
+        dt_store = dt_local  # local Bogotá time
+        iso_to_store = dt_store.isoformat()
 
     except Exception as e:
         print("ERROR in save_reservation:", e)
         return "❌ Error procesando la fecha."
 
-    # Store Bogotá datetime into DB (no UTC conversion)
-    iso_to_store = dt_store.isoformat()
+    # ---------------------------------------------------------
+    # CORRECT FIX: respect dashboard table_number if provided
+    # ---------------------------------------------------------
+    if data.get("table_number"):
+        table = data["table_number"]   # USE EXACT TABLE THE DASHBOARD SENT
+    else:
+        table = assign_table(iso_to_store)  # auto assign for WhatsApp
 
-    # Assign a table using the local datetime
-    table = assign_table(iso_to_store)
     if not table:
         return "❌ No hay mesas disponibles para ese horario."
 
+    # ---------------------------------------------------------
+    # Insert into Supabase
+    # ---------------------------------------------------------
     supabase.table("reservations").insert({
         "customer_name": data["customer_name"],
         "customer_email": "",
         "contact_phone": "",
-        "datetime": iso_to_store,  # store LOCAL
+        "datetime": iso_to_store,
         "party_size": int(data["party_size"]),
         "table_number": table,
         "notes": "",
@@ -112,7 +115,7 @@ def save_reservation(data: dict):
         f"🗓 {dt_store.strftime('%Y-%m-%d %H:%M')}\n"
         f"🍽 Mesa: {table}"
     )
-
+    
 # ---------------------------------------------------------
 # AI EXTRACTION
 # ---------------------------------------------------------
@@ -243,13 +246,16 @@ async def whatsapp(Body: str = Form(...)):
 # DASHBOARD — ALWAYS SHOW BOGOTÁ TIME
 # ---------------------------------------------------------
 from dateutil import parser
-
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
     rows = res.data or []
 
     fixed = []
+    weekly_count = 0
+
+    now_local = datetime.now(LOCAL_TZ)
+    week_ago = now_local - timedelta(days=7)
 
     for r in rows:
         row = r.copy()
@@ -259,9 +265,12 @@ async def dashboard(request: Request):
             dt_utc = parser.isoparse(iso)
             dt_local = dt_utc.astimezone(LOCAL_TZ)
 
-            # FINAL FIX — ALWAYS RETURN BOGOTÁ DATE/TIME
             row["date"] = dt_local.strftime("%Y-%m-%d")
             row["time"] = dt_local.strftime("%H:%M")
+
+            # Count reservations in the last 7 days
+            if dt_local >= week_ago:
+                weekly_count += 1
         else:
             row["date"] = "-"
             row["time"] = "-"
@@ -270,7 +279,8 @@ async def dashboard(request: Request):
 
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
-        "reservations": fixed
+        "reservations": fixed,
+        "weekly_count": weekly_count  # <<---- THIS FIXES “ESTA SEMANA”
     })
 
 # ---------------------------------------------------------
