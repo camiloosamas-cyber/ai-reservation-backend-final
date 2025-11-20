@@ -63,26 +63,19 @@ def assign_table(iso_local: str):
 
 
 # ---------------------------------------------------------
-# PACKAGE DETECTION
+# PACKAGE DETECTION (UPDATED EXACTLY AS REQUESTED)
 # ---------------------------------------------------------
 def detect_package(user_msg: str):
     msg = user_msg.lower()
 
-    if "esencial" in msg:
-        return "Paquete Cuidado Esencial"
-    if "activa" in msg:
-        return "Paquete Salud Activa"
-    if "total" in msg or "completo" in msg:
-        return "Paquete Bienestar Total"
-
-    # Detect by price
-    if "45" in msg or "45." in msg or "45 mil" in msg:
+    # Strong package matching
+    if "esencial" in msg or "kit escolar" in msg or "cuidado esencial" in msg:
         return "Paquete Cuidado Esencial"
 
-    if "60" in msg or "60." in msg or "60 mil" in msg:
+    if "activa" in msg or "salud activa" in msg:
         return "Paquete Salud Activa"
 
-    if "75" in msg or "75." in msg or "75 mil" in msg:
+    if "total" in msg or "bienestar total" in msg or "completo" in msg:
         return "Paquete Bienestar Total"
 
     return None
@@ -159,16 +152,15 @@ def ai_extract(user_msg: str):
             detected_package = full
             break
 
-    # Detect school name (simple extraction)
+    # Detect school name
     school_name = ""
     if "colegio" in lower_msg:
         try:
-            # everything after "colegio"
             school_name = user_msg.lower().split("colegio", 1)[1].strip()
         except:
             pass
 
-    # NEW STRONG EXTRACTOR PROMPT
+    # STRONG EXTRACTOR PROMPT
     prompt = f"""
 Eres un extractor de intención para un sistema de reservas médicas escolares.
 
@@ -189,8 +181,8 @@ REGLAS:
 - Si solo hace preguntas, INTENT = "info".
 - En cualquier otro caso, INTENT = "other".
 - "customer_name": nombre de la persona si aparece.
-- "datetime_text": la parte del texto que representa fecha u hora.
-- "party_size": número de personas si está claro, de lo contrario vacío.
+- "datetime_text": fecha u hora mencionada.
+- "party_size": número de personas si está claro.
 
 EXTRACTA del mensaje:
 \"\"\"{user_msg}\"\"\"
@@ -251,7 +243,6 @@ async def whatsapp(Body: str = Form(...)):
     memory = session_state[user_id]
     extracted = ai_extract(msg)
 
-    # Intent
     if extracted.get("intent") == "reserve" and not memory["awaiting_info"]:
         memory["awaiting_info"] = True
         resp.message(
@@ -259,25 +250,19 @@ async def whatsapp(Body: str = Form(...)):
         )
         return Response(str(resp), media_type="application/xml")
 
-    # Fill memory
     if extracted.get("customer_name"):
         memory["customer_name"] = extracted["customer_name"]
-
     if extracted.get("datetime"):
         memory["datetime"] = extracted["datetime"]
-
     if extracted.get("party_size"):
         memory["party_size"] = extracted["party_size"]
-
     if extracted.get("school_name"):
         memory["school_name"] = extracted["school_name"]
 
-    # Package detection
     pkg = detect_package(msg)
     if pkg:
         memory["package"] = pkg
 
-    # Ask missing fields
     if not memory["customer_name"]:
         resp.message("¿Cuál es el nombre del estudiante?")
         return Response(str(resp), media_type="application/xml")
@@ -303,11 +288,9 @@ async def whatsapp(Body: str = Form(...)):
         )
         return Response(str(resp), media_type="application/xml")
 
-    # Save reservation
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
-    # Reset
     session_state[user_id] = {
         "customer_name": None,
         "datetime": None,
@@ -327,7 +310,9 @@ from dateutil import parser
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
+
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
+
     rows = res.data or []
 
     fixed = []
