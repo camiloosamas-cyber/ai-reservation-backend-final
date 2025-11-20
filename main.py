@@ -327,21 +327,36 @@ async def archive_reservation(update: dict):
 
 # ---------------------------------------------------------
 # UPDATE RESERVATION — EXACT WORKING VERSION
-# ---------------------------------------------------------
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
-    new_dt = update.get("datetime")
 
-    supabase.table("reservations") \
-        .update({
-            "datetime": new_dt,
-            "party_size": update.get("party_size"),
-            "table_number": update.get("table_number"),
-            "notes": update.get("notes"),
-            "status": update.get("status", "updated"),
-        }) \
-        .eq("reservation_id", update["reservation_id"]) \
-        .execute()
+    reservation_id = update.get("reservation_id")
+    if not reservation_id:
+        return {"success": False, "error": "Missing reservation_id"}
+
+    fields = {}
+
+    if update.get("datetime"):
+        fields["datetime"] = update["datetime"]
+
+    if update.get("party_size"):
+        fields["party_size"] = update["party_size"]
+
+    if update.get("table_number"):
+        fields["table_number"] = update["table_number"]
+
+    if update.get("notes") is not None:
+        fields["notes"] = update["notes"]
+
+    # ALWAYS update status (actions like Cancelar, Llegó)
+    if update.get("status"):
+        fields["status"] = update["status"]
+
+    if fields:
+        supabase.table("reservations") \
+            .update(fields) \
+            .eq("reservation_id", reservation_id) \
+            .execute()
 
     return {"success": True}
     
