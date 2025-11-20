@@ -124,11 +124,10 @@ def save_reservation(data: dict):
     return (
         "✅ *¡Reserva confirmada!*\n"
         f"👤 {data['customer_name']}\n"
-        f"👥 {data['party_size']} personas\n"
+        f"👥 {data['party_size']} estudiantes\n"
         f"📦 {data.get('package','')}\n"
         f"🏫 {data.get('school_name','')}\n"
-        f"🗓 {dt_local.strftime('%Y-%m-%d %H:%M')}\n"
-        f"🍽 Mesa: {table}"
+        f"🗓 {dt_local.strftime('%Y-%m-%d %H:%M')}"
     )
 
 
@@ -276,7 +275,7 @@ async def whatsapp(Body: str = Form(...)):
         return Response(str(resp), media_type="application/xml")
 
     if not memory["party_size"]:
-        resp.message("¿Para cuántas personas?")
+        resp.message("¿Para cuántos estudiantes?")
         return Response(str(resp), media_type="application/xml")
 
     if not memory["package"]:
@@ -370,7 +369,7 @@ async def cancel_reservation(update: dict):
 @app.post("/archiveReservation")
 async def archive_reservation(update: dict):
     supabase.table("reservations").update({"status": "archived"}).eq("reservation_id", update["reservation_id"]).execute()
-    return {"success": True}
+    return {"success":True}
 
 @app.post("/markArrived")
 async def mark_arrived(update: dict):
