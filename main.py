@@ -140,7 +140,7 @@ def save_reservation(data: dict):
 
 
 # ---------------------------------------------------------
-# AI EXTRACTION  (REPLACED EXACTLY AS REQUESTED)
+# AI EXTRACTION  (PROMPT UPDATED EXACTLY AS REQUESTED)
 # ---------------------------------------------------------
 def ai_extract(user_msg: str):
     import dateparser
@@ -168,17 +168,31 @@ def ai_extract(user_msg: str):
         except:
             pass
 
-    # Extract basic fields from previous logic
+    # NEW STRONG EXTRACTOR PROMPT
     prompt = f"""
-Eres un extractor. NO conviertas fechas. NO cambies horas.
-Devuelve estrictamente JSON:
+Eres un extractor de intención para un sistema de reservas médicas escolares.
+
+NO cambies fechas.
+NO conviertas horas.
+NO inventes datos.
+
+Devuelve SIEMPRE este JSON:
 {{
- "intent": "",
+ "intent": "reserve" | "info" | "other",
  "customer_name": "",
  "party_size": "",
  "datetime_text": ""
 }}
-Mensaje:
+
+REGLAS:
+- Si el usuario dice palabras como "agendar", "reservar", "quiero una cita", "quiero agenda", "quiero reservar", INTENT = "reserve".
+- Si solo hace preguntas, INTENT = "info".
+- En cualquier otro caso, INTENT = "other".
+- "customer_name": nombre de la persona si aparece.
+- "datetime_text": la parte del texto que representa fecha u hora.
+- "party_size": número de personas si está claro, de lo contrario vacío.
+
+EXTRACTA del mensaje:
 \"\"\"{user_msg}\"\"\"
 """
 
@@ -190,7 +204,7 @@ Mensaje:
         )
         extracted = json.loads(r.choices[0].message.content)
     except:
-        extracted = {"intent": "", "customer_name": "", "party_size": "", "datetime": ""}
+        extracted = {"intent": "", "customer_name": "", "party_size": "", "datetime_text": ""}
 
     # Parse date
     text = extracted.get("datetime_text", "").lower()
