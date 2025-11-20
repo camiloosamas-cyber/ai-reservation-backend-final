@@ -140,23 +140,44 @@ def save_reservation(data: dict):
 
 
 # ---------------------------------------------------------
-# AI EXTRACTION
+# AI EXTRACTION  (REPLACED EXACTLY AS REQUESTED)
 # ---------------------------------------------------------
 def ai_extract(user_msg: str):
     import dateparser
 
-    prompt = f"""
-Eres un extractor. NO interpretes ni cambies nada.
-SOLO devuelve JSON:
+    PACKAGES = {
+        "cuidado esencial": "Paquete Cuidado Esencial",
+        "salud activa": "Paquete Salud Activa",
+        "bienestar total": "Paquete Bienestar Total",
+    }
 
+    # Detect package
+    detected_package = ""
+    lower_msg = user_msg.lower()
+    for key, full in PACKAGES.items():
+        if key in lower_msg:
+            detected_package = full
+            break
+
+    # Detect school name (simple extraction)
+    school_name = ""
+    if "colegio" in lower_msg:
+        try:
+            # everything after "colegio"
+            school_name = user_msg.lower().split("colegio", 1)[1].strip()
+        except:
+            pass
+
+    # Extract basic fields from previous logic
+    prompt = f"""
+Eres un extractor. NO conviertas fechas. NO cambies horas.
+Devuelve estrictamente JSON:
 {{
  "intent": "",
  "customer_name": "",
  "party_size": "",
- "school_name": "",
  "datetime_text": ""
 }}
-
 Mensaje:
 \"\"\"{user_msg}\"\"\"
 """
@@ -169,9 +190,10 @@ Mensaje:
         )
         extracted = json.loads(r.choices[0].message.content)
     except:
-        return {}
+        extracted = {"intent": "", "customer_name": "", "party_size": "", "datetime": ""}
 
-    text = extracted.get("datetime_text", "")
+    # Parse date
+    text = extracted.get("datetime_text", "").lower()
     dt_local = dateparser.parse(
         text,
         settings={
@@ -180,14 +202,16 @@ Mensaje:
             "RETURN_AS_TIMEZONE_AWARE": True
         }
     )
-    iso = dt_local.isoformat() if dt_local else ""
+
+    final_iso = dt_local.isoformat() if dt_local else ""
 
     return {
         "intent": extracted.get("intent", ""),
         "customer_name": extracted.get("customer_name", ""),
         "party_size": extracted.get("party_size", ""),
-        "school_name": extracted.get("school_name", ""),
-        "datetime": iso
+        "datetime": final_iso,
+        "package": detected_package,
+        "school_name": school_name
     }
 
 
