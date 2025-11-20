@@ -305,21 +305,18 @@ async def archive_reservation(update: dict):
     safe_update(update["reservation_id"], {"status": "archivado"})
     return {"success": True}
     
+# ---------------------------------------------------------
+# UPDATE RESERVATION — KEEP ENGLISH STATUS IN DB
+# ---------------------------------------------------------
+valid_statuses = ["arrived", "no_show", "archived", "cancelled", "confirmed", "updated"]
+
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
-    status_map = {
-        "arrived": "llegó",
-        "no_show": "no llegó",
-        "archived": "archivado",
-        "cancelled": "cancelado",
-        "confirmed": "confirmado",
-        "updated": "actualizado"
-    }
-
     clean = update.copy()
 
-    if "status" in clean:
-        clean["status"] = status_map.get(clean["status"], clean["status"])
+    # Keep English status only
+    if "status" in clean and clean["status"] not in valid_statuses:
+        clean["status"] = clean["status"]
 
     safe_update(update["reservation_id"], clean)
     return {"success": True}
