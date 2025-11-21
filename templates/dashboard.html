@@ -112,14 +112,12 @@
     <button class="btn" id="todayBtn">Hoy</button>
   </div>
 
-  <!-- *** ELIMINADO: BLOQUE COMPLETO DE DISPONIBILIDAD DE MESAS *** -->
-
   <div class="table-wrap">
     <table>
       <thead>
       <tr>
-        <th>Fecha</th><th>Hora</th><th>Cliente</th><th>Contacto</th>
-        <th>Personas</th><th>Notas</th><th>Estado</th><th>Acciones</th>
+        <th>Fecha</th><th>Hora</th><th>Estudiante</th><th>Contacto</th>
+        <th>Estudiantes</th><th>Notas</th><th>Estado</th><th>Acciones</th>
       </tr>
       </thead>
       <tbody id="tbody">
@@ -156,8 +154,6 @@
 
         <td>{{ r.party_size }}</td>
 
-        <!-- *** ELIMINADO <td> DE MESA *** -->
-
         <td>{{ r.notes or '-' }}</td>
         <td><span class="chip {{ r.status }}">{{ r.status.replace("_"," ") }}</span></td>
 
@@ -182,13 +178,14 @@
 
   <h2 style="margin-top:24px;">📊 Estadísticas</h2>
   <div class="cards" style="grid-template-columns:repeat(3,1fr);">
-    <div class="card"><h3>Promedio de Personas</h3><p id="avgParty">–</p></div>
+    <div class="card"><h3>Promedio de Estudiantes</h3><p id="avgParty">–</p></div>
     <div class="card"><h3>Hora Pico</h3><p id="peakTime">–</p></div>
     <div class="card"><h3>Tasa de Cancelación</h3><p id="cancelRate">–</p></div>
   </div>
 
 </div>
 
+<!-- Modal editar -->
 <div class="modal-backdrop" id="editModal">
   <div class="modal">
     <header><h3>Editar Reserva</h3></header>
@@ -199,13 +196,11 @@
           <input id="dt" type="datetime-local">
         </div>
         <div class="field">
-          <label for="ps">Personas</label>
+          <label for="ps">Estudiantes</label>
           <input id="ps" type="number" min="1" value="1">
         </div>
       </div>
       <div class="form-row">
-
-        <!-- *** ELIMINADO CAMPO MESA COMPLETO *** -->
 
         <div class="field">
           <label for="notes">Notas</label>
@@ -220,6 +215,7 @@
   </div>
 </div>
 
+<!-- Modal nueva reserva -->
 <div class="modal-backdrop" id="newModal">
   <div class="modal">
     <header><h3>Nueva Reserva</h3></header>
@@ -230,12 +226,10 @@
       </div>
       <div class="form-row">
         <div class="field"><label for="new_phone">Teléfono</label><input id="new_phone" type="tel"></div>
-        <div class="field"><label for="new_party">Personas *</label><input id="new_party" type="number" min="1" value="2"></div>
+        <div class="field"><label for="new_party">Estudiantes *</label><input id="new_party" type="number" min="1" value="2"></div>
       </div>
       <div class="form-row">
         <div class="field"><label for="new_dt">Fecha y Hora *</label><input id="new_dt" type="datetime-local"></div>
-
-        <!-- *** ELIMINADO CAMPO MESA COMPLETO *** -->
 
       </div>
       <div class="field"><label for="new_notes">Notas</label><textarea id="new_notes"></textarea></div>
@@ -312,7 +306,7 @@ function callCustomer(phone){
 }
 function sendWhatsApp(phone,name,dt){
   if(!phone) return alert("No hay número de teléfono.");
-  const msg = `Hola ${name}, solo queremos confirmar tu reserva para ${dt}.`;
+  const msg = `Hola ${name}, estamos confirmando la entrega del paquete escolar programado para ${dt}.`;
   window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
 }
 
@@ -387,7 +381,7 @@ document.getElementById("saveBtn").onclick = async () => {
 };
 
 document.getElementById("exportBtn").onclick=()=>{
-  const header = ["Fecha","Hora","Cliente","Contacto","Personas","Notas","Estado"];
+  const header = ["Fecha","Hora","Estudiante","Contacto","Estudiantes","Notas","Estado"];
   const rows = [header];
 
   [...tbody.rows].forEach(r=>{
@@ -413,13 +407,13 @@ document.getElementById("exportBtn").onclick=()=>{
 
 function localizeStatusBadges(){
   const map = {
-    confirmed: "Confirmada",
+    confirmed: "Confirmado",
     pending: "Pendiente",
-    cancelled: "Cancelada",
-    arrived: "Llegó",
-    no_show: "No se presentó",
-    archived: "Archivada",
-    updated: "Actualizada"
+    cancelled: "Cancelado",
+    arrived: "Entregado",
+    no_show: "No asistió",
+    archived: "Archivado",
+    updated: "Actualizado"
   };
   document.querySelectorAll("td .chip").forEach(span=>{
     const cls = [...span.classList].find(c => map[c]);
