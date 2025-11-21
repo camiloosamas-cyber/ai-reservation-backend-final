@@ -152,9 +152,9 @@
           </div>
         </td>
 
-        <td>{{ r.party_size }}</td>
+        <td>{{ r.school_name or '-' }}</td>
 
-        <td>{{ r.notes or '-' }}</td>
+        <td>{{ r.package or '-' }}</td>
         <td><span class="chip {{ r.status }}">{{ r.status.replace("_"," ") }}</span></td>
 
         <td>
@@ -469,3 +469,4 @@ document.addEventListener("DOMContentLoaded", ()=>{
 
 </body>
 </html>
+
