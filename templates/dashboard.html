@@ -79,8 +79,8 @@
 
   <header>
     <div>
-      <h1>🤖 Panel de Reservas</h1>
-      <p class="sub">Administra reservas, analiza datos y mantén todo organizado</p>
+      <h1>📚 Panel de Citas Escolares</h1>
+      <p class="sub">Administra citas de entrega, analiza datos y mantén todo organizado</p>
     </div>
     <div class="toolbar">
       <button class="btn primary" id="newBtn">+ Nueva Reserva</button>
@@ -90,8 +90,8 @@
   </header>
 
   <div class="cards">
-    <div class="card"><h3>Total de Reservas</h3><p>{{ reservations|length }}</p></div>
-    <div class="card"><h3>Confirmadas</h3><p>{{ reservations|selectattr('status','equalto','confirmed')|list|length }}</p></div>
+    <div class="card"><h3>Total de Citas</h3><p>{{ reservations|length }}</p></div>
+    <div class="card"><h3>Entregadas</h3><p>{{ reservations|selectattr('status','equalto','confirmed')|list|length }}</p></div>
     <div class="card"><h3>Canceladas</h3><p>{{ reservations|selectattr('status','equalto','cancelled')|list|length }}</p></div>
     <div class="card"><h3>Esta Semana</h3><p>{{ weekly_count }}</p></div>
   </div>
@@ -117,7 +117,7 @@
       <thead>
       <tr>
         <th>Fecha</th><th>Hora</th><th>Estudiante</th><th>Contacto</th>
-        <th>Estudiantes</th><th>Notas</th><th>Estado</th><th>Acciones</th>
+        <th>Colegio</th><th>Paquete</th><th>Estado</th><th>Acciones</th>
       </tr>
       </thead>
       <tbody id="tbody">
@@ -178,7 +178,7 @@
 
   <h2 style="margin-top:24px;">📊 Estadísticas</h2>
   <div class="cards" style="grid-template-columns:repeat(3,1fr);">
-    <div class="card"><h3>Promedio de Estudiantes</h3><p id="avgParty">–</p></div>
+    <div class="card"><h3>Promedio de Citas</h3><p id="avgParty">–</p></div>
     <div class="card"><h3>Hora Pico</h3><p id="peakTime">–</p></div>
     <div class="card"><h3>Tasa de Cancelación</h3><p id="cancelRate">–</p></div>
   </div>
@@ -372,7 +372,7 @@ document.getElementById("saveBtn").onclick = async () => {
 
   await fetch("/updateReservation", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type":"application/json" },
     body: JSON.stringify(payload)
   });
 
@@ -381,7 +381,7 @@ document.getElementById("saveBtn").onclick = async () => {
 };
 
 document.getElementById("exportBtn").onclick=()=>{
-  const header = ["Fecha","Hora","Estudiante","Contacto","Estudiantes","Notas","Estado"];
+  const header = ["Fecha","Hora","Estudiante","Contacto","Colegio","Paquete","Estado"];
   const rows = [header];
 
   [...tbody.rows].forEach(r=>{
