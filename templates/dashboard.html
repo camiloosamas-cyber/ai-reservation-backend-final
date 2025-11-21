@@ -36,16 +36,6 @@
     }
     .filters input, .filters select{ height:38px; border-radius:10px; border:1px solid var(--border); padding:8px 12px; font-size:14px; }
 
-    .table-availability{
-      background:white; border:1px solid var(--border); border-radius:14px;
-      padding:16px; box-shadow:var(--shadow); margin-bottom:20px;
-    }
-    .table-grid{ display:grid; grid-template-columns: repeat(5, 1fr); gap:10px; }
-    .tcard{ background:white; border:1px solid var(--border); border-radius:12px; padding:10px; cursor:pointer; transition:0.15s; display:flex; flex-direction:column; gap:4px; }
-    .tcard:hover{ background:#f9fbff; }
-    .free{ background:#ecfdf5; color:#01643f; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700; }
-    .occupied{ background:#fef2f2; color:#9b1c1c; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700; }
-
     .table-wrap{ border-radius:14px; background:white; border:1px solid var(--border); }
     table{ width:100%; border-collapse:collapse; }
     thead th{ padding:12px; background:var(--head); color:white; font-weight:600; font-size:13px; }
@@ -99,7 +89,6 @@
     </div>
   </header>
 
-  <!-- Top KPIs rendered server-side -->
   <div class="cards">
     <div class="card"><h3>Total de Reservas</h3><p>{{ reservations|length }}</p></div>
     <div class="card"><h3>Confirmadas</h3><p>{{ reservations|selectattr('status','equalto','confirmed')|list|length }}</p></div>
@@ -107,13 +96,12 @@
     <div class="card"><h3>Esta Semana</h3><p>{{ weekly_count }}</p></div>
   </div>
 
-  <!-- Filtros -->
   <div class="filters">
     <input id="q" placeholder="Buscar...">
     <input id="dateFilter" type="date">
     <select id="statusFilter">
       <option value="active">Activas</option>
-      <option value="archived">Archivadas</option>
+      <option value="archarchived">Archivadas</option>
       <option value="all">Todas</option>
       <option value="confirmed">Confirmadas</option>
       <option value="pending">Pendientes</option>
@@ -124,19 +112,14 @@
     <button class="btn" id="todayBtn">Hoy</button>
   </div>
 
-  <!-- Disponibilidad de mesas -->
-  <div class="table-availability">
-    <h2>🟩 Disponibilidad de Mesas</h2>
-    <div id="tableGrid" class="table-grid"></div>
-  </div>
+  <!-- *** ELIMINADO: BLOQUE COMPLETO DE DISPONIBILIDAD DE MESAS *** -->
 
-  <!-- Tabla principal -->
   <div class="table-wrap">
     <table>
       <thead>
       <tr>
         <th>Fecha</th><th>Hora</th><th>Cliente</th><th>Contacto</th>
-        <th>Personas</th><th>Mesa</th><th>Notas</th><th>Estado</th><th>Acciones</th>
+        <th>Personas</th><th>Notas</th><th>Estado</th><th>Acciones</th>
       </tr>
       </thead>
       <tbody id="tbody">
@@ -150,8 +133,8 @@
           data-date=""
         {% endif %}
         data-status="{{ r.status }}"
-        data-table="{{ r.table_number or '' }}"
       >
+
         {% if r.datetime and 'T' in r.datetime %}
           {% set dt = r.datetime.split('T') %}
           <td>{{ dt[0] }}</td>
@@ -172,7 +155,9 @@
         </td>
 
         <td>{{ r.party_size }}</td>
-        <td>{{ r.table_number or '-' }}</td>
+
+        <!-- *** ELIMINADO <td> DE MESA *** -->
+
         <td>{{ r.notes or '-' }}</td>
         <td><span class="chip {{ r.status }}">{{ r.status.replace("_"," ") }}</span></td>
 
@@ -180,7 +165,7 @@
           <div class="menu-wrapper" onclick="event.stopPropagation()">
             <button class="menu-btn" onclick="toggleMenu(this);event.stopPropagation()">⋮</button>
             <div class="dropdown-menu" onclick="event.stopPropagation()">
-              <button onclick="openEdit({{ r.reservation_id }}, `{{ r.datetime or '' }}`, {{ r.party_size or 1 }}, `{{ r.table_number or '' }}`, `{{ r.notes or '' }}`)">✏️ Editar</button>
+              <button onclick="openEdit({{ r.reservation_id }}, `{{ r.datetime or '' }}`, {{ r.party_size or 1 }}, `{{ r.notes or '' }}`)">✏️ Editar</button>
               <button onclick="markStatus({{ r.reservation_id }}, 'arrived')">✅ Marcar como Llegó</button>
               <button onclick="markStatus({{ r.reservation_id }}, 'no_show')">⚠️ Marcar No-Show</button>
               <button onclick="doArchive({{ r.reservation_id }})">🗄️ Archivar</button>
@@ -195,7 +180,6 @@
     </table>
   </div>
 
-  <!-- Insights -->
   <h2 style="margin-top:24px;">📊 Estadísticas</h2>
   <div class="cards" style="grid-template-columns:repeat(3,1fr);">
     <div class="card"><h3>Promedio de Personas</h3><p id="avgParty">–</p></div>
@@ -205,7 +189,6 @@
 
 </div>
 
-<!-- Modal editar -->
 <div class="modal-backdrop" id="editModal">
   <div class="modal">
     <header><h3>Editar Reserva</h3></header>
@@ -221,10 +204,9 @@
         </div>
       </div>
       <div class="form-row">
-        <div class="field">
-          <label for="table">Mesa</label>
-          <input id="table">
-        </div>
+
+        <!-- *** ELIMINADO CAMPO MESA COMPLETO *** -->
+
         <div class="field">
           <label for="notes">Notas</label>
           <textarea id="notes"></textarea>
@@ -238,7 +220,6 @@
   </div>
 </div>
 
-<!-- Modal nueva reserva -->
 <div class="modal-backdrop" id="newModal">
   <div class="modal">
     <header><h3>Nueva Reserva</h3></header>
@@ -253,7 +234,9 @@
       </div>
       <div class="form-row">
         <div class="field"><label for="new_dt">Fecha y Hora *</label><input id="new_dt" type="datetime-local"></div>
-        <div class="field"><label for="new_table">Mesa</label><input id="new_table"></input></div>
+
+        <!-- *** ELIMINADO CAMPO MESA COMPLETO *** -->
+
       </div>
       <div class="field"><label for="new_notes">Notas</label><textarea id="new_notes"></textarea></div>
     </div>
@@ -265,7 +248,7 @@
 </div>
 
 <script>
-/* Menú flotante */
+
 function toggleMenu(el){
   const menu = el.nextElementSibling;
   document.querySelectorAll(".dropdown-menu").forEach(m=>{ if(m!==menu) m.style.display="none"; });
@@ -275,7 +258,6 @@ document.body.addEventListener("click", ()=> {
   document.querySelectorAll(".dropdown-menu").forEach(m=> m.style.display="none");
 });
 
-/* Filtros */
 const tbody=document.getElementById("tbody");
 const q=document.getElementById("q");
 const dateF=document.getElementById("dateFilter");
@@ -299,7 +281,6 @@ function filter(){
     r.style.display=(okQ&&okD&&okS)?"":"none";
   });
 
-  buildTableGrid();
   computeInsights();
 }
 
@@ -312,39 +293,6 @@ document.getElementById("todayBtn").onclick=()=>{
   filter();
 };
 
-/* Disponibilidad de mesas */
-const TABLE_IDS = ["T1","T2","T3","T4","T5","T6","T7","T8","T9","T10"];
-
-function buildTableGrid(){
-  const grid=document.getElementById("tableGrid");
-  const rows=[...tbody.rows];
-
-  grid.innerHTML="";
-  TABLE_IDS.forEach(id=>{
-    const reserved = rows.filter(r => r.style.display !== "none" && r.dataset.table === id && r.dataset.status !== "cancelled");
-    const div=document.createElement("div");
-    div.className="tcard";
-    div.onclick=()=>filterByTable(id);
-    div.innerHTML=`
-      <span style="font-weight:700;">${id}</span>
-      <span class="${reserved.length ? 'occupied' : 'free'}">${reserved.length ? "Ocupada" : "Libre"}</span>
-    `;
-    grid.appendChild(div);
-  });
-}
-
-function filterByTable(table){
-  q.value="";
-  dateF.value="";
-  statusF.value="active";
-  [...tbody.rows].forEach(r=>{
-    r.style.display = (r.dataset.table === table) ? "" : "none";
-  });
-  buildTableGrid();
-  computeInsights();
-}
-
-/* Acciones (misma API) */
 async function markStatus(id,s){
   await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:s})});
   location.reload();
@@ -358,7 +306,6 @@ async function doCancel(id){
   location.reload();
 }
 
-/* Llamar + WhatsApp */
 function callCustomer(phone){
   if(!phone) return alert("No hay número de teléfono.");
   window.location.href = `tel:${phone}`;
@@ -369,7 +316,6 @@ function sendWhatsApp(phone,name,dt){
   window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
 }
 
-/* Actualizar & WebSocket */
 document.getElementById("refreshBtn").onclick=()=>location.reload();
 (function(){
   try{
@@ -378,7 +324,6 @@ document.getElementById("refreshBtn").onclick=()=>location.reload();
   }catch(e){}
 })();
 
-/* Crear Reserva (misma API, texto español) */
 document.getElementById("newBtn").onclick=()=>{ document.getElementById("newModal").style.display="flex"; };
 document.getElementById("closeNewBtn").onclick=()=>{ document.getElementById("newModal").style.display="none"; };
 
@@ -398,7 +343,6 @@ document.getElementById("createBtn").onclick = async () => {
     contact_phone: document.getElementById("new_phone").value.trim() || null,
     datetime: new Date(dtVal).toISOString(),
     party_size: party,
-    table_number: document.getElementById("new_table").value.trim() || null,
     notes: document.getElementById("new_notes").value.trim() || null
   };
 
@@ -412,14 +356,12 @@ document.getElementById("createBtn").onclick = async () => {
   location.reload();
 };
 
-/* Editar reserva */
 let currentId = null;
 
-function openEdit(id, dt, ps, table, notes){
+function openEdit(id, dt, ps, notes){
   currentId = id;
   document.getElementById("dt").value = dt && dt.includes("T") ? dt.slice(0,16) : "";
   document.getElementById("ps").value = ps || 1;
-  document.getElementById("table").value = table || "";
   document.getElementById("notes").value = notes || "";
   document.getElementById("editModal").style.display="flex";
 }
@@ -430,7 +372,6 @@ document.getElementById("saveBtn").onclick = async () => {
     reservation_id: currentId,
     datetime: document.getElementById("dt").value ? new Date(document.getElementById("dt").value).toISOString() : undefined,
     party_size: document.getElementById("ps").value ? Number(document.getElementById("ps").value) : undefined,
-    table_number: document.getElementById("table").value || undefined,
     notes: document.getElementById("notes").value || undefined,
     status: "updated"
   };
@@ -445,9 +386,8 @@ document.getElementById("saveBtn").onclick = async () => {
   location.reload();
 };
 
-/* Exportar CSV */
 document.getElementById("exportBtn").onclick=()=>{
-  const header = ["Fecha","Hora","Cliente","Contacto","Personas","Mesa","Notas","Estado"];
+  const header = ["Fecha","Hora","Cliente","Contacto","Personas","Notas","Estado"];
   const rows = [header];
 
   [...tbody.rows].forEach(r=>{
@@ -460,8 +400,7 @@ document.getElementById("exportBtn").onclick=()=>{
       cells[3].innerText.trim(),
       cells[4].innerText.trim(),
       cells[5].innerText.trim(),
-      cells[6].innerText.trim(),
-      cells[7].innerText.trim(),
+      cells[6].innerText.trim()
     ]);
   });
 
@@ -472,7 +411,6 @@ document.getElementById("exportBtn").onclick=()=>{
   a.click();
 };
 
-/* Etiquetas en español para los estados (sin cambiar los valores reales) */
 function localizeStatusBadges(){
   const map = {
     confirmed: "Confirmada",
@@ -489,7 +427,6 @@ function localizeStatusBadges(){
   });
 }
 
-/* Estadísticas */
 function computeInsights(){
   const rows = [...tbody.rows];
 
@@ -530,9 +467,7 @@ function computeInsights(){
   document.getElementById("cancelRate").innerText = cancelRate.toFixed(1) + "%";
 }
 
-/* Init */
 document.addEventListener("DOMContentLoaded", ()=>{
-  buildTableGrid();
   computeInsights();
   localizeStatusBadges();
 });
