@@ -18,7 +18,6 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # ---------- Twilio ----------
 from twilio.twiml.messaging_response import MessagingResponse
 
-
 # ---------------------------------------------------------
 # INIT APP
 # ---------------------------------------------------------
@@ -37,12 +36,10 @@ app.add_middleware(
 
 LOCAL_TZ = ZoneInfo("America/Bogota")
 
-
 # ---------------------------------------------------------
 # MEMORY PER USER
 # ---------------------------------------------------------
 session_state = {}
-
 
 # ---------------------------------------------------------
 # SUPABASE
@@ -53,7 +50,6 @@ supabase: Client = create_client(
 )
 
 TABLE_LIMIT = 10
-
 
 def assign_table(iso_local: str):
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_local).execute()
@@ -67,11 +63,12 @@ def assign_table(iso_local: str):
 
 
 # ---------------------------------------------------------
-# PACKAGE DETECTION
+# PACKAGE DETECTION (UPDATED EXACTLY AS REQUESTED)
 # ---------------------------------------------------------
 def detect_package(user_msg: str):
     msg = user_msg.lower()
 
+    # Strong package matching
     if "esencial" in msg or "kit escolar" in msg or "cuidado esencial" in msg:
         return "Paquete Cuidado Esencial"
 
@@ -100,10 +97,16 @@ def save_reservation(data: dict):
     except:
         return "❌ Error procesando la fecha."
 
-    table = assign_table(iso_to_store)
+    # table
+    if data.get("table_number"):
+        table = data["table_number"]
+    else:
+        table = assign_table(iso_to_store)
+
     if not table:
         return "❌ No hay mesas disponibles para ese horario."
 
+    # Insert
     supabase.table("reservations").insert({
         "customer_name": data["customer_name"],
         "customer_email": "",
@@ -113,7 +116,7 @@ def save_reservation(data: dict):
         "table_number": table,
         "notes": "",
         "status": "confirmado",
-        "business_id": 2,
+        "business_id": 2,  # ALWAYS IPS ID
         "package": data.get("package", ""),
         "school_name": data.get("school_name", ""),
     }).execute()
@@ -129,32 +132,42 @@ def save_reservation(data: dict):
 
 
 # ---------------------------------------------------------
-# AI EXTRACTION
+# AI EXTRACTION  (PROMPT UPDATED EXACTLY AS REQUESTED)
 # ---------------------------------------------------------
 def ai_extract(user_msg: str):
     import dateparser
 
-    # detect package
-    detected_package = detect_package(user_msg)
+    PACKAGES = {
+        "cuidado esencial": "Paquete Cuidado Esencial",
+        "salud activa": "Paquete Salud Activa",
+        "bienestar total": "Paquete Bienestar Total",
+    }
 
-    # extract school name → everything AFTER the word "colegio"
+    # Detect package
+    detected_package = ""
     lower_msg = user_msg.lower()
+    for key, full in PACKAGES.items():
+        if key in lower_msg:
+            detected_package = full
+            break
+
+    # Detect school name
     school_name = ""
     if "colegio" in lower_msg:
         try:
             school_name = user_msg.lower().split("colegio", 1)[1].strip()
         except:
-            school_name = ""
+            pass
 
-    # extractor prompt
+    # STRONG EXTRACTOR PROMPT
     prompt = f"""
-Extrae intención para un sistema de citas.
+Eres un extractor de intención para un sistema de reservas médicas escolares.
 
 NO cambies fechas.
+NO conviertas horas.
 NO inventes datos.
 
-Responde SOLO este JSON:
-
+Devuelve SIEMPRE este JSON:
 {{
  "intent": "reserve" | "info" | "other",
  "customer_name": "",
@@ -162,7 +175,15 @@ Responde SOLO este JSON:
  "datetime_text": ""
 }}
 
-Mensaje:
+REGLAS:
+- Si el usuario dice palabras como "agendar", "reservar", "quiero una cita", "quiero agenda", "quiero reservar", INTENT = "reserve".
+- Si solo hace preguntas, INTENT = "info".
+- En cualquier otro caso, INTENT = "other".
+- "customer_name": nombre de la persona si aparece.
+- "datetime_text": fecha u hora mencionada.
+- "party_size": número de personas si está claro.
+
+EXTRACTA del mensaje:
 \"\"\"{user_msg}\"\"\"
 """
 
@@ -176,7 +197,7 @@ Mensaje:
     except:
         extracted = {"intent": "", "customer_name": "", "party_size": "", "datetime_text": ""}
 
-    # parse date
+    # Parse date
     text = extracted.get("datetime_text", "").lower()
     dt_local = dateparser.parse(
         text,
@@ -186,6 +207,7 @@ Mensaje:
             "RETURN_AS_TIMEZONE_AWARE": True
         }
     )
+
     final_iso = dt_local.isoformat() if dt_local else ""
 
     return {
@@ -204,8 +226,7 @@ Mensaje:
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
     resp = MessagingResponse()
-    msg = Body.strip()
-    msg_lower = msg.lower()
+    msg = Body.strip().lower()
     user_id = "default"
 
     if user_id not in session_state:
@@ -221,41 +242,26 @@ async def whatsapp(Body: str = Form(...)):
     memory = session_state[user_id]
     extracted = ai_extract(msg)
 
-    # user starts reservation
     if extracted.get("intent") == "reserve" and not memory["awaiting_info"]:
         memory["awaiting_info"] = True
         resp.message(
-            "Perfecto 😊\n\nPor favor envíame:\n"
-            "• Nombre del estudiante\n"
-            "• Colegio\n"
-            "• Fecha y hora\n"
-            "• Número de estudiantes\n"
-            "• Paquete deseado"
+            "Perfecto 😊\n\nPor favor envíame:\n• Nombre del estudiante\n• Colegio\n• Fecha y hora\n• Número de personas\n• Paquete deseado"
         )
         return Response(str(resp), media_type="application/xml")
 
-    # save memory fields
     if extracted.get("customer_name"):
         memory["customer_name"] = extracted["customer_name"]
-
     if extracted.get("datetime"):
         memory["datetime"] = extracted["datetime"]
-
     if extracted.get("party_size"):
         memory["party_size"] = extracted["party_size"]
-
     if extracted.get("school_name"):
         memory["school_name"] = extracted["school_name"]
 
-    if extracted.get("package"):
-        memory["package"] = extracted["package"]
-
-    # detect package from raw text
-    pkg = detect_package(msg_lower)
+    pkg = detect_package(msg)
     if pkg:
         memory["package"] = pkg
 
-    # ask missing fields
     if not memory["customer_name"]:
         resp.message("¿Cuál es el nombre del estudiante?")
         return Response(str(resp), media_type="application/xml")
@@ -275,17 +281,15 @@ async def whatsapp(Body: str = Form(...)):
     if not memory["package"]:
         resp.message(
             "¿Qué paquete deseas reservar?\n\n"
-            "• Cuidado Esencial\n"
-            "• Salud Activa\n"
-            "• Bienestar Total"
+            "• *Cuidado Esencial* – $45.000\n"
+            "• *Salud Activa* – $60.000\n"
+            "• *Bienestar Total* – $75.000"
         )
         return Response(str(resp), media_type="application/xml")
 
-    # save reservation
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
-    # reset
     session_state[user_id] = {
         "customer_name": None,
         "datetime": None,
@@ -307,6 +311,7 @@ from dateutil import parser
 async def dashboard(request: Request):
 
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
+
     rows = res.data or []
 
     fixed = []
@@ -323,6 +328,7 @@ async def dashboard(request: Request):
             dt = parser.isoparse(iso).astimezone(LOCAL_TZ)
             row["date"] = dt.strftime("%Y-%m-%d")
             row["time"] = dt.strftime("%H:%M")
+
             if dt >= week_ago:
                 weekly_count += 1
         else:
@@ -347,8 +353,7 @@ async def update_reservation(update: dict):
     if not rid:
         return {"success": False}
 
-    fields = {k: v for k, v in update.items()
-              if k != "reservation_id" and v not in ["", None, "-", "null"]}
+    fields = {k: v for k, v in update.items() if k != "reservation_id" and v not in ["", None, "-", "null"]}
 
     if fields:
         supabase.table("reservations").update(fields).eq("reservation_id", rid).execute()
@@ -361,18 +366,15 @@ async def cancel_reservation(update: dict):
     supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", update["reservation_id"]).execute()
     return {"success": True}
 
-
 @app.post("/archiveReservation")
 async def archive_reservation(update: dict):
     supabase.table("reservations").update({"status": "archived"}).eq("reservation_id", update["reservation_id"]).execute()
-    return {"success": True}
-
+    return {"success":True}
 
 @app.post("/markArrived")
 async def mark_arrived(update: dict):
     supabase.table("reservations").update({"status": "arrived"}).eq("reservation_id", update["reservation_id"]).execute()
     return {"success": True}
-
 
 @app.post("/markNoShow")
 async def mark_no_show(update: dict):
