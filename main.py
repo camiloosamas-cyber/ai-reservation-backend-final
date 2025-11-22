@@ -381,6 +381,20 @@ async def mark_no_show(update: dict):
     supabase.table("reservations").update({"status": "no_show"}).eq("reservation_id", update["reservation_id"]).execute()
     return {"success": True}
 
+@app.post("/createReservation")
+async def create_reservation(data: dict):
+    result = save_reservation({
+        "customer_name": data.get("customer_name",""),
+        "customer_email": data.get("customer_email",""),
+        "contact_phone": data.get("contact_phone",""),
+        "datetime": data.get("datetime",""),
+        "party_size": data.get("party_size",1),
+        "school_name": data.get("school_name",""),
+        "package": data.get("package",""),
+        "table_number": None
+    })
+    return {"success": True}
+
 
 # ---------------------------------------------------------
 # RUN
