@@ -167,17 +167,18 @@
 
         <td>{{ r.school_name or '-' }}</td>
 
-        <td>
-  {% if r.package == "Cuidado Esencial" %}
-    <span class="pkg-tag pkg-esencial">Cuidado Esencial</span>
-  {% elif r.package == "Salud Activa" %}
-    <span class="pkg-tag pkg-activa">Salud Activa</span>
-  {% elif r.package == "Bienestar Total" %}
-    <span class="pkg-tag pkg-total">Bienestar Total</span>
+<td>
+  {% if r.package == "Paquete Cuidado Esencial" %}
+      <span class="pkg-tag pkg-esencial">Cuidado Esencial</span>
+  {% elif r.package == "Paquete Salud Activa" %}
+      <span class="pkg-tag pkg-activa">Salud Activa</span>
+  {% elif r.package == "Paquete Bienestar Total" %}
+      <span class="pkg-tag pkg-total">Bienestar Total</span>
   {% else %}
-    -
+      -
   {% endif %}
 </td>
+
 
         <td><span class="chip {{ r.status }}">{{ r.status.replace("_"," ") }}</span></td>
 
@@ -538,6 +539,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 </body>
 </html>
+
 
 
 
