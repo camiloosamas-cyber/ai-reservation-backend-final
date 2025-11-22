@@ -161,7 +161,13 @@
           <div class="menu-wrapper" onclick="event.stopPropagation()">
             <button class="menu-btn" onclick="toggleMenu(this);event.stopPropagation()">⋮</button>
             <div class="dropdown-menu" onclick="event.stopPropagation()">
-              <button onclick="openEdit({{ r.reservation_id }}, `{{ r.datetime or '' }}`, {{ r.party_size or 1 }}, `{{ r.notes or '' }}`)">✏️ Editar</button>
+             <button onclick="openEdit(
+  {{ r.reservation_id }},
+  `{{ r.datetime or '' }}`,
+  {{ r.party_size or 1 }},
+  `{{ r.school_name or '' }}`,
+  `{{ r.package or '' }}`
+)">✏️ Editar</button>
               <button onclick="markStatus({{ r.reservation_id }}, 'arrived')">✅ Marcar como Llegó</button>
               <button onclick="markStatus({{ r.reservation_id }}, 'no_show')">⚠️ Marcar No-Show</button>
               <button onclick="doArchive({{ r.reservation_id }})">🗄️ Archivar</button>
@@ -205,6 +211,16 @@
         <div class="field">
         <label for="notes">Colegio</label>
         <textarea id="notes"></textarea>
+          <div class="form-row">
+  <div class="field">
+    <label for="edit_package">Paquete</label>
+    <select id="edit_package">
+      <option value="Paquete Cuidado Esencial">Cuidado Esencial</option>
+      <option value="Paquete Salud Activa">Salud Activa</option>
+      <option value="Paquete Bienestar Total">Bienestar Total</option>
+    </select>
+  </div>
+</div>
 
         </div>
       </div>
@@ -234,6 +250,17 @@
 
       </div>
       <div class="field"><label for="new_notes">Colegio</label><textarea id="new_notes"></textarea></div>
+      <div class="form-row">
+  <div class="field">
+    <label for="new_package">Paquete</label>
+    <select id="new_package">
+      <option value="">Seleccionar paquete</option>
+      <option value="Paquete Cuidado Esencial">Cuidado Esencial</option>
+      <option value="Paquete Salud Activa">Salud Activa</option>
+      <option value="Paquete Bienestar Total">Bienestar Total</option>
+    </select>
+  </div>
+</div>
     </div>
     <footer>
       <button class="btn" id="closeNewBtn">Cancelar</button>
@@ -338,7 +365,9 @@ document.getElementById("createBtn").onclick = async () => {
     contact_phone: document.getElementById("new_phone").value.trim() || null,
     datetime: new Date(dtVal).toISOString(),
     party_size: party,
-    school_name: document.getElementById("new_notes").value.trim() || null
+   school_name: document.getElementById("new_notes").value.trim() || null,
+   package: document.getElementById("new_package").value || null
+
   };
 
   await fetch("/createReservation", {
@@ -353,7 +382,8 @@ document.getElementById("createBtn").onclick = async () => {
 
 let currentId = null;
 
-function openEdit(id, dt, ps, school){
+function openEdit(id, dt, ps, school, pkg){
+  document.getElementById("edit_package").value = pkg || "";
   currentId = id;
   document.getElementById("dt").value = dt && dt.includes("T") ? dt.slice(0,16) : "";
   document.getElementById("ps").value = ps || 1;
@@ -364,12 +394,13 @@ function closeEdit(){ document.getElementById("editModal").style.display="none";
 
 document.getElementById("saveBtn").onclick = async () => {
   const payload = {
-    reservation_id: currentId,
-    datetime: document.getElementById("dt").value ? new Date(document.getElementById("dt").value).toISOString() : undefined,
-    party_size: document.getElementById("ps").value ? Number(document.getElementById("ps").value) : undefined,
-    school_name: document.getElementById("notes").value || undefined,
-    status: "updated"
-  };
+  reservation_id: currentId,
+  datetime: document.getElementById("dt").value ? new Date(document.getElementById("dt").value).toISOString() : undefined,
+  party_size: document.getElementById("ps").value ? Number(document.getElementById("ps").value) : undefined,
+  school_name: document.getElementById("notes").value || undefined,
+  package: document.getElementById("edit_package").value || undefined,
+  status: "updated"
+};
 
   await fetch("/updateReservation", {
     method: "POST",
@@ -470,6 +501,7 @@ document.addEventListener("DOMContentLoaded", ()=>{
 
 </body>
 </html>
+
 
 
 
