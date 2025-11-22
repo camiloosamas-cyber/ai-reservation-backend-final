@@ -12,36 +12,52 @@
       --ok:#16a34a; --warn:#f59e0b; --bad:#ef4444; --chip:#eef2ff;
       --border:#e5e7eb; --shadow:0 6px 18px rgba(31,41,55,0.06);
       --head:#1d4ed8;
+
+      /* package colors */
+      --pkg-esencial:#2563eb;
+      --pkg-activa:#16a34a;
+      --pkg-total:#7c3aed;
     }
 
     body{ margin:0; background:var(--bg); font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Arial; color:var(--ink); }
     .wrap{ max-width:1200px; margin:auto; padding:30px 16px; }
+
     header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
     header h1{ font-size:26px; font-weight:700; margin:0; }
     .sub{ margin-top:4px; font-size:14px; color:var(--muted); }
-    .toolbar{ display:flex; gap:10px; }
 
+    .toolbar{ display:flex; gap:10px; }
     .btn{ padding:10px 14px; border-radius:10px; border:1px solid var(--border); font-weight:600; cursor:pointer; background:white; }
     .btn.primary{ background:var(--primary); color:white; border:none; }
 
-    .cards{ display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:22px; }
-    .card{ background:white; border-radius:16px; padding:18px; border:1px solid var(--border); box-shadow:var(--shadow); }
+    /* CARDS */
+    .cards{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:22px; }
+    .card{
+      background:white; border-radius:16px; padding:18px;
+      border:1px solid var(--border); box-shadow:var(--shadow);
+    }
     .card h3{ margin:0; font-size:13px; color:var(--muted); }
     .card p{ margin:0; font-size:28px; font-weight:800; }
 
+    /* FILTERS */
     .filters{
       display:flex; align-items:center; gap:14px; background:white; padding:14px;
       border-radius:14px; border:1px solid var(--border); box-shadow:var(--shadow);
       margin-bottom:22px;
     }
-    .filters input, .filters select{ height:38px; border-radius:10px; border:1px solid var(--border); padding:8px 12px; font-size:14px; }
+    .filters input, .filters select{
+      height:38px; border-radius:10px; border:1px solid var(--border);
+      padding:8px 12px; font-size:14px;
+    }
 
+    /* TABLE */
     .table-wrap{ border-radius:14px; background:white; border:1px solid var(--border); }
     table{ width:100%; border-collapse:collapse; }
     thead th{ padding:12px; background:var(--head); color:white; font-weight:600; font-size:13px; }
     tbody td{ padding:12px; border-top:1px solid var(--border); font-size:14px; }
     tbody tr:hover{ background:#f9fbff; }
 
+    /* STATUS CHIPS */
     .chip{ padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700; display:inline-block; }
     .confirmed{ background:#dcfce7; color:#166534; }
     .arrived{ background:#bbf7d0; color:#064e3b; }
@@ -49,6 +65,15 @@
     .pending{ background:#eef2ff; color:#4338ca; }
     .cancelled,.no_show{ background:#fee2e2; color:#b91c1c; }
     .archived{ background:#d1d5db; color:#4b5563; }
+
+    /* PACKAGE TAGS */
+    .pkg-tag{
+      color:white; padding:4px 10px; border-radius:10px; font-size:12px;
+      font-weight:700; display:inline-block;
+    }
+    .pkg-esencial{ background:var(--pkg-esencial); }
+    .pkg-activa{ background:var(--pkg-activa); }
+    .pkg-total{ background:var(--pkg-total); }
 
     .contact-actions{ display:flex; gap:4px; margin-top:4px; }
     .icon-btn{ padding:4px 6px; font-size:13px; border-radius:6px; border:none; cursor:pointer; background:#eef2ff; }
@@ -60,17 +85,27 @@
       border:1px solid var(--border); border-radius:8px; min-width:150px;
       box-shadow:var(--shadow); z-index:50;
     }
-    .dropdown-menu button{ width:100%; background:none; border:none; padding:8px 12px; text-align:left; font-size:13px; cursor:pointer; }
+    .dropdown-menu button{
+      width:100%; background:none; border:none; padding:8px 12px;
+      text-align:left; font-size:13px; cursor:pointer;
+    }
     .dropdown-menu button:hover{ background:#eef2ff; }
 
     .modal-backdrop{ position:fixed; inset:0; background:#0008; display:none; align-items:center; justify-content:center; z-index:100; }
-    .modal{ background:white; width:600px; max-width:90vw; border-radius:16px; padding:16px; border:1px solid var(--border); box-sizing:border-box; }
+    .modal{
+      background:white; width:600px; max-width:90vw; border-radius:16px;
+      padding:16px; border:1px solid var(--border); box-sizing:border-box;
+    }
     .modal header{ padding-bottom:12px; border-bottom:1px solid var(--border); }
     .modal footer{ padding-top:12px; display:flex; justify-content:flex-end; gap:10px; }
 
-    .form-row{ display:flex; justify-content:space-between; gap:20px; margin-bottom:14px; }
+    .form-row{
+      display:flex; justify-content:space-between; gap:20px; margin-bottom:14px;
+    }
     .field{ width:48%; box-sizing:border-box; }
-    .field input,.field textarea{ width:100%; padding:10px; border-radius:10px; border:1px solid var(--border); }
+    .field input,.field textarea{
+      width:100%; padding:10px; border-radius:10px; border:1px solid var(--border);
+    }
   </style>
 </head>
 
@@ -80,7 +115,7 @@
   <header>
     <div>
       <h1>📚 Panel de Citas Escolares</h1>
-      <p class="sub">Administra citas de entrega, analiza datos y mantén todo organizado</p>
+      <p class="sub">Administra citas, analiza datos y mantén todo organizado</p>
     </div>
     <div class="toolbar">
       <button class="btn primary" id="newBtn">+ Nueva Reserva</button>
@@ -89,13 +124,12 @@
     </div>
   </header>
 
+  <!-- NEW KPI CARDS -->
   <div class="cards">
-    <div class="card"><h3>Total de Citas</h3><p>{{ reservations|length }}</p></div>
-    <div class="card"><h3>Entregadas</h3><p>{{ reservations|selectattr('status','equalto','confirmed')|list|length }}</p></div>
-    <div class="card"><h3>Canceladas</h3><p>{{ reservations|selectattr('status','equalto','cancelled')|list|length }}</p></div>
-    <div class="card"><h3>Esta Semana</h3><p>{{ weekly_count }}</p></div>
+    <div class="card"><h3>Citas de Hoy</h3><p id="todayCount">–</p></div>
+    <div class="card"><h3>Ingresos Estimados</h3><p id="todayRevenue">$0</p></div>
+    <div class="card"><h3>Paquete Más Vendido</h3><p id="topPackage">–</p></div>
   </div>
-
   <div class="filters">
     <input id="q" placeholder="Buscar...">
     <input id="dateFilter" type="date">
@@ -116,12 +150,18 @@
     <table>
       <thead>
       <tr>
-        <th>Fecha</th><th>Hora</th><th>Estudiante</th><th>Contacto</th>
-        <th>Colegio</th><th>Paquete</th><th>Estado</th><th>Acciones</th>
+        <th>Fecha</th>
+        <th>Hora</th>
+        <th>Estudiante</th>
+        <th>Contacto</th>
+        <th>Colegio</th>
+        <th>Paquete</th>
+        <th>Estado</th>
+        <th>Acciones</th>
       </tr>
       </thead>
-      <tbody id="tbody">
 
+      <tbody id="tbody">
       {% for r in reservations %}
       <tr
         data-name="{{ (r.customer_name ~ ' ' ~ r.customer_email)|lower }}"
@@ -154,121 +194,46 @@
 
         <td>{{ r.school_name or '-' }}</td>
 
-        <td>{{ r.package or '-' }}</td>
-        <td><span class="chip {{ r.status }}">{{ r.status.replace("_"," ") }}</span></td>
+        <td>
+          {% if r.package == "Cuidado Esencial" %}
+            <span class="pkg-tag pkg-esencial">Cuidado Esencial</span>
+          {% elif r.package == "Salud Activa" %}
+            <span class="pkg-tag pkg-activa">Salud Activa</span>
+          {% elif r.package == "Bienestar Total" %}
+            <span class="pkg-tag pkg-total">Bienestar Total</span>
+          {% else %}
+            -
+          {% endif %}
+        </td>
+
+        <td>
+          <span class="chip {{ r.status }}">{{ r.status.replace("_"," ") }}</span>
+        </td>
 
         <td>
           <div class="menu-wrapper" onclick="event.stopPropagation()">
             <button class="menu-btn" onclick="toggleMenu(this);event.stopPropagation()">⋮</button>
             <div class="dropdown-menu" onclick="event.stopPropagation()">
-             <button onclick="openEdit(
-  {{ r.reservation_id }},
-  `{{ r.datetime or '' }}`,
-  {{ r.party_size or 1 }},
-  `{{ r.school_name or '' }}`,
-  `{{ r.package or '' }}`
-)">✏️ Editar</button>
-              <button onclick="markStatus({{ r.reservation_id }}, 'arrived')">✅ Marcar como Llegó</button>
-              <button onclick="markStatus({{ r.reservation_id }}, 'no_show')">⚠️ Marcar No-Show</button>
+              <button onclick="openEdit(
+                {{ r.reservation_id }},
+                `{{ r.datetime or '' }}`,
+                {{ r.party_size or 1 }},
+                `{{ r.school_name or '' }}`,
+                `{{ r.package or '' }}`
+              )">✏️ Editar</button>
+              <button onclick="markStatus({{ r.reservation_id }}, 'arrived')">✅ Llegó</button>
+              <button onclick="markStatus({{ r.reservation_id }}, 'no_show')">⚠️ No-Show</button>
               <button onclick="doArchive({{ r.reservation_id }})">🗄️ Archivar</button>
               <button onclick="doCancel({{ r.reservation_id }})">❌ Cancelar</button>
             </div>
           </div>
         </td>
+
       </tr>
       {% endfor %}
-
       </tbody>
     </table>
   </div>
-
-  <h2 style="margin-top:24px;">📊 Estadísticas</h2>
-  <div class="cards" style="grid-template-columns:repeat(3,1fr);">
-    <div class="card"><h3>Promedio de Citas</h3><p id="avgParty">–</p></div>
-    <div class="card"><h3>Hora Pico</h3><p id="peakTime">–</p></div>
-    <div class="card"><h3>Tasa de Cancelación</h3><p id="cancelRate">–</p></div>
-  </div>
-
-</div>
-
-<!-- Modal editar -->
-<div class="modal-backdrop" id="editModal">
-  <div class="modal">
-    <header><h3>Editar Reserva</h3></header>
-    <div style="padding:16px;">
-      <div class="form-row">
-        <div class="field">
-          <label for="dt">Fecha y Hora</label>
-          <input id="dt" type="datetime-local">
-        </div>
-        <div class="field">
-          <label for="ps">Estudiantes</label>
-          <input id="ps" type="number" min="1" value="1">
-        </div>
-      </div>
-      <div class="form-row">
-
-        <div class="field">
-        <label for="notes">Colegio</label>
-        <textarea id="notes"></textarea>
-          <div class="form-row">
-  <div class="field">
-    <label for="edit_package">Paquete</label>
-    <select id="edit_package">
-      <option value="Paquete Cuidado Esencial">Cuidado Esencial</option>
-      <option value="Paquete Salud Activa">Salud Activa</option>
-      <option value="Paquete Bienestar Total">Bienestar Total</option>
-    </select>
-  </div>
-</div>
-
-        </div>
-      </div>
-    </div>
-    <footer>
-      <button class="btn" onclick="closeEdit()">Cancelar</button>
-      <button class="btn primary" id="saveBtn">Guardar</button>
-    </footer>
-  </div>
-</div>
-
-<!-- Modal nueva reserva -->
-<div class="modal-backdrop" id="newModal">
-  <div class="modal">
-    <header><h3>Nueva Reserva</h3></header>
-    <div style="padding:16px;">
-      <div class="form-row">
-        <div class="field"><label for="new_name">Nombre *</label><input id="new_name" required></div>
-        <div class="field"><label for="new_email">Email</label><input id="new_email" type="email"></div>
-      </div>
-      <div class="form-row">
-        <div class="field"><label for="new_phone">Teléfono</label><input id="new_phone" type="tel"></div>
-        <div class="field"><label for="new_party">Estudiantes *</label><input id="new_party" type="number" min="1" value="2"></div>
-      </div>
-      <div class="form-row">
-        <div class="field"><label for="new_dt">Fecha y Hora *</label><input id="new_dt" type="datetime-local"></div>
-
-      </div>
-      <div class="field"><label for="new_notes">Colegio</label><textarea id="new_notes"></textarea></div>
-      <div class="form-row">
-  <div class="field">
-    <label for="new_package">Paquete</label>
-    <select id="new_package">
-      <option value="">Seleccionar paquete</option>
-      <option value="Paquete Cuidado Esencial">Cuidado Esencial</option>
-      <option value="Paquete Salud Activa">Salud Activa</option>
-      <option value="Paquete Bienestar Total">Bienestar Total</option>
-    </select>
-  </div>
-</div>
-    </div>
-    <footer>
-      <button class="btn" id="closeNewBtn">Cancelar</button>
-      <button class="btn primary" id="createBtn">Crear</button>
-    </footer>
-  </div>
-</div>
-
 <script>
 
 function toggleMenu(el){
@@ -276,6 +241,7 @@ function toggleMenu(el){
   document.querySelectorAll(".dropdown-menu").forEach(m=>{ if(m!==menu) m.style.display="none"; });
   menu.style.display = menu.style.display==="block" ? "none" : "block";
 }
+
 document.body.addEventListener("click", ()=> {
   document.querySelectorAll(".dropdown-menu").forEach(m=> m.style.display="none");
 });
@@ -291,16 +257,16 @@ function filter(){
   const sv=statusF.value;
 
   [...tbody.rows].forEach(r=>{
-    const okQ=r.dataset.name.includes(qv);
-    const okD=!dv || r.dataset.date===dv;
-    const s=r.dataset.status;
-    const okS=
+    const okQ = r.dataset.name.includes(qv);
+    const okD = !dv || r.dataset.date===dv;
+    const s = r.dataset.status;
+    const okS =
       (sv==="active" && s!=="archived") ||
       (sv==="archived" && s==="archived") ||
       (sv==="all") ||
       (sv===s);
 
-    r.style.display=(okQ&&okD&&okS)?"":"none";
+    r.style.display = (okQ && okD && okS) ? "" : "none";
   });
 
   computeInsights();
@@ -316,15 +282,29 @@ document.getElementById("todayBtn").onclick=()=>{
 };
 
 async function markStatus(id,s){
-  await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:s})});
+  await fetch("/updateReservation",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({reservation_id:id,status:s})
+  });
   location.reload();
 }
+
 async function doArchive(id){
-  await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:"archived"})});
+  await fetch("/updateReservation",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({reservation_id:id,status:"archived"})
+  });
   location.reload();
 }
+
 async function doCancel(id){
-  await fetch("/cancelReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id})});
+  await fetch("/cancelReservation",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({reservation_id:id})
+  });
   location.reload();
 }
 
@@ -332,6 +312,7 @@ function callCustomer(phone){
   if(!phone) return alert("No hay número de teléfono.");
   window.location.href = `tel:${phone}`;
 }
+
 function sendWhatsApp(phone,name,dt){
   if(!phone) return alert("No hay número de teléfono.");
   const msg = `Hola ${name}, estamos confirmando la entrega del paquete escolar programado para ${dt}.`;
@@ -339,6 +320,7 @@ function sendWhatsApp(phone,name,dt){
 }
 
 document.getElementById("refreshBtn").onclick=()=>location.reload();
+
 (function(){
   try{
     const ws=new WebSocket(`${location.protocol==="https:"?"wss":"ws"}://${location.host}/ws`);
@@ -365,9 +347,8 @@ document.getElementById("createBtn").onclick = async () => {
     contact_phone: document.getElementById("new_phone").value.trim() || null,
     datetime: new Date(dtVal).toISOString(),
     party_size: party,
-   school_name: document.getElementById("new_notes").value.trim() || null,
-   package: document.getElementById("new_package").value || null
-
+    school_name: document.getElementById("new_notes").value.trim() || null,
+    package: document.getElementById("new_package").value || null
   };
 
   await fetch("/createReservation", {
@@ -390,17 +371,20 @@ function openEdit(id, dt, ps, school, pkg){
   document.getElementById("notes").value = school || "";
   document.getElementById("editModal").style.display="flex";
 }
-function closeEdit(){ document.getElementById("editModal").style.display="none"; }
+
+function closeEdit(){ 
+  document.getElementById("editModal").style.display="none"; 
+}
 
 document.getElementById("saveBtn").onclick = async () => {
   const payload = {
-  reservation_id: currentId,
-  datetime: document.getElementById("dt").value ? new Date(document.getElementById("dt").value).toISOString() : undefined,
-  party_size: document.getElementById("ps").value ? Number(document.getElementById("ps").value) : undefined,
-  school_name: document.getElementById("notes").value || undefined,
-  package: document.getElementById("edit_package").value || undefined,
-  status: "updated"
-};
+    reservation_id: currentId,
+    datetime: document.getElementById("dt").value ? new Date(document.getElementById("dt").value).toISOString() : undefined,
+    party_size: document.getElementById("ps").value ? Number(document.getElementById("ps").value) : undefined,
+    school_name: document.getElementById("notes").value || undefined,
+    package: document.getElementById("edit_package").value || undefined,
+    status: "updated"
+  };
 
   await fetch("/updateReservation", {
     method: "POST",
@@ -437,6 +421,66 @@ document.getElementById("exportBtn").onclick=()=>{
   a.click();
 };
 
+// ------------------------------
+// NEW INSIGHTS
+// ------------------------------
+
+function computeInsights(){
+  const rows = [...tbody.rows];
+
+  // ========= Citas hoy =========
+  const today = new Date().toISOString().slice(0,10);
+  const todayCount = rows.filter(r => r.dataset.date === today).length;
+  document.getElementById("todayCount").innerText = todayCount;
+
+  // ========= Ingresos =========
+  let ingresos = 0;
+  rows.forEach(r=>{
+    const pkg = r.cells[5].innerText.trim();
+    if (pkg.includes("Esencial")) ingresos += 45000;
+    else if (pkg.includes("Activa")) ingresos += 60000;
+    else if (pkg.includes("Total")) ingresos += 75000;
+  });
+  document.getElementById("income").innerText = "$" + ingresos.toLocaleString("es-CO");
+
+  // ========= Paquete más vendido =========
+  const counter = { esencial: 0, activa: 0, total: 0 };
+
+  rows.forEach(r=>{
+    const pkg = r.cells[5].innerText.trim().toLowerCase();
+    if (pkg.includes("esencial")) counter.esencial++;
+    else if (pkg.includes("activa")) counter.activa++;
+    else if (pkg.includes("total")) counter.total++;
+  });
+
+  let best = "N/A";
+  let max = 0;
+
+  Object.entries(counter).forEach(([k,v])=>{
+    if(v > max){
+      max = v;
+      best = k;
+    }
+  });
+
+  const map = {
+    esencial: "Cuidado Esencial",
+    activa: "Salud Activa",
+    total: "Bienestar Total"
+  };
+
+  document.getElementById("topPackage").innerText = max === 0 ? "N/A" : map[best];
+}
+
+document.addEventListener("DOMContentLoaded", ()=>{
+  computeInsights();
+  localizeStatusBadges();
+});
+
+// ------------------------------
+// Traducciones estado
+// ------------------------------
+
 function localizeStatusBadges(){
   const map = {
     confirmed: "Confirmado",
@@ -453,54 +497,4 @@ function localizeStatusBadges(){
   });
 }
 
-function computeInsights(){
-  const rows = [...tbody.rows];
-
-  const total = rows.length;
-  if (!total){
-    document.getElementById("avgParty").innerText = "0";
-    document.getElementById("peakTime").innerText = "N/A";
-    document.getElementById("cancelRate").innerText = "0%";
-    return;
-  }
-
-  let sumParty = 0, countParty = 0;
-  const timeFreq = {};
-  let cancelled = 0;
-
-  rows.forEach(r=>{
-    const p = parseInt(r.cells[4].innerText.trim() || "0", 10);
-    if (!isNaN(p) && p>0){ sumParty += p; countParty++; }
-
-    const t = r.cells[1].innerText.trim();
-    if (t && t !== "-"){ timeFreq[t] = (timeFreq[t]||0) + 1; }
-
-    const s = r.dataset.status || "";
-    if (s === "cancelled") cancelled += 1;
-  });
-
-  const avg = countParty ? (sumParty / countParty) : 0;
-  let peak = "N/A";
-  let best = 0;
-  Object.entries(timeFreq).forEach(([t,c])=>{
-    if (c > best){ best = c; peak = t; }
-  });
-
-  const cancelRate = total ? ((cancelled/total)*100) : 0;
-
-  document.getElementById("avgParty").innerText = avg.toFixed(1);
-  document.getElementById("peakTime").innerText = peak;
-  document.getElementById("cancelRate").innerText = cancelRate.toFixed(1) + "%";
-}
-
-document.addEventListener("DOMContentLoaded", ()=>{
-  computeInsights();
-  localizeStatusBadges();
-});
 </script>
-
-</body>
-</html>
-
-
-
