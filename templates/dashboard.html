@@ -203,8 +203,9 @@
       <div class="form-row">
 
         <div class="field">
-          <label for="notes">Notas</label>
-          <textarea id="notes"></textarea>
+        <label for="notes">Colegio</label>
+        <textarea id="notes"></textarea>
+
         </div>
       </div>
     </div>
@@ -337,7 +338,7 @@ document.getElementById("createBtn").onclick = async () => {
     contact_phone: document.getElementById("new_phone").value.trim() || null,
     datetime: new Date(dtVal).toISOString(),
     party_size: party,
-    notes: document.getElementById("new_notes").value.trim() || null
+    school_name: document.getElementById("new_notes").value.trim() || null
   };
 
   await fetch("/createReservation", {
@@ -352,11 +353,11 @@ document.getElementById("createBtn").onclick = async () => {
 
 let currentId = null;
 
-function openEdit(id, dt, ps, notes){
+function openEdit(id, dt, ps, school){
   currentId = id;
   document.getElementById("dt").value = dt && dt.includes("T") ? dt.slice(0,16) : "";
   document.getElementById("ps").value = ps || 1;
-  document.getElementById("notes").value = notes || "";
+  document.getElementById("notes").value = school || "";
   document.getElementById("editModal").style.display="flex";
 }
 function closeEdit(){ document.getElementById("editModal").style.display="none"; }
@@ -366,7 +367,7 @@ document.getElementById("saveBtn").onclick = async () => {
     reservation_id: currentId,
     datetime: document.getElementById("dt").value ? new Date(document.getElementById("dt").value).toISOString() : undefined,
     party_size: document.getElementById("ps").value ? Number(document.getElementById("ps").value) : undefined,
-    notes: document.getElementById("notes").value || undefined,
+    school_name: document.getElementById("notes").value || undefined,
     status: "updated"
   };
 
@@ -469,4 +470,5 @@ document.addEventListener("DOMContentLoaded", ()=>{
 
 </body>
 </html>
+
 
