@@ -321,11 +321,14 @@ async def whatsapp(Body: str = Form(...)):
     extracted = ai_extract(msg)
 
     # ---------------------------------------------------
-    # "SEND ALL INFO" TRIGGER
-    # Only triggered when:
-    # - User shows intent to reserve
-    # - User has NOT sent ANY of the 5 required fields
-    # - It has not been triggered before
+    # IF NO INTENT → DO NOT START RESERVATION
+    # ---------------------------------------------------
+    if extracted["intent"] == "other" and not memory["awaiting_info"]:
+        resp.message("Hola 👋 ¿En qué puedo ayudarte?")
+        return Response(str(resp), media_type="application/xml")
+
+    # ---------------------------------------------------
+    # "SEND ALL INFO" TRIGGER (when intent = reserve)
     # ---------------------------------------------------
     if (
         extracted.get("intent") == "reserve"
@@ -350,7 +353,7 @@ async def whatsapp(Body: str = Form(...)):
         return Response(str(resp), media_type="application/xml")
 
     # ---------------------------------------------------
-    # SAVE INFORMATION THAT WAS EXTRACTED
+    # SAVE EXTRACTED INFO
     # ---------------------------------------------------
     if extracted.get("customer_name"):
         memory["customer_name"] = extracted["customer_name"]
@@ -364,7 +367,6 @@ async def whatsapp(Body: str = Form(...)):
     if extracted.get("party_size"):
         memory["party_size"] = extracted["party_size"]
 
-    # PACKAGE (rule-based from detect_package)
     pkg = detect_package(msg)
     if pkg:
         memory["package"] = pkg
@@ -403,6 +405,7 @@ async def whatsapp(Body: str = Form(...)):
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
+    # Reset session
     session_state[user_id] = {
         "customer_name": None,
         "datetime": None,
@@ -413,6 +416,7 @@ async def whatsapp(Body: str = Form(...)):
     }
 
     return Response(str(resp), media_type="application/xml")
+
 
   
 # ---------------------------------------------------------
