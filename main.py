@@ -294,20 +294,19 @@ Devuelve JSON:
         "school_name": school_name
     }
 
-
 # ---------------------------------------------------------
-# WHATSAPP HANDLER
+# WHATSAPP HANDLER (FULLY FIXED RESET + FIRST MESSAGE LOGIC)
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
     resp = MessagingResponse()
     msg_raw = Body.strip()
     msg = msg_raw.lower()
-    
-    # FIX: define user_id FIRST
     user_id = "default"
-    
-    # RESET BLOCK (now works correctly)
+
+    # -----------------------------------------------------
+    # 🚨 1. RESET MUST RUN BEFORE ANY OTHER LOGIC
+    # -----------------------------------------------------
     if msg in ["reset", "reiniciar", "borrar", "nuevo"]:
         session_state[user_id] = {
             "customer_name": None,
@@ -320,10 +319,10 @@ async def whatsapp(Body: str = Form(...)):
         }
         resp.message("🔄 Memoria reiniciada.\n\nPuedes empezar una conversación nueva 😊")
         return Response(str(resp), media_type="application/xml")
-        
-    # -----------------------------------------
-    # INIT MEMORY
-    # -----------------------------------------
+    
+    # -----------------------------------------------------
+    # 2. INIT MEMORY (NOW SAFE AFTER RESET)
+    # -----------------------------------------------------
     if user_id not in session_state:
         session_state[user_id] = {
             "customer_name": None,
@@ -337,10 +336,9 @@ async def whatsapp(Body: str = Form(...)):
 
     memory = session_state[user_id]
 
-    # -----------------------------------------
-    # SMART FIRST-MESSAGE CLASSIFICATION
-    # (based on your full WhatsApp dataset)
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # 3. FIRST MESSAGE CLASSIFIER (CLEAN, RELIABLE)
+    # -----------------------------------------------------
     greetings = [
         "hola", "holaa", "ola", "buenas", "buen dia", "buen día",
         "buenas tardes", "buenas noches", "hola ips", "hola quien habla",
@@ -373,15 +371,41 @@ async def whatsapp(Body: str = Form(...)):
         "certificado"
     ]
 
-    # 1) FIRST MESSAGE LOGIC
+      # -----------------------------------------------------
+    # 4. FIRST MESSAGE LOGIC  (with SAFETY RULE)
+    # -----------------------------------------------------
     if not memory["started"]:
         memory["started"] = True
 
+        # SAFETY RULE — if message strongly suggests EXAMS → treat as booking
+        safety_booking_triggers = [
+            "colegio", "examen", "exámenes", "examenes",
+            "matrícula", "matricula", "ingresar al colegio",
+            "admisión", "admision",
+            "para mi hijo", "para mi hija",
+            "antes del", "antes de"
+        ]
+
+        if any(k in msg for k in safety_booking_triggers):
+            memory["awaiting_info"] = True
+            resp.message(
+                "Hola 😊\nClaro, te ayudo con eso.\n"
+                "Para agendar necesito estos datos:\n"
+                "• Nombre del estudiante\n"
+                "• Colegio\n"
+                "• Fecha y hora\n"
+                "• Número de estudiantes\n"
+                "• Paquete que deseas\n"
+            )
+            return Response(str(resp), media_type="application/xml")
+
+        # Normal greeting detection
         if any(k in msg for k in greetings):
             resp.message("Hola 👋 ¿En qué puedo ayudarte?")
             return Response(str(resp), media_type="application/xml")
 
-        elif any(k in msg for k in booking_keywords):
+        # Booking keywords
+        if any(k in msg for k in booking_keywords):
             memory["awaiting_info"] = True
             resp.message(
                 "Hola 😊\nClaro, para agendar necesito estos datos:\n"
@@ -393,7 +417,8 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        elif any(k in msg for k in package_keywords):
+        # Package keywords
+        if any(k in msg for k in package_keywords):
             pkg = detect_package(msg)
             memory["package"] = pkg
             memory["awaiting_info"] = True
@@ -407,14 +432,16 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        elif any(k in msg for k in school_keywords_dataset):
+        # School mentions
+        if any(k in msg for k in school_keywords_dataset):
             resp.message(
                 "Hola 😊\nClaro, hacemos exámenes para todos los colegios.\n"
                 "¿Para qué colegio necesitas los exámenes?"
             )
             return Response(str(resp), media_type="application/xml")
 
-        elif any(k in msg for k in info_keywords):
+        # Info questions
+        if any(k in msg for k in info_keywords):
             resp.message(
                 "Hola 😊 ¿Qué información te gustaría saber?\n\n"
                 "• Precios\n"
@@ -425,13 +452,13 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        else:
-            resp.message("Hola 👋 ¿En qué puedo ayudarte?")
-            return Response(str(resp), media_type="application/xml")
+        # Fallback
+        resp.message("Hola 👋 ¿En qué puedo ayudarte?")
+        return Response(str(resp), media_type="application/xml")
 
-    # -----------------------------------------
-    # SECOND MESSAGE AND BEYOND
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # 5. SECOND MESSAGE AND BEYOND
+    # -----------------------------------------------------
     extracted = ai_extract(msg)
 
     if extracted.get("customer_name"):
@@ -450,9 +477,9 @@ async def whatsapp(Body: str = Form(...)):
     if pkg:
         memory["package"] = pkg
 
-    # -----------------------------------------
-    # REQUEST MISSING INFO (STRICT ONE-BY-ONE)
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # 6. REQUEST MISSING INFO
+    # -----------------------------------------------------
     if not memory["customer_name"]:
         resp.message("¿Cuál es el nombre del estudiante?")
         return Response(str(resp), media_type="application/xml")
@@ -478,13 +505,13 @@ async def whatsapp(Body: str = Form(...)):
         )
         return Response(str(resp), media_type="application/xml")
 
-    # -----------------------------------------
-    # COMPLETE → CONFIRM RESERVATION
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # 7. CONFIRM RESERVATION
+    # -----------------------------------------------------
     confirmation = save_reservation(memory)
     resp.message("Hola 😊\n" + confirmation)
 
-    # RESET MEMORY
+    # RESET FOR NEXT CLIENT
     session_state[user_id] = {
         "customer_name": None,
         "datetime": None,
@@ -496,8 +523,6 @@ async def whatsapp(Body: str = Form(...)):
     }
 
     return Response(str(resp), media_type="application/xml")
-
-
   
 # ---------------------------------------------------------
 # DASHBOARD (BOGOTÁ)
