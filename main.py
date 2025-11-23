@@ -371,22 +371,23 @@ async def whatsapp(Body: str = Form(...)):
         "certificado"
     ]
 
-      # -----------------------------------------------------
-    # 4. FIRST MESSAGE LOGIC  (with SAFETY RULE)
+    # -----------------------------------------------------
+    # 4. FIRST MESSAGE LOGIC  (SUPER-SAFE VERSION)
     # -----------------------------------------------------
     if not memory["started"]:
         memory["started"] = True
 
-        # SAFETY RULE — if message strongly suggests EXAMS → treat as booking
-        safety_booking_triggers = [
-            "colegio", "examen", "exámenes", "examenes",
-            "matrícula", "matricula", "ingresar al colegio",
-            "admisión", "admision",
+        # HIGH-PRIORITY TRIGGERS → ALWAYS BOOKING
+        strong_booking = [
+            "examen", "exámenes", "examenes",
+            "colegio", "escolar",
+            "matrícula", "matricula",
             "para mi hijo", "para mi hija",
-            "antes del", "antes de"
+            "urgente", "antes del", "antes de",
+            "cupo", "hay cupo",
         ]
 
-        if any(k in msg for k in safety_booking_triggers):
+        if any(k in msg for k in strong_booking):
             memory["awaiting_info"] = True
             resp.message(
                 "Hola 😊\nClaro, te ayudo con eso.\n"
@@ -399,6 +400,25 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
+        # If message asks for a price or contains package keywords → provide info
+        price_triggers = [
+            "cuánto", "precio", "vale", "incluye",
+            "45", "45k", "esencial",
+            "60", "60k", "activa",
+            "75", "75k", "psico", "psicología", "psicologia",
+            "azul", "amarillo", "verde",
+        ]
+
+        if any(k in msg for k in price_triggers):
+            resp.message(
+                "Claro 😊\nAquí tienes la información de los paquetes:\n\n"
+                "• *Cuidado Esencial* – $45.000\n"
+                "• *Salud Activa* – $60.000\n"
+                "• *Bienestar Total* – $75.000\n\n"
+                "Si deseas agendar, dime y te ayudo 😊"
+            )
+            return Response(str(resp), media_type="application/xml")
+
         # Normal greeting detection
         if any(k in msg for k in greetings):
             resp.message("Hola 👋 ¿En qué puedo ayudarte?")
@@ -408,27 +428,12 @@ async def whatsapp(Body: str = Form(...)):
         if any(k in msg for k in booking_keywords):
             memory["awaiting_info"] = True
             resp.message(
-                "Hola 😊\nClaro, para agendar necesito estos datos:\n"
+                "Hola 😊\nPara agendar necesito estos datos:\n"
                 "• Nombre del estudiante\n"
                 "• Colegio\n"
                 "• Fecha y hora\n"
                 "• Número de estudiantes\n"
                 "• Paquete que deseas\n"
-            )
-            return Response(str(resp), media_type="application/xml")
-
-        # Package keywords
-        if any(k in msg for k in package_keywords):
-            pkg = detect_package(msg)
-            memory["package"] = pkg
-            memory["awaiting_info"] = True
-            resp.message(
-                f"Hola 😊 Perfecto, registré el paquete: *{pkg}*.\n\n"
-                "Por favor envíame:\n"
-                "• Nombre del estudiante\n"
-                "• Colegio\n"
-                "• Fecha y hora\n"
-                "• Número de estudiantes"
             )
             return Response(str(resp), media_type="application/xml")
 
@@ -440,7 +445,7 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        # Info questions
+        # Info fallback
         if any(k in msg for k in info_keywords):
             resp.message(
                 "Hola 😊 ¿Qué información te gustaría saber?\n\n"
@@ -452,7 +457,7 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        # Fallback
+        # General fallback
         resp.message("Hola 👋 ¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
 
