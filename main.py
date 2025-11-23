@@ -304,7 +304,23 @@ async def whatsapp(Body: str = Form(...)):
     msg_raw = Body.strip()
     msg = msg_raw.lower()
     user_id = "default"
-
+    
+    # -----------------------------------------
+    # RESET MEMORY FOR TESTING
+    # -----------------------------------------
+    if msg in ["reset", "reiniciar", "borrar", "nuevo"]:
+        session_state[user_id] = {
+            "customer_name": None,
+            "datetime": None,
+            "party_size": None,
+            "school_name": None,
+            "package": None,
+            "awaiting_info": False,
+            "started": False,
+        }
+        resp.message("🔄 Memoria reiniciada.\n\nPuedes empezar una conversación nueva 😊")
+        return Response(str(resp), media_type="application/xml")
+        
     # -----------------------------------------
     # INIT MEMORY
     # -----------------------------------------
