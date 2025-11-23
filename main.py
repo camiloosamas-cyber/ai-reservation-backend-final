@@ -303,11 +303,11 @@ async def whatsapp(Body: str = Form(...)):
     resp = MessagingResponse()
     msg_raw = Body.strip()
     msg = msg_raw.lower()
+    
+    # FIX: define user_id FIRST
     user_id = "default"
     
-    # -----------------------------------------
-    # RESET MEMORY FOR TESTING
-    # -----------------------------------------
+    # RESET BLOCK (now works correctly)
     if msg in ["reset", "reiniciar", "borrar", "nuevo"]:
         session_state[user_id] = {
             "customer_name": None,
