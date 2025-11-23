@@ -337,7 +337,7 @@ async def whatsapp(Body: str = Form(...)):
     memory = session_state[user_id]
 
     # -----------------------------------------------------
-    # 3. FIRST MESSAGE CLASSIFIER (CLEAN, RELIABLE)
+    # 3. FIRST MESSAGE CLASSIFIER
     # -----------------------------------------------------
     greetings = [
         "hola", "holaa", "ola", "buenas", "buen dia", "buen día",
@@ -372,12 +372,11 @@ async def whatsapp(Body: str = Form(...)):
     ]
 
     # -----------------------------------------------------
-    # 4. FIRST MESSAGE LOGIC  (SUPER-SAFE VERSION)
+    # 4. FIRST MESSAGE LOGIC
     # -----------------------------------------------------
     if not memory["started"]:
         memory["started"] = True
 
-        # HIGH-PRIORITY TRIGGERS → ALWAYS BOOKING
         strong_booking = [
             "examen", "exámenes", "examenes",
             "colegio", "escolar",
@@ -385,6 +384,7 @@ async def whatsapp(Body: str = Form(...)):
             "para mi hijo", "para mi hija",
             "urgente", "antes del", "antes de",
             "cupo", "hay cupo",
+            "quiero el", "quiero la", "necesito el", "necesito la"
         ]
 
         if any(k in msg for k in strong_booking):
@@ -400,16 +400,9 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        # If message asks for a price or contains package keywords → provide info
-        price_triggers = [
-            "cuánto", "precio", "vale", "incluye",
-            "45", "45k", "esencial",
-            "60", "60k", "activa",
-            "75", "75k", "psico", "psicología", "psicologia",
-            "azul", "amarillo", "verde",
-        ]
+        info_triggers = ["cuánto", "precio", "vale", "incluye", "¿", "?"]
 
-        if any(k in msg for k in price_triggers):
+        if any(k in msg for k in info_triggers):
             resp.message(
                 "Claro 😊\nAquí tienes la información de los paquetes:\n\n"
                 "• *Cuidado Esencial* – $45.000\n"
@@ -419,16 +412,19 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        # Normal greeting detection
-        if any(k in msg for k in greetings):
-            resp.message("Hola 👋 ¿En qué puedo ayudarte?")
-            return Response(str(resp), media_type="application/xml")
+        package_booking_words = [
+            "75", "75k", "75mil",
+            "60", "60k", "60mil",
+            "45", "45k", "45mil",
+            "esencial", "activa", "bienestar", "total",
+            "azul", "verde", "amarillo"
+        ]
 
-        # Booking keywords
-        if any(k in msg for k in booking_keywords):
+        if any(w in msg for w in package_booking_words):
             memory["awaiting_info"] = True
             resp.message(
-                "Hola 😊\nPara agendar necesito estos datos:\n"
+                "Hola 😊\nPerfecto, te ayudo con eso.\n"
+                "Para agendar necesito estos datos:\n"
                 "• Nombre del estudiante\n"
                 "• Colegio\n"
                 "• Fecha y hora\n"
@@ -437,27 +433,10 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        # School mentions
-        if any(k in msg for k in school_keywords_dataset):
-            resp.message(
-                "Hola 😊\nClaro, hacemos exámenes para todos los colegios.\n"
-                "¿Para qué colegio necesitas los exámenes?"
-            )
+        if any(k in msg for k in greetings):
+            resp.message("Hola 👋 ¿En qué puedo ayudarte?")
             return Response(str(resp), media_type="application/xml")
 
-        # Info fallback
-        if any(k in msg for k in info_keywords):
-            resp.message(
-                "Hola 😊 ¿Qué información te gustaría saber?\n\n"
-                "• Precios\n"
-                "• Qué incluye cada paquete\n"
-                "• Horarios\n"
-                "• Formas de pago\n"
-                "• Certificados"
-            )
-            return Response(str(resp), media_type="application/xml")
-
-        # General fallback
         resp.message("Hola 👋 ¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
 
@@ -516,7 +495,6 @@ async def whatsapp(Body: str = Form(...)):
     confirmation = save_reservation(memory)
     resp.message("Hola 😊\n" + confirmation)
 
-    # RESET FOR NEXT CLIENT
     session_state[user_id] = {
         "customer_name": None,
         "datetime": None,
@@ -528,6 +506,7 @@ async def whatsapp(Body: str = Form(...)):
     }
 
     return Response(str(resp), media_type="application/xml")
+
   
 # ---------------------------------------------------------
 # DASHBOARD (BOGOTÁ)
