@@ -65,17 +65,47 @@ def assign_table(iso_local: str):
 # ---------------------------------------------------------
 # PACKAGE DETECTION (UPDATED EXACTLY AS REQUESTED)
 # ---------------------------------------------------------
-def detect_package(user_msg: str):
-    msg = user_msg.lower()
+def detect_package(msg: str):
+    msg = msg.lower().strip()
 
-    # Strong package matching
-    if "esencial" in msg or "kit escolar" in msg or "cuidado esencial" in msg:
+    # Direct names
+    if "cuidado esencial" in msg or "esencial" in msg or "kit escolar" in msg:
         return "Paquete Cuidado Esencial"
 
-    if "activa" in msg or "salud activa" in msg:
+    if "salud activa" in msg or "activa" in msg:
         return "Paquete Salud Activa"
 
-    if "total" in msg or "bienestar total" in msg or "completo" in msg:
+    if "bienestar total" in msg or "total" in msg or "completo" in msg:
+        return "Paquete Bienestar Total"
+
+    # Price-based
+    if "45" in msg or "45k" in msg or "45 mil" in msg or "45mil" in msg:
+        return "Paquete Cuidado Esencial"
+
+    if "60" in msg or "60k" in msg or "60 mil" in msg or "60mil" in msg:
+        return "Paquete Salud Activa"
+
+    if "75" in msg or "75k" in msg or "75 mil" in msg or "75mil" in msg:
+        return "Paquete Bienestar Total"
+
+    # Exam-based
+    if "odont" in msg:
+        return "Paquete Bienestar Total"
+
+    if "psico" in msg:
+        return "Paquete Salud Activa"
+
+    if "audio" in msg or "optometr" in msg or "medicina" in msg:
+        return "Paquete Cuidado Esencial"
+
+    # Color-based (TEXT ONLY, NO IMAGE DETECTION)
+    if "verde" in msg:
+        return "Paquete Cuidado Esencial"
+
+    if "azul" in msg:
+        return "Paquete Salud Activa"
+
+    if "amarillo" in msg:
         return "Paquete Bienestar Total"
 
     return None
@@ -137,54 +167,98 @@ def save_reservation(data: dict):
 def ai_extract(user_msg: str):
     import dateparser
 
-    PACKAGES = {
-        "cuidado esencial": "Paquete Cuidado Esencial",
-        "salud activa": "Paquete Salud Activa",
-        "bienestar total": "Paquete Bienestar Total",
-    }
+    text = user_msg.lower().strip()
 
-    # Detect package
-    detected_package = ""
-    lower_msg = user_msg.lower()
-    for key, full in PACKAGES.items():
-        if key in lower_msg:
-            detected_package = full
+    # ---------------------------------------------------
+    # 1. PACKAGE DETECTION (rule-based)
+    # ---------------------------------------------------
+    detected_package = detect_package(text)
+
+    # ---------------------------------------------------
+    # 2. SCHOOL NAME DETECTION (dataset-based)
+    # ---------------------------------------------------
+    school_name = ""
+    school_keywords = [
+        "colegio", "gimnasio", "gimnacio", "liceo", "instituto",
+        "campestre", "la salle", "sagrado", "andres", "boston",
+        "mayor", "presentación", "monseñor", "arces", "villegas",
+        "sabiduría", "san josé", "la presentación", "los andes",
+        "germán", "arciniegas"
+    ]
+
+    for kw in school_keywords:
+        if kw in text:
+            # Extract everything after the keyword
+            part = text.split(kw, 1)[1].strip()
+            # Keep the keyword + next 5 words
+            school_name = kw + " " + " ".join(part.split()[:5])
+            school_name = school_name.strip()
             break
 
-    # Detect school name
-    school_name = ""
-    if "colegio" in lower_msg:
-        try:
-            school_name = user_msg.lower().split("colegio", 1)[1].strip()
-        except:
-            pass
+    # ---------------------------------------------------
+    # 3. PARTY SIZE DETECTION (rule-based)
+    # ---------------------------------------------------
+    party_size = ""
+    number_patterns = [
+        r"(\d+)\s*niñ", r"(\d+)\s*hij", r"(\d+)\s*person",
+        r"(\d+)\s*estudiante", r"(\d+)\s*alumno", r"\bpara (\d+)"
+    ]
 
-    # STRONG EXTRACTOR PROMPT
+    for pattern in number_patterns:
+        m = re.search(pattern, text)
+        if m:
+            party_size = m.group(1)
+            break
+
+    # ---------------------------------------------------
+    # 4. NAME DETECTION (very simplified)
+    # ---------------------------------------------------
+    customer_name = ""
+    name_patterns = [
+        r"mi hijo ([a-zA-Záéíóúñ ]+)",
+        r"para ([a-zA-Záéíóúñ ]+)",
+        r"nombre es ([a-zA-Záéíóúñ ]+)"
+    ]
+
+    for p in name_patterns:
+        m = re.search(p, text)
+        if m:
+            candidate = m.group(1).strip()
+            # keep 1–3 words only
+            customer_name = " ".join(candidate.split()[:3])
+            break
+
+    # ---------------------------------------------------
+    # 5. INTENT DETECTION
+    # ---------------------------------------------------
+    reserve_keywords = [
+        "agendar", "reservar", "cita", "sita", "agenda",
+        "sacar cita", "quiero cita", "necesito cita",
+        "quiero agendar", "hacer exámenes", "exam", "examen"
+    ]
+    info_keywords = ["?", "cuánto", "vale", "incluye", "nequi", "precio"]
+
+    if any(k in text for k in reserve_keywords):
+        intent = "reserve"
+    elif any(k in text for k in info_keywords):
+        intent = "info"
+    else:
+        intent = "other"
+
+    # ---------------------------------------------------
+    # 6. DATE/TIME EXTRACTION — via LLM
+    # ---------------------------------------------------
     prompt = f"""
-Eres un extractor de intención para un sistema de reservas médicas escolares.
+Extrae SOLO fecha y hora del siguiente texto. 
+No inventes nada. No corrijas nada.
 
-NO cambies fechas.
-NO conviertas horas.
-NO inventes datos.
+Mensaje:
+\"\"\"{user_msg}\"\"\"
 
-Devuelve SIEMPRE este JSON:
+Devuelve JSON:
 {{
- "intent": "reserve" | "info" | "other",
- "customer_name": "",
- "party_size": "",
  "datetime_text": ""
 }}
-
-REGLAS:
-- Si el usuario dice palabras como "agendar", "reservar", "quiero una cita", "quiero agenda", "quiero reservar", INTENT = "reserve".
-- Si solo hace preguntas, INTENT = "info".
-- En cualquier otro caso, INTENT = "other".
-- "customer_name": nombre de la persona si aparece.
-- "datetime_text": fecha u hora mencionada.
-- "party_size": número de personas si está claro.
-
-EXTRACTA del mensaje:
-\"\"\"{user_msg}\"\"\"
 """
 
     try:
@@ -193,27 +267,28 @@ EXTRACTA del mensaje:
             temperature=0,
             messages=[{"role": "system", "content": prompt}]
         )
-        extracted = json.loads(r.choices[0].message.content)
+        datetime_text = json.loads(r.choices[0].message.content).get("datetime_text", "")
     except:
-        extracted = {"intent": "", "customer_name": "", "party_size": "", "datetime_text": ""}
+        datetime_text = ""
 
-    # Parse date
-    text = extracted.get("datetime_text", "").lower()
+    # Try parsing the datetime
     dt_local = dateparser.parse(
-        text,
+        datetime_text,
         settings={
             "PREFER_DATES_FROM": "future",
             "TIMEZONE": "America/Bogota",
             "RETURN_AS_TIMEZONE_AWARE": True
         }
     )
-
     final_iso = dt_local.isoformat() if dt_local else ""
 
+    # ---------------------------------------------------
+    # RETURN STRUCTURED DATA
+    # ---------------------------------------------------
     return {
-        "intent": extracted.get("intent", ""),
-        "customer_name": extracted.get("customer_name", ""),
-        "party_size": extracted.get("party_size", ""),
+        "intent": intent,
+        "customer_name": customer_name,
+        "party_size": party_size,
         "datetime": final_iso,
         "package": detected_package,
         "school_name": school_name
@@ -229,6 +304,9 @@ async def whatsapp(Body: str = Form(...)):
     msg = Body.strip().lower()
     user_id = "default"
 
+    # ---------------------------------------------------
+    # INIT MEMORY
+    # ---------------------------------------------------
     if user_id not in session_state:
         session_state[user_id] = {
             "customer_name": None,
@@ -242,26 +320,58 @@ async def whatsapp(Body: str = Form(...)):
     memory = session_state[user_id]
     extracted = ai_extract(msg)
 
-    if extracted.get("intent") == "reserve" and not memory["awaiting_info"]:
+    # ---------------------------------------------------
+    # "SEND ALL INFO" TRIGGER
+    # Only triggered when:
+    # - User shows intent to reserve
+    # - User has NOT sent ANY of the 5 required fields
+    # - It has not been triggered before
+    # ---------------------------------------------------
+    if (
+        extracted.get("intent") == "reserve"
+        and not memory["awaiting_info"]
+        and not any([
+            memory["customer_name"],
+            memory["school_name"],
+            memory["datetime"],
+            memory["party_size"],
+            memory["package"]
+        ])
+    ):
         memory["awaiting_info"] = True
         resp.message(
-            "Perfecto 😊\n\nPor favor envíame:\n• Nombre del estudiante\n• Colegio\n• Fecha y hora\n• Número de personas\n• Paquete deseado"
+            "Perfecto 😊\n\nPor favor envíame:\n"
+            "• Nombre del estudiante\n"
+            "• Colegio\n"
+            "• Fecha y hora\n"
+            "• Número de personas\n"
+            "• Paquete deseado"
         )
         return Response(str(resp), media_type="application/xml")
 
+    # ---------------------------------------------------
+    # SAVE INFORMATION THAT WAS EXTRACTED
+    # ---------------------------------------------------
     if extracted.get("customer_name"):
         memory["customer_name"] = extracted["customer_name"]
-    if extracted.get("datetime"):
-        memory["datetime"] = extracted["datetime"]
-    if extracted.get("party_size"):
-        memory["party_size"] = extracted["party_size"]
+
     if extracted.get("school_name"):
         memory["school_name"] = extracted["school_name"]
 
+    if extracted.get("datetime"):
+        memory["datetime"] = extracted["datetime"]
+
+    if extracted.get("party_size"):
+        memory["party_size"] = extracted["party_size"]
+
+    # PACKAGE (rule-based from detect_package)
     pkg = detect_package(msg)
     if pkg:
         memory["package"] = pkg
 
+    # ---------------------------------------------------
+    # ASK FOR MISSING INFORMATION ONE BY ONE
+    # ---------------------------------------------------
     if not memory["customer_name"]:
         resp.message("¿Cuál es el nombre del estudiante?")
         return Response(str(resp), media_type="application/xml")
@@ -287,6 +397,9 @@ async def whatsapp(Body: str = Form(...)):
         )
         return Response(str(resp), media_type="application/xml")
 
+    # ---------------------------------------------------
+    # EVERYTHING COMPLETE → CONFIRM RESERVATION
+    # ---------------------------------------------------
     confirmation = save_reservation(memory)
     resp.message(confirmation)
 
@@ -301,7 +414,7 @@ async def whatsapp(Body: str = Form(...)):
 
     return Response(str(resp), media_type="application/xml")
 
-
+  
 # ---------------------------------------------------------
 # DASHBOARD (BOGOTÁ)
 # ---------------------------------------------------------
