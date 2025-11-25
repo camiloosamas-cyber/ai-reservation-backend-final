@@ -189,6 +189,7 @@ def ai_extract(user_msg: str):
         if m:
             school_name = m.group(1).strip()
             break
+
     # -------------------------
     # NAME DETECTION (FIXED)
     # -------------------------
@@ -200,7 +201,7 @@ def ai_extract(user_msg: str):
         r"nombre es ([a-zA-Záéíóúñ ]+)",
     ]
 
-    # Try structured patterns first
+    # 1) Structured name detection
     for p in name_patterns:
         m = re.search(p, text)
         if m:
@@ -208,20 +209,21 @@ def ai_extract(user_msg: str):
             customer_name = " ".join(candidate.split()[:3])
             break
 
-    # --------------------------
-    # FALLBACK: message is ONLY a name
-    # --------------------------
+    # 2) FALLBACK NAME DETECTION (DO NOT CONFUSE WITH SCHOOL NAMES)
     if not customer_name:
         package_words = [
             "esencial", "activa", "total", "bienestar", "cuidado", "salud",
             "paquete", "kit", "45", "60", "75"
         ]
 
+        school_words = ["colegio", "gimnasio", "liceo", "instituto", "school"]
+
         is_just_text = re.fullmatch(r"[a-zA-Záéíóúñ ]{2,30}", text)
         is_short = len(text.split()) <= 3
         contains_package_word = any(w in text for w in package_words)
+        contains_school_word = any(w in text for w in school_words)
 
-        if is_just_text and is_short and not contains_package_word:
+        if is_just_text and is_short and not contains_package_word and not contains_school_word:
             ignored = ["hola", "ola", "buenas", "buenos dias", "buen día"]
             if text not in ignored:
                 customer_name = " ".join(text.split()[:3])
