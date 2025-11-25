@@ -169,74 +169,70 @@ def ai_extract(user_msg: str):
 
     text = user_msg.lower().strip()
 
-    # ---------------------------------------------------
-    # 1. PACKAGE DETECTION (rule-based)
-    # ---------------------------------------------------
+    # -------------------------
+    # PACKAGE
+    # -------------------------
     detected_package = detect_package(text)
 
-    # ---------------------------------------------------
-    # 2. SCHOOL NAME DETECTION (dataset-based)
-    # ---------------------------------------------------
+    # -------------------------
+    # SCHOOL DETECTION
+    # -------------------------
     school_name = ""
-    school_keywords = [
-        "colegio", "gimnasio", "gimnacio", "liceo", "instituto",
-        "campestre", "la salle", "sagrado", "andres", "boston",
-        "mayor", "presentación", "monseñor", "arces", "villegas",
-        "sabiduría", "san josé", "la presentación", "los andes",
-        "germán", "arciniegas"
+    school_patterns = [
+        r"(colegio [a-zA-Záéíóúñ ]+)",
+        r"(gimnasio [a-zA-Záéíóúñ ]+)",
+        r"(liceo [a-zA-Záéíóúñ ]+)",
+        r"(instituto [a-zA-Záéíóúñ ]+)",
     ]
-
-    for kw in school_keywords:
-        if kw in text:
-            # Extract everything after the keyword
-            part = text.split(kw, 1)[1].strip()
-            # Keep the keyword + next 5 words
-            school_name = kw + " " + " ".join(part.split()[:5])
-            school_name = school_name.strip()
-            break
-
-    # ---------------------------------------------------
-    # 3. PARTY SIZE DETECTION (rule-based)
-    # ---------------------------------------------------
-    party_size = ""
-    number_patterns = [
-        r"(\d+)\s*niñ", r"(\d+)\s*hij", r"(\d+)\s*person",
-        r"(\d+)\s*estudiante", r"(\d+)\s*alumno", r"\bpara (\d+)"
-    ]
-
-    for pattern in number_patterns:
-        m = re.search(pattern, text)
+    for p in school_patterns:
+        m = re.search(p, text)
         if m:
-            party_size = m.group(1)
+            school_name = m.group(1).strip()
             break
 
-    # ---------------------------------------------------
-    # 4. NAME DETECTION (very simplified)
-    # ---------------------------------------------------
+    # -------------------------
+    # NAME DETECTION
+    # -------------------------
     customer_name = ""
     name_patterns = [
+        r"se llama ([a-zA-Záéíóúñ ]+)",
         r"mi hijo ([a-zA-Záéíóúñ ]+)",
-        r"para ([a-zA-Záéíóúñ ]+)",
-        r"nombre es ([a-zA-Záéíóúñ ]+)"
+        r"nombre es ([a-zA-Záéíóúñ ]+)",
     ]
-
     for p in name_patterns:
         m = re.search(p, text)
         if m:
             candidate = m.group(1).strip()
-            # keep 1–3 words only
             customer_name = " ".join(candidate.split()[:3])
             break
 
-    # ---------------------------------------------------
-    # 5. INTENT DETECTION
-    # ---------------------------------------------------
-    reserve_keywords = [
-        "agendar", "reservar", "cita", "sita", "agenda",
-        "sacar cita", "quiero cita", "necesito cita",
-        "quiero agendar", "hacer exámenes", "exam", "examen"
-    ]
-    info_keywords = ["?", "cuánto", "vale", "incluye", "nequi", "precio"]
+    # -------------------------
+    # PARTY SIZE
+    # -------------------------
+    party_size = ""
+    m = re.search(r"(\d+)\s*(estudiantes|alumnos|niños|personas)", text)
+    if m:
+        party_size = m.group(1)
+
+    # -------------------------
+    # DATE/TIME
+    # -------------------------
+    dt_local = dateparser.parse(
+        text,
+        settings={
+            "PREFER_DATES_FROM": "future",
+            "TIMEZONE": "America/Bogota",
+            "RETURN_AS_TIMEZONE_AWARE": True,
+            "PREFER_DAY_OF_MONTH": "first"
+        }
+    )
+    final_iso = dt_local.isoformat() if dt_local else ""
+
+    # -------------------------
+    # INTENT
+    # -------------------------
+    reserve_keywords = ["agendar", "reservar", "cita", "examen"]
+    info_keywords = ["cuánto", "precio", "vale", "incluye"]
 
     if any(k in text for k in reserve_keywords):
         intent = "reserve"
@@ -245,54 +241,15 @@ def ai_extract(user_msg: str):
     else:
         intent = "other"
 
-    # ---------------------------------------------------
-    # 6. DATE/TIME EXTRACTION — via LLM
-    # ---------------------------------------------------
-    prompt = f"""
-Extrae SOLO fecha y hora del siguiente texto. 
-No inventes nada. No corrijas nada.
-
-Mensaje:
-\"\"\"{user_msg}\"\"\"
-
-Devuelve JSON:
-{{
- "datetime_text": ""
-}}
-"""
-
-    try:
-        r = client.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0,
-            messages=[{"role": "system", "content": prompt}]
-        )
-        datetime_text = json.loads(r.choices[0].message.content).get("datetime_text", "")
-    except:
-        datetime_text = ""
-
-    # Try parsing the datetime
-    dt_local = dateparser.parse(
-        datetime_text,
-        settings={
-            "PREFER_DATES_FROM": "future",
-            "TIMEZONE": "America/Bogota",
-            "RETURN_AS_TIMEZONE_AWARE": True
-        }
-    )
-    final_iso = dt_local.isoformat() if dt_local else ""
-
-    # ---------------------------------------------------
-    # RETURN STRUCTURED DATA
-    # ---------------------------------------------------
     return {
         "intent": intent,
         "customer_name": customer_name,
-        "party_size": party_size,
+        "school_name": school_name,
         "datetime": final_iso,
+        "party_size": party_size,
         "package": detected_package,
-        "school_name": school_name
     }
+
 
 # ---------------------------------------------------------
 # WHATSAPP HANDLER (CLEAN + STRUCTURED + BUG-FREE)
