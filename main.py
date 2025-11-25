@@ -143,23 +143,41 @@ def save_reservation(data: dict):
     return "ok"
 
 
-# ---------------------------------------------------------
-# SMART AI BRAIN (GPT-4o)
-# ---------------------------------------------------------
 def smart_ai_brain(memory, user_msg):
 
     system_prompt = """
 Eres un asistente de WhatsApp para un IPS que realiza exámenes escolares.
 
-TU TRABAJO:
-1. Extrae:
-   - customer_name
-   - school_name
-   - datetime
-   - package
+TU MISIÓN:
+- Hablar siempre humano, natural y amable.
+- Nunca sonar robótico.
+- SIEMPRE iniciar la respuesta con “Hola 😊”.
+- SIEMPRE terminar la respuesta con una pregunta.
+- Extraer del mensaje:
+    • customer_name
+    • school_name
+    • datetime
+    • package
 
-2. Si falta algo → pide SOLO lo que falta.
-3. Si está todo → responde EXACTAMENTE así:
+SI FALTA ALGO:
+- Pregunta SOLO por lo que falta.
+- Pregunta de forma humana, ejemplo:
+  “¿Cuál es el nombre del estudiante?”
+  “¿De qué colegio viene?”
+  “¿Para qué fecha y hora deseas la cita?”
+
+SI EL MENSAJE ES SOLO INFORMATIVO:
+Ejemplos:
+  “aquí hacen paquetes escolares?”
+  “vi su post y quiero saber si aquí hacen esos exámenes”
+  “esto es del IPS?”
+→ Respuesta:
+  “Hola 😊
+   Sí, aquí realizamos los exámenes escolares.
+   ¿Te interesa algún paquete?”
+
+SI TODO ESTÁ COMPLETO:
+Responder EXACTAMENTE con:
 
 Hola 😊
 ✅ ¡Reserva confirmada!
@@ -169,10 +187,7 @@ Hola 😊
 🏫 {school_name}
 🗓 {datetime}
 
-4. No inventes nada. Solo usa info del usuario.
-5. Usa español colombiano natural.
-
-Formato de retorno OBLIGATORIO:
+Formato obligatorio SIEMPRE:
 
 {
  "fields": {
@@ -182,22 +197,20 @@ Formato de retorno OBLIGATORIO:
    "package": ""
  },
  "missing": [],
- "reply": ""
+ "reply": "",
+ "intent": ""
 }
 """
 
     r = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4o-mini",
         temperature=0,
         messages=[
             {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": json.dumps({
-                    "memory": memory,
-                    "message": user_msg
-                })
-            }
+            {"role": "user", "content": json.dumps({
+                "memory": memory,
+                "message": user_msg
+            })}
         ]
     )
 
@@ -207,13 +220,12 @@ Formato de retorno OBLIGATORIO:
         return {
             "fields": {},
             "missing": ["unknown"],
-            "reply": "No entendí bien 🧐 ¿me lo repites porfa?"
+            "reply": "Hola 😊 No entendí bien, ¿me repites porfa?",
+            "intent": "confused"
         }
 
 
-# ---------------------------------------------------------
-# WHATSAPP HANDLER (FINAL HUMAN + SMART VERSION)
-# ---------------------------------------------------------
+
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
     resp = MessagingResponse()
@@ -221,9 +233,9 @@ async def whatsapp(Body: str = Form(...)):
     msg_lower = msg_raw.lower()
     user_id = "default"
 
-    # -----------------------------------------------------
-    # 0. RESET
-    # -----------------------------------------------------
+    # -------------------------------
+    # RESET
+    # -------------------------------
     if msg_lower in ["reset", "reiniciar", "nuevo", "borrar"]:
         session_state[user_id] = {
             "customer_name": None,
@@ -233,12 +245,12 @@ async def whatsapp(Body: str = Form(...)):
             "party_size": "1",
             "started": False
         }
-        resp.message("🔄 Memoria reiniciada.\n\nPuedes empezar de nuevo 😊")
+        resp.message("Hola 😊\nMemoria reiniciada.\n¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
 
-    # -----------------------------------------------------
-    # 1. INIT MEMORY
-    # -----------------------------------------------------
+    # -------------------------------
+    # INIT MEMORY
+    # -------------------------------
     if user_id not in session_state:
         session_state[user_id] = {
             "customer_name": None,
@@ -251,17 +263,17 @@ async def whatsapp(Body: str = Form(...)):
 
     memory = session_state[user_id]
 
-    # -----------------------------------------------------
-    # 2. FIRST MESSAGE → ALWAYS GREET
-    # -----------------------------------------------------
+    # -------------------------------
+    # FIRST MESSAGE ALWAYS GREET
+    # -------------------------------
     if not memory["started"]:
         memory["started"] = True
         resp.message("Hola 😊 ¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
 
-    # -----------------------------------------------------
-    # 3. PRICE QUESTIONS (natural and human)
-    # -----------------------------------------------------
+    # -------------------------------
+    # PRICE QUESTIONS
+    # -------------------------------
     price_words = ["cuánto", "cuanto", "precio", "vale", "cuesta", "coste", "valor"]
 
     if any(w in msg_lower for w in price_words):
@@ -273,19 +285,14 @@ async def whatsapp(Body: str = Form(...)):
             "Paquete Bienestar Total": "$75.000"
         }
 
-        # User asked price AND mentioned a package
         if pkg:
             resp.message(
                 f"Hola 😊\n"
-                f"Claro, el *{pkg}* cuesta **{price_map[pkg]}**.\n\n"
-                "Si quieres, puedo agendar tu cita. Solo necesito:\n"
-                "• Nombre del estudiante\n"
-                "• Colegio\n"
-                "• Fecha y hora que deseas"
+                f"El *{pkg}* cuesta **{price_map[pkg]}**.\n"
+                "¿Te gustaría agendar una cita?"
             )
             return Response(str(resp), media_type="application/xml")
 
-        # User asked price WITHOUT specifying which package
         resp.message(
             "Hola 😊 Aquí tienes los precios:\n\n"
             "• *Cuidado Esencial* – $45.000\n"
@@ -295,31 +302,29 @@ async def whatsapp(Body: str = Form(...)):
         )
         return Response(str(resp), media_type="application/xml")
 
-    # -----------------------------------------------------
-    # 4. DETECT PACKAGE ALONE (without asking price)
-    # -----------------------------------------------------
+    # -------------------------------
+    # PACKAGE DETECTION WITHOUT PRICE
+    # -------------------------------
     pkg_detected = detect_package(msg_lower)
     if pkg_detected and not memory["package"]:
         memory["package"] = pkg_detected
 
         resp.message(
             f"Hola 😊\n"
-            f"¡Claro! Ese es el *{pkg_detected}*.\n"
-            "Si quieres, puedo agendar tu cita. Solo necesito:\n"
-            "• Nombre del estudiante\n"
-            "• Colegio\n"
-            "• Fecha y hora que deseas"
+            f"Perfecto, ese es el *{pkg_detected}*.\n"
+            "¿Te gustaría agendar una cita?"
         )
         return Response(str(resp), media_type="application/xml")
 
-    # -----------------------------------------------------
-    # 5. SMART AI BRAIN
-    # -----------------------------------------------------
+    # -------------------------------
+    # AI SMART BRAIN
+    # -------------------------------
     ai_result = smart_ai_brain(memory, msg_raw)
 
     fields = ai_result.get("fields", {})
     missing = ai_result.get("missing", [])
     reply = ai_result.get("reply", "")
+    intent = ai_result.get("intent", "")
 
     # Apply extracted fields
     if fields.get("customer_name"):
@@ -333,15 +338,27 @@ async def whatsapp(Body: str = Form(...)):
 
     memory["party_size"] = "1"
 
-    # Missing fields → ask human follow-up
+    # -------------------------------
+    # INFORMATIVE MESSAGE ONLY
+    # -------------------------------
+    if intent == "info":
+        resp.message(
+            "Hola 😊\n"
+            "Sí, aquí realizamos los exámenes escolares.\n"
+            "¿Te interesa algún paquete?"
+        )
+        return Response(str(resp), media_type="application/xml")
+
+    # -------------------------------
+    # ASK FOR MISSING FIELDS
+    # -------------------------------
     if missing:
-        # Always prepend Hola 😊
         resp.message("Hola 😊\n" + reply)
         return Response(str(resp), media_type="application/xml")
 
-    # -----------------------------------------------------
-    # 6. ALL FIELDS COMPLETE → CONFIRM + SAVE
-    # -----------------------------------------------------
+    # -------------------------------
+    # COMPLETE RESERVATION
+    # -------------------------------
     if memory["customer_name"] and memory["school_name"] and memory["datetime"] and memory["package"]:
         dt_display = memory["datetime"].replace("T", " ")[:16]
 
@@ -358,7 +375,6 @@ Hola 😊
         save_reservation(memory)
         resp.message(confirm_msg)
 
-        # Reset memory
         session_state[user_id] = {
             "customer_name": None,
             "school_name": None,
@@ -370,11 +386,12 @@ Hola 😊
 
         return Response(str(resp), media_type="application/xml")
 
-    # -----------------------------------------------------
-    # 7. SAFETY FALLBACK
-    # -----------------------------------------------------
+    # -------------------------------
+    # SAFETY FALLBACK
+    # -------------------------------
     resp.message("Hola 😊 ¿Me confirmas porfa?")
     return Response(str(resp), media_type="application/xml")
+
 
 
 # ---------------------------------------------------------
