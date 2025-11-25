@@ -215,17 +215,42 @@ def ai_extract(user_msg: str):
         party_size = m.group(1)
 
     # -------------------------
-    # DATE/TIME
+    # DATE/TIME — LLM extraction
     # -------------------------
+    prompt = f"""
+Extrae SOLO la fecha y hora del siguiente mensaje.
+Devuélvelo exactamente así:
+
+{{
+"datetime": "texto exacto de fecha y hora"
+}}
+
+No inventes nada.
+
+Mensaje:
+\"\"\"{user_msg}\"\"\"
+"""
+
+    try:
+        r = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0,
+            messages=[{"role": "system", "content": prompt}]
+        )
+        result = json.loads(r.choices[0].message.content)
+        dt_text = result.get("datetime", "").strip()
+    except:
+        dt_text = ""
+
     dt_local = dateparser.parse(
-        text,
+        dt_text,
         settings={
             "PREFER_DATES_FROM": "future",
             "TIMEZONE": "America/Bogota",
-            "RETURN_AS_TIMEZONE_AWARE": True,
-            "PREFER_DAY_OF_MONTH": "first"
+            "RETURN_AS_TIMEZONE_AWARE": True
         }
     )
+
     final_iso = dt_local.isoformat() if dt_local else ""
 
     # -------------------------
@@ -241,6 +266,9 @@ def ai_extract(user_msg: str):
     else:
         intent = "other"
 
+    # -------------------------
+    # RETURN
+    # -------------------------
     return {
         "intent": intent,
         "customer_name": customer_name,
@@ -249,6 +277,7 @@ def ai_extract(user_msg: str):
         "party_size": party_size,
         "package": detected_package,
     }
+
 
 
 # ---------------------------------------------------------
