@@ -279,9 +279,8 @@ Mensaje:
     }
 
 
-
 # ---------------------------------------------------------
-# WHATSAPP HANDLER (CLEAN + STRUCTURED + BUG-FREE)
+# WHATSAPP HANDLER (CLEAN + UPDATED)
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
@@ -325,12 +324,37 @@ async def whatsapp(Body: str = Form(...)):
     memory = session_state[user_id]
 
     # -----------------------------------------------------
-    # 2. FIRST MESSAGE HANDLER
+    # 2. FIRST MESSAGE HANDLER (FIXED)
     # -----------------------------------------------------
     if not memory["started"]:
         memory["started"] = True
 
-        # 🔍 detect package INSTANTLY
+        # 🔍 detect if user is asking for PRICE / INFO
+        info_words = ["cuánto", "cuanto", "precio", "vale", "incluye", "trae"]
+        if any(w in msg for w in info_words):
+            pkg = detect_package(msg)
+
+            if pkg:
+                resp.message(
+                    f"Hola 😊\nEl paquete que mencionas es *{pkg}*.\n\n"
+                    "Precios:\n"
+                    "• *Cuidado Esencial* – $45.000\n"
+                    "• *Salud Activa* – $60.000\n"
+                    "• *Bienestar Total* – $75.000\n\n"
+                    "¿Te gustaría agendar una cita?"
+                )
+                return Response(str(resp), media_type="application/xml")
+
+            resp.message(
+                "Hola 😊\nAquí tienes la información de los paquetes:\n\n"
+                "• *Cuidado Esencial* – $45.000\n"
+                "• *Salud Activa* – $60.000\n"
+                "• *Bienestar Total* – $75.000\n\n"
+                "¿Cuál te interesa?"
+            )
+            return Response(str(resp), media_type="application/xml")
+
+        # 🔍 detect package INSTANTLY (ONLY if not asking price)
         pkg = detect_package(msg)
         if pkg:
             memory["package"] = pkg
@@ -361,24 +385,11 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        # 🔍 asking about prices
-        info_words = ["cuánto", "precio", "vale", "incluye"]
-        if any(w in msg for w in info_words):
-            resp.message(
-                "Hola 😊\nAquí tienes la información de los paquetes:\n\n"
-                "• *Cuidado Esencial* – $45.000\n"
-                "• *Salud Activa* – $60.000\n"
-                "• *Bienestar Total* – $75.000\n\n"
-                "¿Te gustaría agendar una cita?"
-            )
-            return Response(str(resp), media_type="application/xml")
-
         # 🔍 greetings
         if any(g in msg for g in ["hola", "ola", "buenas", "buen día"]):
             resp.message("Hola 👋 ¿En qué puedo ayudarte?")
             return Response(str(resp), media_type="application/xml")
 
-        # default fallback
         resp.message("Hola 👋 ¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
 
@@ -425,7 +436,6 @@ async def whatsapp(Body: str = Form(...)):
     if extracted.get("package"):
         memory["package"] = extracted["package"]
 
-    # Always default party size to 1 for IPS
     memory["party_size"] = "1"
 
     # -----------------------------------------------------
@@ -458,7 +468,6 @@ async def whatsapp(Body: str = Form(...)):
     confirmation = save_reservation(memory)
     resp.message("Hola 😊\n" + confirmation)
 
-    # reset state
     session_state[user_id] = {
         "customer_name": None,
         "school_name": None,
