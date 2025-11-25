@@ -460,12 +460,14 @@ async def whatsapp(Body: str = Form(...)):
 
     memory["party_size"] = "1"
 
+    # 🔒 ALWAYS ask for the student name FIRST
+    if not memory["customer_name"]:
+       resp.message("¿Cuál es el nombre del estudiante?")
+       return Response(str(resp), media_type="application/xml")
+
     # -----------------------------------------------------
     # 5. ASK FOR ANY MISSING FIELD
     # -----------------------------------------------------
-    if not memory["customer_name"]:
-        resp.message("¿Cuál es el nombre del estudiante?")
-        return Response(str(resp), media_type="application/xml")
 
     if not memory["school_name"]:
         resp.message("¿De qué colegio viene?")
