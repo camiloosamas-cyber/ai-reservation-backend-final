@@ -367,10 +367,13 @@ async def whatsapp(Body: str = Form(...)):
 
         # 🔍 strong booking intent
         strong_booking = [
-            "examen", "escolar", "colegio",
-            "matricula", "matrícula",
-            "para mi hijo", "para mi hija", "urgente",
-            "cupo", "hay cupo"
+        "examen", "exmanes", "examenes", "exam", 
+        "escolar", "escolares",
+        "colegio", "cole",
+        "matricula", "matrícula",
+        "para mi hijo", "para mi hija",
+        "urgente",
+        "cupo", "hay cupo"
         ]
 
         if any(k in msg for k in strong_booking):
