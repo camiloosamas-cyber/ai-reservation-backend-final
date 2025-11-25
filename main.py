@@ -348,15 +348,15 @@ async def whatsapp(Body: str = Form(...)):
             "examen", "exámenes", "examenes", "escolar",
             "colegio", "matrícula", "matricula",
             "para mi hijo", "para mi hija", "urgente",
-            "antes del", "antes de", "cupo", "hay cupo"
+            "antes del", "antes de", "cupo", "hay cupo",
+            "75", "75k", "75 mil", "75mil"
         ]
 
         # If they are clearly booking → ask for info directly
         if any(k in msg for k in strong_booking):
             memory["awaiting_info"] = True
             resp.message(
-                "Hola 😊\nClaro, te ayudo con eso.\n"
-                "Para agendar necesito estos datos:\n"
+                "Perfecto 😊\nPara agendar necesito:\n"
                 "• Nombre del estudiante\n"
                 "• Colegio\n"
                 "• Fecha y hora\n"
@@ -364,12 +364,12 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        # They ask about prices/info
+        # Price/info request
         info_triggers = ["cuánto", "precio", "vale", "incluye", "?"]
 
         if any(k in msg for k in info_triggers):
             resp.message(
-                "Hola 😊\nAquí tienes la información de los paquetes:\n\n"
+                "Claro 😊\nAquí tienes la información de los paquetes:\n\n"
                 "• *Cuidado Esencial* – $45.000\n"
                 "• *Salud Activa* – $60.000\n"
                 "• *Bienestar Total* – $75.000\n\n"
@@ -377,7 +377,7 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        # They mention a package directly → ask if they want to book
+        # Package mentioned → ask for confirmation
         pkg = detect_package(msg)
         if pkg:
             memory["package"] = pkg
@@ -388,14 +388,14 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        # Generic greeting
+        # Greetings
         greetings = ["hola", "ola", "buenas", "buen día", "buenas tardes", "buenas noches"]
 
         if any(g in msg for g in greetings):
             resp.message("Hola 👋 ¿En qué puedo ayudarte?")
             return Response(str(resp), media_type="application/xml")
 
-        # Default fallback
+        # Default
         resp.message("Hola 👋 ¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
 
@@ -461,6 +461,10 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("¿Para qué fecha y hora deseas la cita?")
         return Response(str(resp), media_type="application/xml")
 
+    # Party size default = 1
+    if not memory["party_size"]:
+        memory["party_size"] = "1"
+
     if not memory["package"]:
         resp.message(
             "¿Qué paquete deseas reservar?\n\n"
@@ -469,10 +473,6 @@ async def whatsapp(Body: str = Form(...)):
             "• *Bienestar Total* – $75.000"
         )
         return Response(str(resp), media_type="application/xml")
-
-    # party_size default = 1 (IPS always one kid)
-    if not memory["party_size"]:
-        memory["party_size"] = "1"
 
     # -----------------------------------------------------
     # 7. CONFIRM RESERVATION
