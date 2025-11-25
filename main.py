@@ -212,7 +212,7 @@ Formato de retorno OBLIGATORIO:
 
 
 # ---------------------------------------------------------
-# WHATSAPP HANDLER (AI POWERED + PRICE INFO)
+# WHATSAPP HANDLER (FINAL HUMAN + SMART VERSION)
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
@@ -222,7 +222,7 @@ async def whatsapp(Body: str = Form(...)):
     user_id = "default"
 
     # -----------------------------------------------------
-    # 0. RESET MEMORY
+    # 0. RESET
     # -----------------------------------------------------
     if msg_lower in ["reset", "reiniciar", "nuevo", "borrar"]:
         session_state[user_id] = {
@@ -252,38 +252,42 @@ async def whatsapp(Body: str = Form(...)):
     memory = session_state[user_id]
 
     # -----------------------------------------------------
-    # 2. FIRST MESSAGE ALWAYS GREETS
+    # 2. FIRST MESSAGE → ALWAYS GREET
     # -----------------------------------------------------
     if not memory["started"]:
         memory["started"] = True
-        resp.message("Hola 👋 ¿En qué puedo ayudarte?")
+        resp.message("Hola 😊 ¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
 
     # -----------------------------------------------------
-    # 3. PRICE QUESTIONS (natural handling)
+    # 3. PRICE QUESTIONS (natural and human)
     # -----------------------------------------------------
     price_words = ["cuánto", "cuanto", "precio", "vale", "cuesta", "coste", "valor"]
 
     if any(w in msg_lower for w in price_words):
         pkg = detect_package(msg_lower)
 
-        # If user mentioned a package → return ONLY that price
-        if pkg:
-            price_map = {
-                "Paquete Cuidado Esencial": "$45.000",
-                "Paquete Salud Activa": "$60.000",
-                "Paquete Bienestar Total": "$75.000"
-            }
+        price_map = {
+            "Paquete Cuidado Esencial": "$45.000",
+            "Paquete Salud Activa": "$60.000",
+            "Paquete Bienestar Total": "$75.000"
+        }
 
+        # User asked price AND mentioned a package
+        if pkg:
             resp.message(
-                f"Claro 😊\nEl *{pkg}* tiene un valor de **{price_map[pkg]}**.\n\n"
-                "¿Te gustaría agendar una cita?"
+                f"Hola 😊\n"
+                f"Claro, el *{pkg}* cuesta **{price_map[pkg]}**.\n\n"
+                "Si quieres, puedo agendar tu cita. Solo necesito:\n"
+                "• Nombre del estudiante\n"
+                "• Colegio\n"
+                "• Fecha y hora que deseas"
             )
             return Response(str(resp), media_type="application/xml")
 
-        # If no package detected → send price list
+        # User asked price WITHOUT specifying which package
         resp.message(
-            "Claro 😊 Aquí tienes los precios:\n\n"
+            "Hola 😊 Aquí tienes los precios:\n\n"
             "• *Cuidado Esencial* – $45.000\n"
             "• *Salud Activa* – $60.000\n"
             "• *Bienestar Total* – $75.000\n\n"
@@ -292,7 +296,24 @@ async def whatsapp(Body: str = Form(...)):
         return Response(str(resp), media_type="application/xml")
 
     # -----------------------------------------------------
-    # 4. AI MAGIC (smart brain)
+    # 4. DETECT PACKAGE ALONE (without asking price)
+    # -----------------------------------------------------
+    pkg_detected = detect_package(msg_lower)
+    if pkg_detected and not memory["package"]:
+        memory["package"] = pkg_detected
+
+        resp.message(
+            f"Hola 😊\n"
+            f"¡Claro! Ese es el *{pkg_detected}*.\n"
+            "Si quieres, puedo agendar tu cita. Solo necesito:\n"
+            "• Nombre del estudiante\n"
+            "• Colegio\n"
+            "• Fecha y hora que deseas"
+        )
+        return Response(str(resp), media_type="application/xml")
+
+    # -----------------------------------------------------
+    # 5. SMART AI BRAIN
     # -----------------------------------------------------
     ai_result = smart_ai_brain(memory, msg_raw)
 
@@ -300,7 +321,7 @@ async def whatsapp(Body: str = Form(...)):
     missing = ai_result.get("missing", [])
     reply = ai_result.get("reply", "")
 
-    # Update memory
+    # Apply extracted fields
     if fields.get("customer_name"):
         memory["customer_name"] = fields["customer_name"]
     if fields.get("school_name"):
@@ -312,15 +333,14 @@ async def whatsapp(Body: str = Form(...)):
 
     memory["party_size"] = "1"
 
-    # -----------------------------------------------------
-    # 5. IF SOMETHING IS MISSING → ASK FOR THAT
-    # -----------------------------------------------------
+    # Missing fields → ask human follow-up
     if missing:
-        resp.message(reply)
+        # Always prepend Hola 😊
+        resp.message("Hola 😊\n" + reply)
         return Response(str(resp), media_type="application/xml")
 
     # -----------------------------------------------------
-    # 6. IF COMPLETE → SAVE RESERVATION
+    # 6. ALL FIELDS COMPLETE → CONFIRM + SAVE
     # -----------------------------------------------------
     if memory["customer_name"] and memory["school_name"] and memory["datetime"] and memory["package"]:
         dt_display = memory["datetime"].replace("T", " ")[:16]
@@ -338,6 +358,7 @@ Hola 😊
         save_reservation(memory)
         resp.message(confirm_msg)
 
+        # Reset memory
         session_state[user_id] = {
             "customer_name": None,
             "school_name": None,
@@ -352,9 +373,8 @@ Hola 😊
     # -----------------------------------------------------
     # 7. SAFETY FALLBACK
     # -----------------------------------------------------
-    resp.message("No entendí bien, ¿me confirmas porfa?")
+    resp.message("Hola 😊 ¿Me confirmas porfa?")
     return Response(str(resp), media_type="application/xml")
-
 
 
 # ---------------------------------------------------------
