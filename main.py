@@ -316,6 +316,7 @@ async def whatsapp(Body: str = Form(...)):
             "package": None,
             "awaiting_info": False,
             "started": False,
+            "waiting_for_confirmation": False,
         }
         resp.message("🔄 Memoria reiniciada.\n\nPuedes empezar una conversación nueva 😊")
         return Response(str(resp), media_type="application/xml")
@@ -332,6 +333,7 @@ async def whatsapp(Body: str = Form(...)):
             "package": None,
             "awaiting_info": False,
             "started": False,
+            "waiting_for_confirmation": False,
         }
 
     memory = session_state[user_id]
@@ -412,26 +414,17 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        package_booking_words = [
-            "75", "75k", "75mil",
-            "60", "60k", "60mil",
-            "45", "45k", "45mil",
-            "esencial", "activa", "bienestar", "total",
-            "azul", "verde", "amarillo"
-        ]
-
-        if any(w in msg for w in package_booking_words):
-            memory["awaiting_info"] = True
+        # --- PACKAGE MENTION: ask politely first ---
+        pkg = detect_package(msg)
+        if pkg:
+            memory["package"] = pkg
+            memory["waiting_for_confirmation"] = True
             resp.message(
-                "Hola 😊\nPerfecto, te ayudo con eso.\n"
-                "Para agendar necesito estos datos:\n"
-                "• Nombre del estudiante\n"
-                "• Colegio\n"
-                "• Fecha y hora\n"
-                "• Número de estudiantes\n"
-                "• Paquete que deseas\n"
+                f"Hola 😊 Claro, ese corresponde al *{pkg}*.\n"
+                "¿Te gustaría agendar una cita?"
             )
             return Response(str(resp), media_type="application/xml")
+
 
         if any(k in msg for k in greetings):
             resp.message("Hola 👋 ¿En qué puedo ayudarte?")
@@ -439,6 +432,30 @@ async def whatsapp(Body: str = Form(...)):
 
         resp.message("Hola 👋 ¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
+
+    # -----------------------------------------------------
+    # USER CONFIRMS AFTER PACKAGE DETECTION
+    # -----------------------------------------------------
+    if memory.get("waiting_for_confirmation"):
+        # YES
+        if any(word in msg for word in ["si", "sí", "claro", "dale", "ok", "listo", "quiero", "hágale", "hagale"]):
+            memory["awaiting_info"] = True
+            memory["waiting_for_confirmation"] = False
+            resp.message(
+                "Perfecto 😊\nPara agendar necesito:\n"
+                "• Nombre del estudiante\n"
+                "• Colegio\n"
+                "• Fecha y hora deseada"
+            )
+            return Response(str(resp), media_type="application/xml")
+
+
+         # NO
+        if any(word in msg for word in ["no", "nel", "nahi", "ahora no", "más tarde", "mas tarde"]):
+            memory["waiting_for_confirmation"] = False
+            resp.message("Claro 😊 Si deseas agendar más tarde, estaré aquí para ayudarte.")
+            return Response(str(resp), media_type="application/xml")
+
 
     # -----------------------------------------------------
     # 5. SECOND MESSAGE AND BEYOND
