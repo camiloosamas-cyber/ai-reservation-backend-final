@@ -212,7 +212,7 @@ Formato de retorno OBLIGATORIO:
 
 
 # ---------------------------------------------------------
-# WHATSAPP HANDLER (AI POWERED)
+# WHATSAPP HANDLER (AI POWERED + PRICE INFO)
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
@@ -221,7 +221,9 @@ async def whatsapp(Body: str = Form(...)):
     msg_lower = msg_raw.lower()
     user_id = "default"
 
-    # RESET
+    # -----------------------------------------------------
+    # 0. RESET MEMORY
+    # -----------------------------------------------------
     if msg_lower in ["reset", "reiniciar", "nuevo", "borrar"]:
         session_state[user_id] = {
             "customer_name": None,
@@ -234,7 +236,9 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("🔄 Memoria reiniciada.\n\nPuedes empezar de nuevo 😊")
         return Response(str(resp), media_type="application/xml")
 
-    # INIT
+    # -----------------------------------------------------
+    # 1. INIT MEMORY
+    # -----------------------------------------------------
     if user_id not in session_state:
         session_state[user_id] = {
             "customer_name": None,
@@ -247,13 +251,49 @@ async def whatsapp(Body: str = Form(...)):
 
     memory = session_state[user_id]
 
-    # FIRST MSG ALWAYS GREETS
+    # -----------------------------------------------------
+    # 2. FIRST MESSAGE ALWAYS GREETS
+    # -----------------------------------------------------
     if not memory["started"]:
         memory["started"] = True
         resp.message("Hola 👋 ¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
 
-    # AI MAGIC
+    # -----------------------------------------------------
+    # 3. PRICE QUESTIONS (natural handling)
+    # -----------------------------------------------------
+    price_words = ["cuánto", "cuanto", "precio", "vale", "cuesta", "coste", "valor"]
+
+    if any(w in msg_lower for w in price_words):
+        pkg = detect_package(msg_lower)
+
+        # If user mentioned a package → return ONLY that price
+        if pkg:
+            price_map = {
+                "Paquete Cuidado Esencial": "$45.000",
+                "Paquete Salud Activa": "$60.000",
+                "Paquete Bienestar Total": "$75.000"
+            }
+
+            resp.message(
+                f"Claro 😊\nEl *{pkg}* tiene un valor de **{price_map[pkg]}**.\n\n"
+                "¿Te gustaría agendar una cita?"
+            )
+            return Response(str(resp), media_type="application/xml")
+
+        # If no package detected → send price list
+        resp.message(
+            "Claro 😊 Aquí tienes los precios:\n\n"
+            "• *Cuidado Esencial* – $45.000\n"
+            "• *Salud Activa* – $60.000\n"
+            "• *Bienestar Total* – $75.000\n\n"
+            "¿Cuál te interesa?"
+        )
+        return Response(str(resp), media_type="application/xml")
+
+    # -----------------------------------------------------
+    # 4. AI MAGIC (smart brain)
+    # -----------------------------------------------------
     ai_result = smart_ai_brain(memory, msg_raw)
 
     fields = ai_result.get("fields", {})
@@ -272,12 +312,16 @@ async def whatsapp(Body: str = Form(...)):
 
     memory["party_size"] = "1"
 
-    # If something is missing
+    # -----------------------------------------------------
+    # 5. IF SOMETHING IS MISSING → ASK FOR THAT
+    # -----------------------------------------------------
     if missing:
         resp.message(reply)
         return Response(str(resp), media_type="application/xml")
 
-    # If everything complete → CONFIRM
+    # -----------------------------------------------------
+    # 6. IF COMPLETE → SAVE RESERVATION
+    # -----------------------------------------------------
     if memory["customer_name"] and memory["school_name"] and memory["datetime"] and memory["package"]:
         dt_display = memory["datetime"].replace("T", " ")[:16]
 
@@ -294,7 +338,6 @@ Hola 😊
         save_reservation(memory)
         resp.message(confirm_msg)
 
-        # Reset
         session_state[user_id] = {
             "customer_name": None,
             "school_name": None,
@@ -306,9 +349,12 @@ Hola 😊
 
         return Response(str(resp), media_type="application/xml")
 
-    # Safety fallback
+    # -----------------------------------------------------
+    # 7. SAFETY FALLBACK
+    # -----------------------------------------------------
     resp.message("No entendí bien, ¿me confirmas porfa?")
     return Response(str(resp), media_type="application/xml")
+
 
 
 # ---------------------------------------------------------
