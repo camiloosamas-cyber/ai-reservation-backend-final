@@ -200,6 +200,7 @@ def ai_extract(user_msg: str):
         r"nombre es ([a-zA-Záéíóúñ ]+)",
     ]
 
+    # Try structured patterns first
     for p in name_patterns:
         m = re.search(p, text)
         if m:
@@ -207,9 +208,10 @@ def ai_extract(user_msg: str):
             customer_name = " ".join(candidate.split()[:3])
             break
 
-    # Fallback → message looks like ONLY a name
+    # --------------------------
+    # FALLBACK: message is ONLY a name
+    # --------------------------
     if not customer_name:
-        # words that should NEVER be considered as names
         package_words = [
             "esencial", "activa", "total", "bienestar", "cuidado", "salud",
             "paquete", "kit", "45", "60", "75"
