@@ -189,7 +189,6 @@ def ai_extract(user_msg: str):
         if m:
             school_name = m.group(1).strip()
             break
-
     # -------------------------
     # NAME DETECTION (FIXED)
     # -------------------------
@@ -208,9 +207,19 @@ def ai_extract(user_msg: str):
             customer_name = " ".join(candidate.split()[:3])
             break
 
-    # Fallback ONLY if user sends a message that looks like JUST a name
+    # Fallback → message looks like ONLY a name
     if not customer_name:
-        if re.fullmatch(r"[a-zA-Záéíóúñ ]{2,30}", text) and len(text.split()) <= 3:
+        # words that should NEVER be considered as names
+        package_words = [
+            "esencial", "activa", "total", "bienestar", "cuidado", "salud",
+            "paquete", "kit", "45", "60", "75"
+        ]
+
+        is_just_text = re.fullmatch(r"[a-zA-Záéíóúñ ]{2,30}", text)
+        is_short = len(text.split()) <= 3
+        contains_package_word = any(w in text for w in package_words)
+
+        if is_just_text and is_short and not contains_package_word:
             ignored = ["hola", "ola", "buenas", "buenos dias", "buen día"]
             if text not in ignored:
                 customer_name = " ".join(text.split()[:3])
