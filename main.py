@@ -191,20 +191,29 @@ def ai_extract(user_msg: str):
             break
 
     # -------------------------
-    # NAME DETECTION
+    # NAME DETECTION (FIXED)
     # -------------------------
     customer_name = ""
+
     name_patterns = [
         r"se llama ([a-zA-Záéíóúñ ]+)",
         r"mi hijo ([a-zA-Záéíóúñ ]+)",
         r"nombre es ([a-zA-Záéíóúñ ]+)",
     ]
+
     for p in name_patterns:
         m = re.search(p, text)
         if m:
             candidate = m.group(1).strip()
             customer_name = " ".join(candidate.split()[:3])
             break
+
+    # Fallback ONLY if user sends a message that looks like JUST a name
+    if not customer_name:
+        if re.fullmatch(r"[a-zA-Záéíóúñ ]{2,30}", text) and len(text.split()) <= 3:
+            ignored = ["hola", "ola", "buenas", "buenos dias", "buen día"]
+            if text not in ignored:
+                customer_name = " ".join(text.split()[:3])
 
     # -------------------------
     # PARTY SIZE
@@ -277,7 +286,6 @@ Mensaje:
         "party_size": party_size,
         "package": detected_package,
     }
-
 
 # ---------------------------------------------------------
 # WHATSAPP HANDLER (CLEAN + UPDATED)
