@@ -1,6 +1,4 @@
-# =========================================================
-# main.py — Version con STATE MACHINE REAL (Estable)
-# =========================================================
+# ======================= BEGIN MAIN FILE =======================
 
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, Response
@@ -41,33 +39,30 @@ app.add_middleware(
 LOCAL_TZ = ZoneInfo("America/Bogota")
 
 # ---------------------------------------------------------
-# USER MEMORY + STATE MACHINE
+# MEMORY PER USER
 # ---------------------------------------------------------
-
-"""
-Possible states:
-
-START
-AFTER_PRICE_INFO
-ASK_NAME
-ASK_SCHOOL
-ASK_DATETIME
-ASK_PACKAGE
-READY_TO_CONFIRM
-FINISHED
-"""
-
 session_state = {}
 
-def init_memory():
-    return {
-        "state": "START",
-        "customer_name": None,
-        "school_name": None,
-        "datetime": None,
-        "package": None,
-        "party_size": "1",
-    }
+# ---------------------------------------------------------
+# SUPABASE
+# ---------------------------------------------------------
+supabase: Client = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_SERVICE_ROLE")
+)
+
+TABLE_LIMIT = 10
+
+def assign_table(iso_local: str):
+    booked = supabase.table("reservations").select("table_number").eq("datetime", iso_local).execute()
+    taken = {r["table_number"] for r in (booked.data or [])}
+
+    for i in range(1, TABLE_LIMIT + 1):
+        t = f"T{i}"
+        if t not in taken:
+            return t
+    return None
+
 
 # ---------------------------------------------------------
 # PACKAGE DETECTION
@@ -75,36 +70,13 @@ def init_memory():
 def detect_package(msg: str):
     msg = msg.lower().strip()
 
-    # direct names
-    if "cuidado esencial" in msg or "esencial" in msg or "kit escolar" in msg:
-        return "Paquete Cuidado Esencial"
-    if "salud activa" in msg or "activa" in msg:
-        return "Paquete Salud Activa"
-    if "bienestar total" in msg or "total" in msg or "completo" in msg:
-        return "Paquete Bienestar Total"
-
-    # price-based
-    if "45" in msg or "45k" in msg or "45 mil" in msg or "45mil" in msg:
-        return "Paquete Cuidado Esencial"
-    if "60" in msg or "60k" in msg or "60 mil" in msg or "60mil" in msg:
-        return "Paquete Salud Activa"
-    if "75" in msg or "75k" in msg or "75 mil" in msg or "75mil" in msg:
-        return "Paquete Bienestar Total"
-
-    # exam-based
-    if "odont" in msg:
-        return "Paquete Bienestar Total"
-    if "psico" in msg:
-        return "Paquete Salud Activa"
-    if "audio" in msg or "optometr" in msg or "medicina" in msg:
+    if "esencial" in msg or "45" in msg or "verde" in msg or "45mil" in msg:
         return "Paquete Cuidado Esencial"
 
-    # colors (text-only)
-    if "verde" in msg:
-        return "Paquete Cuidado Esencial"
-    if "azul" in msg:
+    if "activa" in msg or "60" in msg or "azul" in msg or "psico" in msg:
         return "Paquete Salud Activa"
-    if "amarillo" in msg:
+
+    if "total" in msg or "75" in msg or "amarillo" in msg or "odont" in msg:
         return "Paquete Bienestar Total"
 
     return None
@@ -115,28 +87,37 @@ def detect_package(msg: str):
 # ---------------------------------------------------------
 def save_reservation(data: dict):
     try:
-        raw = datetime.fromisoformat(data["datetime"])
-        dt_local = raw if raw.tzinfo else raw.replace(tzinfo=LOCAL_TZ)
+        raw_dt = datetime.fromisoformat(data["datetime"])
+        if raw_dt.tzinfo is None:
+            dt_local = raw_dt.replace(tzinfo=LOCAL_TZ)
+        else:
+            dt_local = raw_dt.astimezone(LOCAL_TZ)
+
         iso_to_store = dt_local.isoformat()
+
     except:
         return "❌ Error procesando la fecha."
+
+    table = assign_table(iso_to_store)
+    if not table:
+        return "❌ No hay cupos disponibles para ese horario."
 
     supabase.table("reservations").insert({
         "customer_name": data["customer_name"],
         "customer_email": "",
         "contact_phone": "",
         "datetime": iso_to_store,
-        "party_size": int(data["party_size"]),
-        "table_number": "AUTO",
+        "party_size": 1,
+        "table_number": table,
         "notes": "",
         "status": "confirmado",
         "business_id": 2,
         "package": data.get("package", ""),
-        "school_name": data.get("school_name", "")
+        "school_name": data.get("school_name", ""),
     }).execute()
 
     return (
-        "✅ *¡Reserva confirmada!*\n"
+        "✅ *¡Cita confirmada!*\n"
         f"👤 {data['customer_name']}\n"
         f"🏫 {data['school_name']}\n"
         f"📦 {data['package']}\n"
@@ -145,149 +126,199 @@ def save_reservation(data: dict):
 
 
 # ---------------------------------------------------------
-# WHATSAPP LOGIC
+# AI EXTRACTION
+# ---------------------------------------------------------
+def ai_extract(user_msg: str):
+    import dateparser
+    text = user_msg.lower().strip()
+
+    # PACKAGE
+    pkg = detect_package(text)
+
+    # SCHOOL
+    school = ""
+    school_patterns = [
+        r"(colegio [a-zA-Záéíóúñ ]+)",
+        r"(gimnasio [a-zA-Záéíóúñ ]+)",
+        r"(liceo [a-zA-Záéíóúñ ]+)",
+        r"(instituto [a-zA-Záéíóúñ ]+)",
+    ]
+    for p in school_patterns:
+        m = re.search(p, text)
+        if m:
+            school = m.group(1).strip()
+            break
+
+    # NAME
+    name = ""
+    if "se llama" in text:
+        name = text.split("se llama",1)[1].strip().split()[0]
+    elif re.fullmatch(r"[a-zA-Záéíóúñ ]{2,20}", text) and "colegio" not in text:
+        name = text.strip()
+
+    # DATE / TIME
+    prompt = f"""
+Extrae SOLO la fecha y hora:
+
+{{
+"datetime": "texto"
+}}
+
+Mensaje:
+\"\"\"{user_msg}\"\"\""""
+
+    try:
+        r = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0,
+            messages=[{"role": "system","content":prompt}]
+        )
+        dt_raw = json.loads(r.choices[0].message.content)["datetime"]
+    except:
+        dt_raw = ""
+
+    dt_parsed = dateparser.parse(dt_raw, settings={
+        "PREFER_DATES_FROM": "future",
+        "TIMEZONE": "America/Bogota",
+        "RETURN_AS_TIMEZONE_AWARE": True
+    })
+
+    dt_iso = dt_parsed.isoformat() if dt_parsed else ""
+
+    return {
+        "customer_name": name,
+        "school_name": school,
+        "package": pkg,
+        "datetime": dt_iso
+    }
+
+
+# ---------------------------------------------------------
+# WHATSAPP HANDLER
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
+    resp = MessagingResponse()
     msg_raw = Body.strip()
     msg = msg_raw.lower()
-    resp = MessagingResponse()
-
     user_id = "default"
+
+    # RESET
+    if msg in ["reset","nuevo","reiniciar"]:
+        session_state[user_id] = {
+            "customer_name": None,
+            "school_name": None,
+            "package": None,
+            "datetime": None,
+            "started": False
+        }
+        resp.message("🔄 Memoria reiniciada.")
+        return Response(str(resp), media_type="application/xml")
+
+    # INIT MEMORY
     if user_id not in session_state:
-        session_state[user_id] = init_memory()
+        session_state[user_id] = {
+            "customer_name": None,
+            "school_name": None,
+            "package": None,
+            "datetime": None,
+            "started": False
+        }
 
     memory = session_state[user_id]
 
-    # RESET COMMAND
-    if msg in ["reset", "reiniciar", "nuevo"]:
-        session_state[user_id] = init_memory()
-        resp.message("🔄 Memoria reiniciada. ¿En qué puedo ayudarte?")
-        return Response(str(resp), media_type="application/xml")
+    # FIRST MESSAGE
+    if not memory["started"]:
+        memory["started"] = True
 
-    # ---------------------------------------------------------
-    # STATE: START (First message)
-    # ---------------------------------------------------------
-    if memory["state"] == "START":
+        # greeting
+        if any(g in msg for g in ["hola","ola","buenas","buen dia"]):
+            resp.message("Hola 😊 ¿En qué puedo ayudarte?")
+            return Response(str(resp), media_type="application/xml")
 
-        # If user asks price
-        if any(k in msg for k in ["cuánto", "cuanto", "precio", "vale", "incluye", "trae"]):
+        # price / info
+        if any(w in msg for w in ["cuánto","precio","vale","incluye","trae"]):
             pkg = detect_package(msg)
             if pkg:
-                memory["state"] = "AFTER_PRICE_INFO"
-                memory["package"] = pkg
                 resp.message(
-                    f"Hola 😊\nEl paquete que mencionas es *{pkg}*.\n\n"
+                    f"Hola 😊\nEse corresponde al *{pkg}*.\n\n"
                     "Precios:\n"
                     "• Cuidado Esencial – $45.000\n"
                     "• Salud Activa – $60.000\n"
                     "• Bienestar Total – $75.000\n\n"
-                    "¿Te gustaría agendar una cita?"
+                    "¿Quieres agendar?"
                 )
                 return Response(str(resp), media_type="application/xml")
 
-            # If no specific package detected
-            memory["state"] = "AFTER_PRICE_INFO"
             resp.message(
-                "Hola 😊\nAquí tienes la información de los paquetes:\n\n"
+                "Hola 😊\nAquí tienes los paquetes:\n\n"
                 "• Cuidado Esencial – $45.000\n"
                 "• Salud Activa – $60.000\n"
                 "• Bienestar Total – $75.000\n\n"
-                "¿Te gustaría agendar una cita?"
+                "¿Cuál deseas?"
             )
             return Response(str(resp), media_type="application/xml")
 
-        # Any other first message → ask name
-        memory["state"] = "ASK_NAME"
-        resp.message("Claro 😊 ¿Cuál es el nombre del estudiante?")
-        return Response(str(resp), media_type="application/xml")
-
-    # ---------------------------------------------------------
-    # STATE: AFTER_PRICE_INFO
-    # ---------------------------------------------------------
-    if memory["state"] == "AFTER_PRICE_INFO":
-
-        if msg in ["si", "sí", "claro", "ok", "dale", "quiero", "si por favor"]:
-            memory["state"] = "ASK_NAME"
-            resp.message(
-                "Perfecto 😊\nPara agendar necesito:\n"
-                "• Nombre del estudiante\n"
-                "• Colegio\n"
-                "• Fecha y hora deseada\n"
-                "• Paquete"
-            )
+        # package detected
+        pkg = detect_package(msg)
+        if pkg:
+            memory["package"] = pkg
+            resp.message(f"Hola 😊 Ese es *{pkg}*. ¿Deseas agendar?")
             return Response(str(resp), media_type="application/xml")
 
-        resp.message("¿Te gustaría agendar una cita?")
+        resp.message("Hola 😊 ¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
 
-    # ---------------------------------------------------------
-    # STATE: ASK_NAME
-    # ---------------------------------------------------------
-    if memory["state"] == "ASK_NAME":
-        memory["customer_name"] = msg_raw
-        memory["state"] = "ASK_SCHOOL"
-        resp.message("Perfecto 😊 ¿De qué colegio viene?")
+    # NEXT MESSAGES
+    extracted = ai_extract(msg)
+
+    if extracted["customer_name"]:
+        memory["customer_name"] = extracted["customer_name"]
+
+    if extracted["school_name"]:
+        memory["school_name"] = extracted["school_name"]
+
+    if extracted["package"]:
+        memory["package"] = extracted["package"]
+
+    if extracted["datetime"]:
+        memory["datetime"] = extracted["datetime"]
+
+    # ASK FOR MISSING DATA
+    if not memory["customer_name"]:
+        resp.message("¿Cuál es el nombre del estudiante?")
         return Response(str(resp), media_type="application/xml")
 
-    # ---------------------------------------------------------
-    # STATE: ASK_SCHOOL
-    # ---------------------------------------------------------
-    if memory["state"] == "ASK_SCHOOL":
-        memory["school_name"] = msg_raw
-        memory["state"] = "ASK_DATETIME"
-        resp.message("¿Para qué fecha y hora deseas la cita?")
+    if not memory["school_name"]:
+        resp.message("¿De qué colegio viene?")
         return Response(str(resp), media_type="application/xml")
 
-    # ---------------------------------------------------------
-    # STATE: ASK_DATETIME
-    # ---------------------------------------------------------
-    if memory["state"] == "ASK_DATETIME":
-        import dateparser
-        dt = dateparser.parse(
-            msg_raw,
-            settings={
-                "PREFER_DATES_FROM": "future",
-                "TIMEZONE": "America/Bogota",
-                "RETURN_AS_TIMEZONE_AWARE": True
-            }
-        )
-        if not dt:
-            resp.message("No entendí la fecha 😅 ¿Puedes repetirla?")
-            return Response(str(resp), media_type="application/xml")
-
-        memory["datetime"] = dt.isoformat()
-        memory["state"] = "ASK_PACKAGE"
-
+    if not memory["package"]:
         resp.message(
-            "Perfecto 😊 ¿Qué paquete deseas reservar?\n\n"
+            "¿Qué paquete deseas reservar?\n"
             "• Cuidado Esencial – $45.000\n"
             "• Salud Activa – $60.000\n"
             "• Bienestar Total – $75.000"
         )
         return Response(str(resp), media_type="application/xml")
 
-    # ---------------------------------------------------------
-    # STATE: ASK_PACKAGE
-    # ---------------------------------------------------------
-    if memory["state"] == "ASK_PACKAGE":
-        pkg = detect_package(msg)
-        if not pkg:
-            resp.message("No entendí el paquete 😅 ¿Cuál deseas?")
-            return Response(str(resp), media_type="application/xml")
-
-        memory["package"] = pkg
-        memory["state"] = "READY_TO_CONFIRM"
-
-        confirmation = save_reservation(memory)
-        resp.message("Hola 😊\n" + confirmation)
-
-        memory["state"] = "FINISHED"
+    if not memory["datetime"]:
+        resp.message("¿Para qué fecha y hora deseas la cita?")
         return Response(str(resp), media_type="application/xml")
 
-    # ---------------------------------------------------------
-    # FINISHED: restart
-    # ---------------------------------------------------------
-    resp.message("¿Te gustaría agendar otra cita?")
+    # SAVE
+    confirm = save_reservation(memory)
+    resp.message("Hola 😊\n" + confirm)
+
+    # RESET AFTER SAVE
+    session_state[user_id] = {
+        "customer_name": None,
+        "school_name": None,
+        "package": None,
+        "datetime": None,
+        "started": False
+    }
+
     return Response(str(resp), media_type="application/xml")
 
+# ======================= END MAIN FILE =======================
