@@ -295,7 +295,7 @@ Devuelve JSON:
     }
 
 # ---------------------------------------------------------
-# WHATSAPP HANDLER (FINAL FIXED VERSION)
+# WHATSAPP HANDLER (CLEAN + STRUCTURED + BUG-FREE)
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
@@ -305,79 +305,46 @@ async def whatsapp(Body: str = Form(...)):
     user_id = "default"
 
     # -----------------------------------------------------
-    # 1. RESET MEMORY
+    # 0. RESET MEMORY
     # -----------------------------------------------------
-    if msg in ["reset", "reiniciar", "borrar", "nuevo"]:
+    if msg in ["reset", "reiniciar", "nuevo", "borrar"]:
         session_state[user_id] = {
             "customer_name": None,
-            "datetime": None,
-            "party_size": None,
             "school_name": None,
             "package": None,
-            "awaiting_info": False,
+            "datetime": None,
+            "party_size": "1",
             "started": False,
-            "waiting_for_confirmation": False,
+            "awaiting_info": False,
+            "waiting_for_confirmation": False
         }
         resp.message("🔄 Memoria reiniciada.\n\nPuedes empezar una conversación nueva 😊")
         return Response(str(resp), media_type="application/xml")
 
     # -----------------------------------------------------
-    # 2. INIT MEMORY
+    # 1. IF NEW USER → INIT MEMORY
     # -----------------------------------------------------
     if user_id not in session_state:
         session_state[user_id] = {
             "customer_name": None,
-            "datetime": None,
-            "party_size": None,
             "school_name": None,
             "package": None,
-            "awaiting_info": False,
+            "datetime": None,
+            "party_size": "1",
             "started": False,
-            "waiting_for_confirmation": False,
+            "awaiting_info": False,
+            "waiting_for_confirmation": False
         }
 
     memory = session_state[user_id]
 
     # -----------------------------------------------------
-    # 3. FIRST MESSAGE LOGIC
+    # 2. FIRST MESSAGE HANDLER
     # -----------------------------------------------------
     if not memory["started"]:
         memory["started"] = True
 
-        strong_booking = [
-            "examen", "exámenes", "examenes", "escolar",
-            "colegio", "matrícula", "matricula",
-            "para mi hijo", "para mi hija", "urgente",
-            "antes del", "antes de", "cupo", "hay cupo",
-            "75", "75k", "75 mil", "75mil"
-        ]
-
-        # If they are clearly booking → ask for info directly
-        if any(k in msg for k in strong_booking):
-            memory["awaiting_info"] = True
-            resp.message(
-                "Perfecto 😊\nPara agendar necesito:\n"
-                "• Nombre del estudiante\n"
-                "• Colegio\n"
-                "• Fecha y hora\n"
-                "• Paquete que deseas"
-            )
-            return Response(str(resp), media_type="application/xml")
-
-        # Price/info request
-        info_triggers = ["cuánto", "precio", "vale", "incluye", "?"]
-
-        if any(k in msg for k in info_triggers):
-            resp.message(
-                "Claro 😊\nAquí tienes la información de los paquetes:\n\n"
-                "• *Cuidado Esencial* – $45.000\n"
-                "• *Salud Activa* – $60.000\n"
-                "• *Bienestar Total* – $75.000\n\n"
-                "¿Te gustaría agendar una cita?"
-            )
-            return Response(str(resp), media_type="application/xml")
-
-        # Package mentioned → ask for confirmation
+        # 🔍 detect package INSTANTLY
         pkg = detect_package(msg)
         if pkg:
             memory["package"] = pkg
@@ -388,23 +355,55 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        # Greetings
-        greetings = ["hola", "ola", "buenas", "buen día", "buenas tardes", "buenas noches"]
+        # 🔍 strong booking intent
+        strong_booking = [
+            "examen", "escolar", "colegio",
+            "matricula", "matrícula",
+            "para mi hijo", "para mi hija", "urgente",
+            "cupo", "hay cupo"
+        ]
 
-        if any(g in msg for g in greetings):
+        if any(k in msg for k in strong_booking):
+            memory["awaiting_info"] = True
+            resp.message(
+                "Hola 😊\nClaro, te ayudo con eso.\n"
+                "Para agendar necesito estos datos:\n"
+                "• Nombre del estudiante\n"
+                "• Colegio\n"
+                "• Fecha y hora\n"
+                "• Paquete que deseas"
+            )
+            return Response(str(resp), media_type="application/xml")
+
+        # 🔍 asking about prices
+        info_words = ["cuánto", "precio", "vale", "incluye"]
+        if any(w in msg for w in info_words):
+            resp.message(
+                "Hola 😊\nAquí tienes la información de los paquetes:\n\n"
+                "• *Cuidado Esencial* – $45.000\n"
+                "• *Salud Activa* – $60.000\n"
+                "• *Bienestar Total* – $75.000\n\n"
+                "¿Te gustaría agendar una cita?"
+            )
+            return Response(str(resp), media_type="application/xml")
+
+        # 🔍 greetings
+        if any(g in msg for g in ["hola", "ola", "buenas", "buen día"]):
             resp.message("Hola 👋 ¿En qué puedo ayudarte?")
             return Response(str(resp), media_type="application/xml")
 
-        # Default
+        # default fallback
         resp.message("Hola 👋 ¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
 
     # -----------------------------------------------------
-    # 4. USER CONFIRMS BOOKING AFTER PACKAGE DETECTION
+    # 3. USER CONFIRMS AFTER PACKAGE DETECTION
     # -----------------------------------------------------
-    if memory.get("waiting_for_confirmation"):
-        # YES
-        if any(word in msg for word in ["si", "sí", "claro", "dale", "ok", "listo", "quiero", "hágale", "hagale"]):
+    if memory["waiting_for_confirmation"]:
+        yes_words = ["si", "sí", "claro", "dale", "ok", "listo", "quiero", "hagale", "hágale"]
+        no_words = ["no", "nel", "ahora no", "más tarde", "mas tarde"]
+
+        if any(w in msg for w in yes_words):
             memory["waiting_for_confirmation"] = False
             memory["awaiting_info"] = True
             resp.message(
@@ -415,18 +414,16 @@ async def whatsapp(Body: str = Form(...)):
             )
             return Response(str(resp), media_type="application/xml")
 
-        # NO
-        if any(word in msg for word in ["no", "nel", "nahi", "ahora no", "más tarde", "mas tarde"]):
+        if any(w in msg for w in no_words):
             memory["waiting_for_confirmation"] = False
             resp.message("Perfecto 😊 Si deseas agendar luego, estaré aquí para ayudarte.")
             return Response(str(resp), media_type="application/xml")
 
-        # If unclear → ask again
         resp.message("¿Te gustaría agendar una cita?")
         return Response(str(resp), media_type="application/xml")
 
     # -----------------------------------------------------
-    # 5. SECOND MESSAGE AND BEYOND → EXTRACT INFO
+    # 4. SECOND MESSAGE AND BEYOND → AI EXTRACTION
     # -----------------------------------------------------
     extracted = ai_extract(msg)
 
@@ -439,15 +436,14 @@ async def whatsapp(Body: str = Form(...)):
     if extracted.get("datetime"):
         memory["datetime"] = extracted["datetime"]
 
-    if extracted.get("party_size"):
-        memory["party_size"] = extracted["party_size"]
+    if extracted.get("package"):
+        memory["package"] = extracted["package"]
 
-    pkg = detect_package(msg)
-    if pkg:
-        memory["package"] = pkg
+    # Always default party size to 1 for IPS
+    memory["party_size"] = "1"
 
     # -----------------------------------------------------
-    # 6. ASK FOR MISSING REQUIRED INFO
+    # 5. ASK FOR ANY MISSING FIELD
     # -----------------------------------------------------
     if not memory["customer_name"]:
         resp.message("¿Cuál es el nombre del estudiante?")
@@ -461,10 +457,6 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("¿Para qué fecha y hora deseas la cita?")
         return Response(str(resp), media_type="application/xml")
 
-    # Party size default = 1
-    if not memory["party_size"]:
-        memory["party_size"] = "1"
-
     if not memory["package"]:
         resp.message(
             "¿Qué paquete deseas reservar?\n\n"
@@ -475,21 +467,21 @@ async def whatsapp(Body: str = Form(...)):
         return Response(str(resp), media_type="application/xml")
 
     # -----------------------------------------------------
-    # 7. CONFIRM RESERVATION
+    # 6. SAVE RESERVATION
     # -----------------------------------------------------
     confirmation = save_reservation(memory)
     resp.message("Hola 😊\n" + confirmation)
 
-    # Reset memory
+    # reset state
     session_state[user_id] = {
         "customer_name": None,
-        "datetime": None,
-        "party_size": None,
         "school_name": None,
         "package": None,
-        "awaiting_info": False,
+        "datetime": None,
+        "party_size": "1",
         "started": False,
-        "waiting_for_confirmation": False,
+        "awaiting_info": False,
+        "waiting_for_confirmation": False
     }
 
     return Response(str(resp), media_type="application/xml")
