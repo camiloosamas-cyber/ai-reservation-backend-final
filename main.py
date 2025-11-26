@@ -201,7 +201,7 @@ Formato obligatorio SIEMPRE:
 """
 
     r = client.chat.completions.create(
-        model="gpt-4.1-mini",
+        model="gpt-4o-mini-tts",
         temperature=0,
         messages=[
             {"role": "system", "content": system_prompt},
