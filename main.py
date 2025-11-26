@@ -39,11 +39,6 @@ app.add_middleware(
 LOCAL_TZ = ZoneInfo("America/Bogota")
 
 # ---------------------------------------------------------
-# MEMORY PER USER
-# ---------------------------------------------------------
-session_state = {}
-
-# ---------------------------------------------------------
 # SUPABASE
 # ---------------------------------------------------------
 supabase: Client = create_client(
@@ -349,6 +344,7 @@ def handle_package_info(msg, session):
 
     pkg = detect_package(msg)
 
+    # If they clearly mention a specific package → give price of that one
     if pkg == "Cuidado Esencial":
         price = "45.000"
     elif pkg == "Salud Activa":
@@ -356,15 +352,18 @@ def handle_package_info(msg, session):
     elif pkg == "Bienestar Total":
         price = "75.000"
     else:
-        # Unknown package
+        # General info question → list all packages with bullets
         return (
-            "Hola, claro. Ofrecemos tres paquetes: "
-            "Cuidado Esencial, Salud Activa y Bienestar Total. ¿Cuál te interesa?"
+            "Claro. Ofrecemos tres paquetes:\n\n"
+            "• Cuidado Esencial — $45.000\n"
+            "• Salud Activa — $60.000\n"
+            "• Bienestar Total — $75.000\n\n"
+            "¿Cuál te interesa?"
         )
 
-    # Soft invitation, not pushy
+    # If they asked about a specific one
     return (
-        f"Hola, claro. El paquete {pkg} cuesta ${price}. "
+        f"Claro. El paquete {pkg} cuesta ${price}. "
         "Si deseas, puedo ayudarte a agendar una cita. ¿Te gustaría hacerlo?"
     )
     
@@ -380,13 +379,13 @@ def handle_booking_request(msg, session):
     # Extract info BEFORE checking missing fields
     update_session_with_info(msg, session)
 
-    # Check if we ALREADY have everything
+    # If they already gave everything in one sentence, go straight to summary
     if session["student_name"] and session["school"] and session["package"] and session["date"] and session["time"]:
         return finish_booking(session)
 
-    # Otherwise, show the list of required fields
+    # Otherwise, ask for the fields (without repeating "Hola")
     return (
-        "Hola, por supuesto. Para agendar la cita necesito los siguientes datos:\n\n"
+        "Por supuesto. Para agendar la cita necesito los siguientes datos:\n\n"
         "– Nombre del estudiante\n"
         "– Colegio\n"
         "– Paquete\n"
@@ -470,6 +469,11 @@ def process_message(msg, session):
     # If user said "sí", "claro", "dale", etc after price info → switch to booking
     if intent == "confirmation" and session["info_mode"] and not session["booking_started"]:
         intent = "booking_request"
+
+    # If user says a confirmation word AND we already sent the summary → confirm
+
+    if session["booking_started"] and is_confirmation_message(msg):
+        return handle_confirmation(msg, session)
 
     # Silence fallback
     if intent is None:
@@ -572,11 +576,9 @@ def detect_package(msg):
 def extract_date(msg):
     msg = msg.lower()
 
-    # Try to isolate common Spanish date expressions
+    # Common Spanish relative/weekday date expressions
     patterns = [
-        r"(este\s+viernes)",
-        r"(este\s+sabado)",
-        r"(este\s+sábado)",
+        r"(este\s+(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo))",
         r"(mañana)",
         r"(pasado mañana)",
         r"(el\s+\d{1,2}\s+de\s+[a-záéíóú]+)",
@@ -588,22 +590,31 @@ def extract_date(msg):
         m = re.search(p, msg)
         if m:
             phrase = m.group(1)
-            dt = dateparser.parse(phrase, languages=["es"], settings={
-                "PREFER_DATES_FROM": "future",
-                "TIMEZONE": "America/Bogota"
-            })
+            dt = dateparser.parse(
+                phrase,
+                languages=["es"],
+                settings={
+                    "PREFER_DATES_FROM": "future",
+                    "TIMEZONE": "America/Bogota"
+                }
+            )
             if dt:
                 return dt.strftime("%Y-%m-%d")
 
-    # fallback to full message
-    dt = dateparser.parse(msg, languages=["es"], settings={
-        "PREFER_DATES_FROM": "future",
-        "TIMEZONE": "America/Bogota"
-    })
+    # Fallback: let dateparser read the whole message
+    dt = dateparser.parse(
+        msg,
+        languages=["es"],
+        settings={
+            "PREFER_DATES_FROM": "future",
+            "TIMEZONE": "America/Bogota"
+        }
+    )
     if dt:
         return dt.strftime("%Y-%m-%d")
 
     return None
+    
 # --------------------------------------------------------------
 # TIME EXTRACTOR
 # --------------------------------------------------------------
@@ -729,6 +740,16 @@ def finish_booking(session):
         f"paquete {pkg}, el día {date} a las {time}. ¿Deseas confirmar?"
     )
 
+def is_confirmation_message(msg: str) -> bool:
+    """
+    Check if the user message looks like a confirmation (sí, dale, deseo confirmar, etc.)
+    using the same patterns defined in INTENTS["confirmation"]["patterns"].
+    """
+    text = msg.lower().strip()
+    for p in INTENTS["confirmation"]["patterns"]:
+        if p in text:
+            return True
+    return False
 
 def continue_booking_process(msg, session):
     """
@@ -739,13 +760,20 @@ def continue_booking_process(msg, session):
     # STEP 1 — extract any info from user's message
     update_session_with_info(msg, session)
 
-    # STEP 2 — check missing fields
+    # STEP 2 — if something is still missing, ask only for that
     missing_message = build_missing_fields_message(session)
     if missing_message:
         return missing_message
 
-    # STEP 3 — if nothing missing, build final confirmation
+    # STEP 3 — we already have ALL fields (name, school, package, date, time)
+
+    # If the user is now confirming ("sí", "deseo confirmar", etc.)
+    if is_confirmation_message(msg):
+        return handle_confirmation(msg, session)
+
+    # If they haven't explicitly confirmed yet, show the summary and ask
     return finish_booking(session)
+
 
 # ======================================================================
 #                       PART 4A — INTENT PATTERNS
