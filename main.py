@@ -461,6 +461,10 @@ def process_message(msg, session):
     # Not booking yet → detect intent
     intent = detect_intent(msg)
 
+    # If user said "sí", "claro", "dale", etc after price info → switch to booking
+    if intent == "confirmation" and session["info_mode"] and not session["booking_started"]:
+        intent = "booking_request"
+
     # Silence fallback
     if intent is None:
         return ""
@@ -472,6 +476,7 @@ def process_message(msg, session):
     session["first_booking_message"] = False
 
     return handler(msg, session)
+
 
 # ======================================================================
 #                        EXTRACTORS (PART 2)
@@ -559,35 +564,34 @@ def detect_package(msg):
 # DATE EXTRACTOR (USING dateparser)
 # --------------------------------------------------------------
 def extract_date(msg):
-    parsed = dateparser.parse(msg, languages=["es"])
-    if parsed:
-        try:
-            return parsed.strftime("%Y-%m-%d")
-        except:
-            return None
+    dt = dateparser.parse(
+        msg,
+        languages=["es"],
+        settings={
+            "PREFER_DATES_FROM": "future",
+            "TIMEZONE": "America/Bogota",
+        }
+    )
+    if dt:
+        return dt.strftime("%Y-%m-%d")
     return None
-
 
 # --------------------------------------------------------------
 # TIME EXTRACTOR
 # --------------------------------------------------------------
 def extract_time(msg):
-
-    # Patterns like "7pm", "7 pm", "7:00 pm"
-    time_regex = r"(\d{1,2}(:\d{2})?\s?(am|pm))"
-
-    m = re.search(time_regex, msg.lower())
-    if m:
-        return m.group(1).replace(" ", "")
-
-    # Patterns like “a las 7”
-    m = re.search(r"a las (\d{1,2})", msg.lower())
-    if m:
-        hour = int(m.group(1))
-        if 1 <= hour <= 12:
-            return f"{hour}:00"
-
+    dt = dateparser.parse(
+        msg,
+        languages=["es"],
+        settings={
+            "PREFER_DATES_FROM": "future",
+            "TIMEZONE": "America/Bogota",
+        }
+    )
+    if dt:
+        return dt.strftime("%H:%M")
     return None
+    
 # ======================================================================
 #                    BOOKING LOGIC (PART 3)
 # ======================================================================
