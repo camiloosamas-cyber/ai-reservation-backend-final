@@ -576,11 +576,18 @@ def detect_package(msg):
 def extract_date(msg):
     msg = msg.lower()
 
-    # Common Spanish relative/weekday date expressions
     patterns = [
-        r"(este\s+(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo))",
+        # “este viernes”, “para este viernes”, “sería este viernes”
+        r"((?:para|el|es|seria|sería|este|para este|para el)?\s*este\s+(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo))",
+
+        # single weekday: “viernes”, “jueves”
+        r"((lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo))",
+
+        # mañana / pasado mañana
         r"(mañana)",
         r"(pasado mañana)",
+
+        # explicit date
         r"(el\s+\d{1,2}\s+de\s+[a-záéíóú]+)",
         r"(\d{1,2}/\d{1,2}/\d{2,4})",
         r"(\d{4}-\d{2}-\d{2})"
@@ -601,7 +608,7 @@ def extract_date(msg):
             if dt:
                 return dt.strftime("%Y-%m-%d")
 
-    # Fallback: let dateparser read the whole message
+    # fallback
     dt = dateparser.parse(
         msg,
         languages=["es"],
@@ -614,6 +621,7 @@ def extract_date(msg):
         return dt.strftime("%Y-%m-%d")
 
     return None
+
     
 # --------------------------------------------------------------
 # TIME EXTRACTOR
