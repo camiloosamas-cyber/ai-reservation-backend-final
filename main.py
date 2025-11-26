@@ -138,7 +138,7 @@ def ai_extract(user_msg: str):
             break
 
     # -------------------------
-    # NAME DETECTION (FIXED)
+    # NAME
     # -------------------------
     customer_name = ""
 
@@ -148,7 +148,6 @@ def ai_extract(user_msg: str):
         r"nombre es ([a-zA-Záéíóúñ ]+)",
     ]
 
-    # 1) Structured name detection
     for p in name_patterns:
         m = re.search(p, text)
         if m:
@@ -156,13 +155,9 @@ def ai_extract(user_msg: str):
             customer_name = " ".join(candidate.split()[:3])
             break
 
-    # 2) FALLBACK NAME DETECTION (DO NOT CONFUSE WITH SCHOOL NAMES)
+    # fallback
     if not customer_name:
-        package_words = [
-            "esencial", "activa", "total", "bienestar", "cuidado", "salud",
-            "paquete", "kit", "45", "60", "75"
-        ]
-
+        package_words = ["esencial", "activa", "total", "bienestar", "cuidado", "salud", "paquete", "kit", "45", "60", "75"]
         school_words = ["colegio", "gimnasio", "liceo", "instituto", "school"]
 
         is_just_text = re.fullmatch(r"[a-zA-Záéíóúñ ]{2,30}", text)
@@ -184,7 +179,7 @@ def ai_extract(user_msg: str):
         party_size = m.group(1)
 
     # -------------------------
-    # DATE/TIME — LLM extraction
+    # DATE + TIME — GPT
     # -------------------------
     prompt = f"""
 Extrae SOLO la fecha y hora del siguiente mensaje.
@@ -197,8 +192,7 @@ Devuélvelo exactamente así:
 No inventes nada.
 
 Mensaje:
-\"\"\"{user_msg}\"\"\"
-"""
+\"\"\"{user_msg}\"\"\""""
 
     try:
         r = client.chat.completions.create(
@@ -235,9 +229,6 @@ Mensaje:
     else:
         intent = "other"
 
-    # -------------------------
-    # RETURN
-    # -------------------------
     return {
         "intent": intent,
         "customer_name": customer_name,
@@ -581,83 +572,7 @@ def detect_package(msg):
         return "Bienestar Total"
 
     return None
-
-
-# --------------------------------------------------------------
-# DATE EXTRACTOR (USING dateparser)
-# --------------------------------------------------------------
-def extract_date(msg):
-    msg = msg.lower()
-
-    # Common weekday expressions
-    weekdays = r"(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)"
-
-    patterns = [
-        rf"(este\s+{weekdays})",
-        rf"(para\s+este\s+{weekdays})",
-        rf"(el\s+{weekdays})",
-        rf"({weekdays})",  # single weekday
-        r"(mañana)",
-        r"(pasado mañana)",
-        r"(el\s+\d{1,2}\s+de\s+[a-záéíóú]+)",
-        r"(\d{1,2}/\d{1,2}/\d{2,4})",
-        r"(\d{4}-\d{2}-\d{2})"
-    ]
-
-    for p in patterns:
-        m = re.search(p, msg)
-        if m:
-            phrase = m.group(1)
-            dt = dateparser.parse(
-                phrase,
-                languages=["es"],
-                settings={"PREFER_DATES_FROM": "future", "TIMEZONE": "America/Bogota"}
-            )
-            if dt:
-                return dt.strftime("%Y-%m-%d")
-
-    # fallback
-    dt = dateparser.parse(msg, languages=["es"], settings={"PREFER_DATES_FROM": "future", "TIMEZONE": "America/Bogota"})
-    if dt:
-        return dt.strftime("%Y-%m-%d")
-
-    return None
     
-# --------------------------------------------------------------
-# TIME EXTRACTOR
-# --------------------------------------------------------------
-def extract_time(msg):
-    msg = msg.lower()
-
-    # Capture "3 pm", "3:00 pm", "15:00", "3pm", etc
-    patterns = [
-        r"(\d{1,2}\s*pm)",
-        r"(\d{1,2}\s*am)",
-        r"(\d{1,2}:\d{2}\s*pm)",
-        r"(\d{1,2}:\d{2}\s*am)",
-        r"(\d{1,2}:\d{2})"
-    ]
-
-    for p in patterns:
-        m = re.search(p, msg)
-        if m:
-            phrase = m.group(1)
-            dt = dateparser.parse(phrase, languages=["es"], settings={
-                "PREFER_DATES_FROM": "future",
-                "TIMEZONE": "America/Bogota"
-            })
-            if dt:
-                return dt.strftime("%H:%M")
-
-    # fallback
-    dt = dateparser.parse(msg, languages=["es"], settings={
-        "PREFER_DATES_FROM": "future",
-        "TIMEZONE": "America/Bogota"
-    })
-    if dt:
-        return dt.strftime("%H:%M")
-
-    return None
     
 # ======================================================================
 #                    BOOKING LOGIC (PART 3)
@@ -687,17 +602,23 @@ def update_session_with_info(msg, session):
         if pkg:
             session["package"] = pkg
 
-    # Extract date
-    if session["date"] is None:
-        date = extract_date(msg)
-        if date:
-            session["date"] = date
+    # ----------------------------
+    # DATE + TIME VIA GPT (AI)
+    # ----------------------------
+    extracted = ai_extract(msg)
 
-    # Extract time
-    if session["time"] is None:
-        time = extract_time(msg)
-        if time:
-            session["time"] = time
+    if extracted.get("datetime"):
+        try:
+            dt = dateparser.parse(
+                extracted["datetime"],
+                languages=["es"],
+                settings={"PREFER_DATES_FROM": "future", "TIMEZONE": "America/Bogota"}
+            )
+            if dt:
+                session["date"] = dt.strftime("%Y-%m-%d")
+                session["time"] = dt.strftime("%H:%M")
+        except:
+            pass
 
 
 def build_missing_fields_message(session):
