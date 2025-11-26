@@ -376,9 +376,15 @@ def handle_booking_request(msg, session):
     # Switch to booking mode
     session["booking_started"] = True
     session["info_mode"] = False
-    session["first_booking_message"] = True
 
-    # FIRST structured message with bullet points
+    # Extract info BEFORE checking missing fields
+    update_session_with_info(msg, session)
+
+    # Check if we ALREADY have everything
+    if session["student_name"] and session["school"] and session["package"] and session["date"] and session["time"]:
+        return finish_booking(session)
+
+    # Otherwise, show the list of required fields
     return (
         "Hola, por supuesto. Para agendar la cita necesito los siguientes datos:\n\n"
         "– Nombre del estudiante\n"
@@ -564,32 +570,74 @@ def detect_package(msg):
 # DATE EXTRACTOR (USING dateparser)
 # --------------------------------------------------------------
 def extract_date(msg):
-    dt = dateparser.parse(
-        msg,
-        languages=["es"],
-        settings={
-            "PREFER_DATES_FROM": "future",
-            "TIMEZONE": "America/Bogota",
-        }
-    )
+    msg = msg.lower()
+
+    # Try to isolate common Spanish date expressions
+    patterns = [
+        r"(este\s+viernes)",
+        r"(este\s+sabado)",
+        r"(este\s+sábado)",
+        r"(mañana)",
+        r"(pasado mañana)",
+        r"(el\s+\d{1,2}\s+de\s+[a-záéíóú]+)",
+        r"(\d{1,2}/\d{1,2}/\d{2,4})",
+        r"(\d{4}-\d{2}-\d{2})"
+    ]
+
+    for p in patterns:
+        m = re.search(p, msg)
+        if m:
+            phrase = m.group(1)
+            dt = dateparser.parse(phrase, languages=["es"], settings={
+                "PREFER_DATES_FROM": "future",
+                "TIMEZONE": "America/Bogota"
+            })
+            if dt:
+                return dt.strftime("%Y-%m-%d")
+
+    # fallback to full message
+    dt = dateparser.parse(msg, languages=["es"], settings={
+        "PREFER_DATES_FROM": "future",
+        "TIMEZONE": "America/Bogota"
+    })
     if dt:
         return dt.strftime("%Y-%m-%d")
-    return None
 
+    return None
 # --------------------------------------------------------------
 # TIME EXTRACTOR
 # --------------------------------------------------------------
 def extract_time(msg):
-    dt = dateparser.parse(
-        msg,
-        languages=["es"],
-        settings={
-            "PREFER_DATES_FROM": "future",
-            "TIMEZONE": "America/Bogota",
-        }
-    )
+    msg = msg.lower()
+
+    # Capture "3 pm", "3:00 pm", "15:00", "3pm", etc
+    patterns = [
+        r"(\d{1,2}\s*pm)",
+        r"(\d{1,2}\s*am)",
+        r"(\d{1,2}:\d{2}\s*pm)",
+        r"(\d{1,2}:\d{2}\s*am)",
+        r"(\d{1,2}:\d{2})"
+    ]
+
+    for p in patterns:
+        m = re.search(p, msg)
+        if m:
+            phrase = m.group(1)
+            dt = dateparser.parse(phrase, languages=["es"], settings={
+                "PREFER_DATES_FROM": "future",
+                "TIMEZONE": "America/Bogota"
+            })
+            if dt:
+                return dt.strftime("%H:%M")
+
+    # fallback
+    dt = dateparser.parse(msg, languages=["es"], settings={
+        "PREFER_DATES_FROM": "future",
+        "TIMEZONE": "America/Bogota"
+    })
     if dt:
         return dt.strftime("%H:%M")
+
     return None
     
 # ======================================================================
