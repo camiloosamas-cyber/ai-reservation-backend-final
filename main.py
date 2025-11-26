@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +17,6 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ---------- Twilio ----------
 from twilio.twiml.messaging_response import MessagingResponse
-
 
 # ---------------------------------------------------------
 # INIT APP
@@ -37,13 +36,11 @@ app.add_middleware(
 
 LOCAL_TZ = ZoneInfo("America/Bogota")
 
-
 # ---------------------------------------------------------
 # MEMORY PER USER
 # ---------------------------------------------------------
 session_state = {}
 df_session_state = {}
-
 
 # ---------------------------------------------------------
 # SUPABASE
@@ -65,7 +62,6 @@ def assign_table(iso_local: str):
         if t not in taken:
             return t
     return None
-
 
 # ---------------------------------------------------------
 # PACKAGE DETECTION (RULE-BASED)
@@ -107,7 +103,6 @@ def detect_package(msg: str):
 
     return None
 
-
 # ---------------------------------------------------------
 # SAVE RESERVATION
 # ---------------------------------------------------------
@@ -143,7 +138,9 @@ def save_reservation(data: dict):
 
     return "ok"
 
-
+# ---------------------------------------------------------
+# AI BRAIN
+# ---------------------------------------------------------
 def smart_ai_brain(memory, user_msg):
 
     system_prompt = """
@@ -225,8 +222,9 @@ Formato obligatorio SIEMPRE:
             "intent": "confused"
         }
 
-
-
+# ---------------------------------------------------------
+# WHATSAPP WEBHOOK
+# ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
     resp = MessagingResponse()
@@ -234,9 +232,7 @@ async def whatsapp(Body: str = Form(...)):
     msg_lower = msg_raw.lower()
     user_id = "default"
 
-    # -------------------------------
     # RESET
-    # -------------------------------
     if msg_lower in ["reset", "reiniciar", "nuevo", "borrar"]:
         session_state[user_id] = {
             "customer_name": None,
@@ -249,9 +245,7 @@ async def whatsapp(Body: str = Form(...)):
         resp.message("Hola 😊\nMemoria reiniciada.\n¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
 
-    # -------------------------------
     # INIT MEMORY
-    # -------------------------------
     if user_id not in session_state:
         session_state[user_id] = {
             "customer_name": None,
@@ -264,17 +258,13 @@ async def whatsapp(Body: str = Form(...)):
 
     memory = session_state[user_id]
 
-    # -------------------------------
     # FIRST MESSAGE ALWAYS GREET
-    # -------------------------------
     if not memory["started"]:
         memory["started"] = True
         resp.message("Hola 😊 ¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
 
-    # -------------------------------
     # PRICE QUESTIONS
-    # -------------------------------
     price_words = ["cuánto", "cuanto", "precio", "vale", "cuesta", "coste", "valor"]
 
     if any(w in msg_lower for w in price_words):
@@ -303,9 +293,7 @@ async def whatsapp(Body: str = Form(...)):
         )
         return Response(str(resp), media_type="application/xml")
 
-    # -------------------------------
     # PACKAGE DETECTION WITHOUT PRICE
-    # -------------------------------
     pkg_detected = detect_package(msg_lower)
     if pkg_detected and not memory["package"]:
         memory["package"] = pkg_detected
@@ -317,9 +305,7 @@ async def whatsapp(Body: str = Form(...)):
         )
         return Response(str(resp), media_type="application/xml")
 
-    # -------------------------------
     # AI SMART BRAIN
-    # -------------------------------
     ai_result = smart_ai_brain(memory, msg_raw)
 
     fields = ai_result.get("fields", {})
@@ -339,9 +325,7 @@ async def whatsapp(Body: str = Form(...)):
 
     memory["party_size"] = "1"
 
-    # -------------------------------
     # INFORMATIVE MESSAGE ONLY
-    # -------------------------------
     if intent == "info":
         resp.message(
             "Hola 😊\n"
@@ -350,16 +334,12 @@ async def whatsapp(Body: str = Form(...)):
         )
         return Response(str(resp), media_type="application/xml")
 
-    # -------------------------------
     # ASK FOR MISSING FIELDS
-    # -------------------------------
     if missing:
         resp.message("Hola 😊\n" + reply)
         return Response(str(resp), media_type="application/xml")
 
-    # -------------------------------
     # COMPLETE RESERVATION
-    # -------------------------------
     if memory["customer_name"] and memory["school_name"] and memory["datetime"] and memory["package"]:
         dt_display = memory["datetime"].replace("T", " ")[:16]
 
@@ -387,17 +367,13 @@ Hola 😊
 
         return Response(str(resp), media_type="application/xml")
 
-    # -------------------------------
     # SAFETY FALLBACK
-    # -------------------------------
     resp.message("Hola 😊 ¿Me confirmas porfa?")
     return Response(str(resp), media_type="application/xml")
 
 # ---------------------------------------------------------
 # DIALOGFLOW WEBHOOK
 # ---------------------------------------------------------
-from fastapi.responses import JSONResponse
-
 @app.post("/dialogflow-webhook")
 async def dialogflow_webhook(request: Request):
     try:
@@ -437,6 +413,12 @@ async def dialogflow_webhook(request: Request):
         mode = "greeting"
     else:
         mode = "fallback"
+
+    # SPECIAL CASE FOR GREETING
+    if mode == "greeting":
+        return JSONResponse({
+            "fulfillmentText": "Hola 😊 ¿En qué puedo ayudarte?"
+        })
 
     # AI logic
     ai_result = smart_ai_brain(memory, user_text)
@@ -536,7 +518,6 @@ async def dashboard(request: Request):
         "weekly_count": weekly_count
     })
 
-
 # ---------------------------------------------------------
 # UPDATE & ACTIONS
 # ---------------------------------------------------------
@@ -591,7 +572,6 @@ async def create_reservation(data: dict):
         "table_number": None
     })
     return {"success": True}
-
 
 # ---------------------------------------------------------
 # RUN
