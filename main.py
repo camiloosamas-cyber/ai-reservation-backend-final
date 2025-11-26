@@ -60,57 +60,7 @@ def assign_table(iso_local: str):
         if t not in taken:
             return t
     return None
-
-
-# ---------------------------------------------------------
-# PACKAGE DETECTION (UPDATED EXACTLY AS REQUESTED)
-# ---------------------------------------------------------
-def detect_package(msg: str):
-    msg = msg.lower().strip()
-
-    # Direct names
-    if "cuidado esencial" in msg or "esencial" in msg or "kit escolar" in msg:
-        return "Paquete Cuidado Esencial"
-
-    if "salud activa" in msg or "activa" in msg:
-        return "Paquete Salud Activa"
-
-    if "bienestar total" in msg or "total" in msg or "completo" in msg:
-        return "Paquete Bienestar Total"
-
-    # Price-based
-    if "45" in msg or "45k" in msg or "45 mil" in msg or "45mil" in msg:
-        return "Paquete Cuidado Esencial"
-
-    if "60" in msg or "60k" in msg or "60 mil" in msg or "60mil" in msg:
-        return "Paquete Salud Activa"
-
-    if "75" in msg or "75k" in msg or "75 mil" in msg or "75mil" in msg:
-        return "Paquete Bienestar Total"
-
-    # Exam-based
-    if "odont" in msg:
-        return "Paquete Bienestar Total"
-
-    if "psico" in msg:
-        return "Paquete Salud Activa"
-
-    if "audio" in msg or "optometr" in msg or "medicina" in msg:
-        return "Paquete Cuidado Esencial"
-
-    # Color-based (TEXT ONLY, NO IMAGE DETECTION)
-    if "verde" in msg:
-        return "Paquete Cuidado Esencial"
-
-    if "azul" in msg:
-        return "Paquete Salud Activa"
-
-    if "amarillo" in msg:
-        return "Paquete Bienestar Total"
-
-    return None
-
-
+    
 # ---------------------------------------------------------
 # SAVE RESERVATION
 # ---------------------------------------------------------
@@ -300,214 +250,681 @@ Mensaje:
         "package": detected_package,
     }
 
-# ---------------------------------------------------------
-# WHATSAPP HANDLER (CLEAN + UPDATED)
-# ---------------------------------------------------------
-@app.post("/whatsapp")
-async def whatsapp(Body: str = Form(...)):
-    resp = MessagingResponse()
-    msg_raw = Body.strip()
-    msg = msg_raw.lower()
-    user_id = "default"
+# ======================================================================
+#                      CHATBOT ENGINE (SKELETON)
+# ======================================================================
 
-    # -----------------------------------------------------
-    # 0. RESET MEMORY
-    # -----------------------------------------------------
-    if msg in ["reset", "reiniciar", "nuevo", "borrar"]:
-        session_state[user_id] = {
-            "customer_name": None,
-            "school_name": None,
+# Session storage (in-memory, per phone number)
+session_state = {}
+
+def get_session(phone):
+    if phone not in session_state:
+        session_state[phone] = {
+            "phone": phone,
+            "student_name": None,
+            "school": None,
             "package": None,
-            "datetime": None,
-            "party_size": "1",
-            "started": False,
-            "awaiting_info": False,
-            "waiting_for_confirmation": False
+            "date": None,
+            "time": None,
+            "booking_started": False,
+            "info_mode": False,          # true = user is only asking questions
+            "first_booking_message": False
         }
-        resp.message("🔄 Memoria reiniciada.\n\nPuedes empezar una conversación nueva 😊")
-        return Response(str(resp), media_type="application/xml")
+    return session_state[phone]
 
-    # -----------------------------------------------------
-    # 1. IF NEW USER → INIT MEMORY
-    # -----------------------------------------------------
-    if user_id not in session_state:
-        session_state[user_id] = {
-            "customer_name": None,
-            "school_name": None,
-            "package": None,
-            "datetime": None,
-            "party_size": "1",
-            "started": False,
-            "awaiting_info": False,
-            "waiting_for_confirmation": False
-        }
+# ----------------------------------------------------------------------
+# INTENT MAP (Will be filled in PART 4)
+# ----------------------------------------------------------------------
+INTENTS = {
+    "greeting": {
+        "patterns": [],  # will fill later
+        "handler": "handle_greeting"
+    },
+    "package_info": {
+        "patterns": [],
+        "handler": "handle_package_info"
+    },
+    "booking_request": {
+        "patterns": [],
+        "handler": "handle_booking_request"
+    },
+    "modify": {
+        "patterns": [],
+        "handler": "handle_modify"
+    },
+    "cancel": {
+        "patterns": [],
+        "handler": "handle_cancel"
+    },
+    "confirmation": {
+        "patterns": [],
+        "handler": "handle_confirmation"
+    }
+}
 
-    memory = session_state[user_id]
+# ----------------------------------------------------------------------
+# Intent Detection
+# ----------------------------------------------------------------------
+INTENT_PRIORITY = [
+    "booking_request",
+    "modify",
+    "cancel",
+    "package_info",
+    "confirmation",
+    "greeting",
+]
 
-    # -----------------------------------------------------
-    # 2. FIRST MESSAGE HANDLER (FIXED)
-    # -----------------------------------------------------
-    if not memory["started"]:
-        memory["started"] = True
+def detect_intent(msg):
+    msg = msg.lower()
+    for intent in INTENT_PRIORITY:
+        data = INTENTS[intent]
+        for p in data["patterns"]:
+            if p in msg:
+                return intent
+    return None  # Silence fallback
 
-        # 🔍 detect if user is asking for PRICE / INFO
-        info_words = ["cuánto", "cuanto", "precio", "vale", "incluye", "trae"]
-        if any(w in msg for w in info_words):
-            pkg = detect_package(msg)
 
-            if pkg:
-                resp.message(
-                    f"Hola 😊\nEl paquete que mencionas es *{pkg}*.\n\n"
-                    "Precios:\n"
-                    "• *Cuidado Esencial* – $45.000\n"
-                    "• *Salud Activa* – $60.000\n"
-                    "• *Bienestar Total* – $75.000\n\n"
-                    "¿Te gustaría agendar una cita?"
-                )
-                return Response(str(resp), media_type="application/xml")
+# ----------------------------------------------------------------------
+# Handler: Greeting (INFO MODE)
+# ----------------------------------------------------------------------
+def handle_greeting(msg, session):
+    # Only for info-mode, soft tone, no pressure
+    session["info_mode"] = True
+    return "Hola, claro que sí. ¿En qué te puedo ayudar?"
 
-            resp.message(
-                "Hola 😊\nAquí tienes la información de los paquetes:\n\n"
-                "• *Cuidado Esencial* – $45.000\n"
-                "• *Salud Activa* – $60.000\n"
-                "• *Bienestar Total* – $75.000\n\n"
-                "¿Cuál te interesa?"
-            )
-            return Response(str(resp), media_type="application/xml")
+# ----------------------------------------------------------------------
+# Handler: Package Info (INFO MODE)
+# ----------------------------------------------------------------------
+def handle_package_info(msg, session):
 
-        # 🔍 detect package INSTANTLY (ONLY if not asking price)
+    session["info_mode"] = True  # Still in info mode
+
+    pkg = detect_package(msg)
+
+    if pkg == "Cuidado Esencial":
+        price = "45.000"
+    elif pkg == "Salud Activa":
+        price = "60.000"
+    elif pkg == "Bienestar Total":
+        price = "75.000"
+    else:
+        # Unknown package
+        return (
+            "Hola, claro. Ofrecemos tres paquetes: "
+            "Cuidado Esencial, Salud Activa y Bienestar Total. ¿Cuál te interesa?"
+        )
+
+    # Soft invitation, not pushy
+    return (
+        f"Hola, claro. El paquete {pkg} cuesta ${price}. "
+        "Si deseas, puedo ayudarte a agendar una cita. ¿Te gustaría hacerlo?"
+    )
+    
+# ----------------------------------------------------------------------
+# Handler: Booking Request (BEGIN BOOKING MODE)
+# ----------------------------------------------------------------------
+def handle_booking_request(msg, session):
+
+    # Switch to booking mode
+    session["booking_started"] = True
+    session["info_mode"] = False
+    session["first_booking_message"] = True
+
+    # FIRST structured message with bullet points
+    return (
+        "Hola, por supuesto. Para agendar la cita necesito los siguientes datos:\n\n"
+        "– Nombre del estudiante\n"
+        "– Colegio\n"
+        "– Paquete\n"
+        "– Fecha en que deseas la cita\n"
+        "– Hora\n\n"
+        "¿Me los puedes compartir?"
+    )
+
+# ----------------------------------------------------------------------
+# Handler: Modify (one-line)
+# ----------------------------------------------------------------------
+def handle_modify(msg, session):
+    return "Claro, ¿cuál sería la nueva fecha y hora que deseas?"
+
+# ----------------------------------------------------------------------
+# Handler: Cancel
+# ----------------------------------------------------------------------
+def handle_cancel(msg, session):
+    return "Perfecto, ¿confirmas que deseas cancelar la cita?"
+
+# ----------------------------------------------------------------------
+# Handler: Confirmation (final)
+# ----------------------------------------------------------------------
+def handle_confirmation(msg, session):
+
+    # Check if ALL fields exist
+    if all([session["student_name"], session["school"], session["package"], session["date"], session["time"]]):
+        name = session["student_name"]
+        school = session["school"]
+        pkg = session["package"]
+        date = session["date"]
+        time = session["time"]
+
+        # Clear session after confirm
+        session_state.pop(session["phone"], None)
+
+        return (
+            f"Listo, tu cita quedó agendada para {name} en el {school}, "
+            f"paquete {pkg}, el día {date} a las {time}. Te esperamos."
+        )
+
+    return "Perfecto, ¿me confirmas algo más?"
+
+# ----------------------------------------------------------------------
+# MAIN CHATBOT ENGINE
+# ----------------------------------------------------------------------
+def process_message(msg, session):
+
+    # If we are mid-booking AND not first message → use booking logic directly
+    if session["booking_started"] and not session["first_booking_message"]:
+        return continue_booking_process(msg, session)
+
+    # Detect intent
+    intent = detect_intent(msg)
+
+    if intent is None:
+        return ""  # Silence fallback
+
+    handler_name = INTENTS[intent]["handler"]
+    handler = globals()[handler_name]
+
+    session["first_booking_message"] = False
+
+    return handler(msg, session)
+# ======================================================================
+#                        EXTRACTORS (PART 2)
+# ======================================================================
+
+import re
+import dateparser
+
+# --------------------------------------------------------------
+# STUDENT NAME EXTRACTOR
+# --------------------------------------------------------------
+def extract_student_name(msg):
+    msg = msg.strip()
+
+    # If message starts with "es para", "para", "mi hijo", "mi hija"
+    patterns = [
+        r"es para ([a-zA-Záéíóúñ ]+)",
+        r"para ([a-zA-Záéíóúñ ]+)",
+        r"mi hijo ([a-zA-Záéíóúñ ]+)",
+        r"mi hija ([a-zA-Záéíóúñ ]+)",
+        r"nombre es ([a-zA-Záéíóúñ ]+)",
+    ]
+
+    for p in patterns:
+        m = re.search(p, msg, re.IGNORECASE)
+        if m:
+            return m.group(1).strip().title()
+
+    # If user ONLY sends a name (simple case)
+    if len(msg.split()) <= 4 and all(c.isalpha() or c.isspace() for c in msg):
+        return msg.title()
+
+    return None
+
+
+# --------------------------------------------------------------
+# SCHOOL EXTRACTOR
+# --------------------------------------------------------------
+def extract_school(msg):
+
+    # Remove noise
+    msg_clean = msg.lower()
+
+    # Patterns for common Colombian school formats
+    p = re.search(r"(colegio|col\.?|school|inst\.?) ([a-zA-Záéíóúñ ]+)", msg_clean)
+    if p:
+        school = p.group(2).strip().title()
+        return school
+
+    # If user sends something like “San José Norte” alone
+    if len(msg.split()) <= 4 and any(word.istitle() for word in msg.split()):
+        return msg.title()
+
+    return None
+
+
+# --------------------------------------------------------------
+# PACKAGE DETECTOR
+# --------------------------------------------------------------
+def detect_package(msg):
+    msg = msg.lower()
+
+    # Package rules
+    esencial_words = ["esencial", "verde", "45k", "45 mil", "kit escolar"]
+    activa_words   = ["activa", "psico", "psicologia", "60k", "60 mil", "azul"]
+    bienestar_words = ["bienestar", "total", "completo", "odont", "75k", "75 mil", "amarillo"]
+
+    if any(w in msg for w in esencial_words):
+        return "Cuidado Esencial"
+
+    if any(w in msg for w in activa_words):
+        return "Salud Activa"
+
+    if any(w in msg for w in bienestar_words):
+        return "Bienestar Total"
+
+    return None
+
+
+# --------------------------------------------------------------
+# DATE EXTRACTOR (USING dateparser)
+# --------------------------------------------------------------
+def extract_date(msg):
+    parsed = dateparser.parse(msg, languages=["es"])
+    if parsed:
+        try:
+            return parsed.strftime("%Y-%m-%d")
+        except:
+            return None
+    return None
+
+
+# --------------------------------------------------------------
+# TIME EXTRACTOR
+# --------------------------------------------------------------
+def extract_time(msg):
+
+    # Patterns like "7pm", "7 pm", "7:00 pm"
+    time_regex = r"(\d{1,2}(:\d{2})?\s?(am|pm))"
+
+    m = re.search(time_regex, msg.lower())
+    if m:
+        return m.group(1).replace(" ", "")
+
+    # Patterns like “a las 7”
+    m = re.search(r"a las (\d{1,2})", msg.lower())
+    if m:
+        hour = int(m.group(1))
+        if 1 <= hour <= 12:
+            return f"{hour}:00"
+
+    return None
+# ======================================================================
+#                    BOOKING LOGIC (PART 3)
+# ======================================================================
+
+def update_session_with_info(msg, session):
+    """
+    Update session with ANY information the user provided.
+    This runs EVERY TIME the user sends a message.
+    """
+
+    # Extract student name
+    if session["student_name"] is None:
+        name = extract_student_name(msg)
+        if name:
+            session["student_name"] = name
+
+    # Extract school
+    if session["school"] is None:
+        school = extract_school(msg)
+        if school:
+            session["school"] = school
+
+    # Detect package
+    if session["package"] is None:
         pkg = detect_package(msg)
         if pkg:
-            memory["package"] = pkg
-            memory["waiting_for_confirmation"] = True
-            resp.message(
-                f"Hola 😊 Claro, ese corresponde al *{pkg}*.\n"
-                "¿Te gustaría agendar una cita?"
-            )
-            return Response(str(resp), media_type="application/xml")
+            session["package"] = pkg
 
-        # 🔍 strong booking intent
-        strong_booking = [
-        "examen", "exmanes", "examenes", "exam", 
-        "escolar", "escolares",
-        "colegio", "cole",
-        "matricula", "matrícula",
-        "para mi hijo", "para mi hija",
-        "urgente",
-        "cupo", "hay cupo"
-        ]
+    # Extract date
+    if session["date"] is None:
+        date = extract_date(msg)
+        if date:
+            session["date"] = date
 
-        if any(k in msg for k in strong_booking):
-            memory["awaiting_info"] = True
-            resp.message(
-                "Hola 😊\nClaro, te ayudo con eso.\n"
-                "Para agendar necesito estos datos:\n"
-                "• Nombre del estudiante\n"
-                "• Colegio\n"
-                "• Fecha y hora\n"
-                "• Paquete que deseas"
-            )
-            return Response(str(resp), media_type="application/xml")
+    # Extract time
+    if session["time"] is None:
+        time = extract_time(msg)
+        if time:
+            session["time"] = time
 
-        # 🔍 greetings
-        if any(g in msg for g in ["hola", "ola", "buenas", "buen día"]):
-            resp.message("Hola 👋 ¿En qué puedo ayudarte?")
-            return Response(str(resp), media_type="application/xml")
 
-        resp.message("Hola 👋 ¿En qué puedo ayudarte?")
-        return Response(str(resp), media_type="application/xml")
+def build_missing_fields_message(session):
+    """
+    For the FOLLOW-UP messages — clean, one-line, natural.
+    """
+    missing = []
 
-    # -----------------------------------------------------
-    # 3. USER CONFIRMS AFTER PACKAGE DETECTION
-    # -----------------------------------------------------
-    if memory["waiting_for_confirmation"]:
-        yes_words = ["si", "sí", "claro", "dale", "ok", "listo", "quiero", "hagale", "hágale"]
-        no_words = ["no", "nel", "ahora no", "más tarde", "mas tarde"]
+    if not session["student_name"]:
+        missing.append("el nombre del estudiante")
+    if not session["school"]:
+        missing.append("el colegio")
+    if not session["package"]:
+        missing.append("el paquete")
+    if not session["date"]:
+        missing.append("la fecha en que deseas la cita")
+    if not session["time"]:
+        missing.append("la hora")
 
-        if any(w in msg for w in yes_words):
-            memory["waiting_for_confirmation"] = False
-            memory["awaiting_info"] = True
-            resp.message(
-                "Perfecto 😊\nPara agendar necesito:\n"
-                "• Nombre del estudiante\n"
-                "• Colegio\n"
-                "• Fecha y hora deseada"
-            )
-            return Response(str(resp), media_type="application/xml")
+    if len(missing) == 0:
+        return None
 
-        if any(w in msg for w in no_words):
-            memory["waiting_for_confirmation"] = False
-            resp.message("Perfecto 😊 Si deseas agendar luego, estaré aquí para ayudarte.")
-            return Response(str(resp), media_type="application/xml")
+    # Build human one-line message based on missing count
+    if len(missing) == 1:
+        return f"Listo, solo me falta {missing[0]}. ¿Me lo compartes?"
 
-        resp.message("¿Te gustaría agendar una cita?")
-        return Response(str(resp), media_type="application/xml")
+    if len(missing) == 2:
+        return f"Perfecto, me falta {missing[0]} y {missing[1]}. ¿Me los compartes?"
 
-    # -----------------------------------------------------
-    # 4. SECOND MESSAGE AND BEYOND → AI EXTRACTION
-    # -----------------------------------------------------
-    extracted = ai_extract(msg)
+    # 3-5 missing
+    joined = ", ".join(missing[:-1]) + " y " + missing[-1]
+    return f"Perfecto, me falta {joined}. ¿Me los compartes?"
 
-    if extracted.get("customer_name"):
-        memory["customer_name"] = extracted["customer_name"]
 
-    if extracted.get("school_name"):
-        memory["school_name"] = extracted["school_name"]
+def finish_booking(session):
+    """
+    Build the final confirmation message once we have everything.
+    """
 
-    if extracted.get("datetime"):
-        memory["datetime"] = extracted["datetime"]
+    name = session["student_name"]
+    school = session["school"]
+    pkg = session["package"]
+    date = session["date"]
+    time = session["time"]
 
-    if extracted.get("package"):
-        memory["package"] = extracted["package"]
+    return (
+        f"Listo, tu cita quedó agendada para {name} en el {school}, "
+        f"paquete {pkg}, el día {date} a las {time}. ¿Deseas confirmar?"
+    )
 
-    memory["party_size"] = "1"
 
-    # 🔒 ALWAYS ask for the student name FIRST
-    if not memory["customer_name"]:
-        resp.message("¿Cuál es el nombre del estudiante?")
-        return Response(str(resp), media_type="application/xml")
+def continue_booking_process(msg, session):
+    """
+    This is called whenever booking has ALREADY started
+    and it's NOT the first booking message.
+    """
 
-    # -----------------------------------------------------
-    # 5. ASK FOR ANY MISSING FIELD
-    # -----------------------------------------------------
+    # STEP 1 — extract any info from user's message
+    update_session_with_info(msg, session)
 
-    if not memory["school_name"]:
-        resp.message("¿De qué colegio viene?")
-        return Response(str(resp), media_type="application/xml")
+    # STEP 2 — check missing fields
+    missing_message = build_missing_fields_message(session)
+    if missing_message:
+        return missing_message
 
-    if not memory["datetime"]:
-        resp.message("¿Para qué fecha y hora deseas la cita?")
-        return Response(str(resp), media_type="application/xml")
+    # STEP 3 — if nothing missing, build final confirmation
+    return finish_booking(session)
 
-    if not memory["package"]:
-        resp.message(
-            "¿Qué paquete deseas reservar?\n\n"
-            "• *Cuidado Esencial* – $45.000\n"
-            "• *Salud Activa* – $60.000\n"
-            "• *Bienestar Total* – $75.000"
-        )
-        return Response(str(resp), media_type="application/xml")
+# ======================================================================
+#                       PART 4A — INTENT PATTERNS
+# ======================================================================
 
-    # -----------------------------------------------------
-    # 6. SAVE RESERVATION
-    # -----------------------------------------------------
-    confirmation = save_reservation(memory)
-    resp.message("Hola 😊\n" + confirmation)
+INTENTS["greeting"]["patterns"] = [
+    # Basic greetings
+    "hola", "holaa", "holaaa", "buenas", "buenos dias", "buenos días",
+    "buen dia", "buen día", "buenas tardes", "buenas noches",
 
-    session_state[user_id] = {
-        "customer_name": None,
-        "school_name": None,
-        "package": None,
-        "datetime": None,
-        "party_size": "1",
-        "started": False,
-        "awaiting_info": False,
-        "waiting_for_confirmation": False
-    }
+    # Informal / slang
+    "ola", "holi", "holis", "hello", "alo", "aló", "alo?", "que mas",
+    "qué más", "q mas", "que tal", "que hubo", "qué hubo", "k hubo",
 
-    return Response(str(resp), media_type="application/xml")
+    # Polite openings
+    "disculpa", "una pregunta", "consulta", "hola una pregunta",
+    "buen dia una pregunta", "buenos dias una consulta", "quisiera saber",
 
-  
+    # Soft info openers
+    "vi un poster", "vi un anuncio", "vi su aviso", "vi la publicidad",
+    "tienen info", "informacion", "información", "quisiera informacion",
+    "quisiera información"
+]
+
+
+INTENTS["package_info"]["patterns"] = [
+    # Asking for price
+    "cuanto vale", "cuánto vale", "cuanto cuesta", "cuánto cuesta",
+    "precio", "precio del paquete", "valor del paquete",
+    "cuanto es el de", "cuánto es el de",
+
+    # Direct package references
+    "paquete", "kit escolar", "el de psicologia", "el de psicología",
+    "el de psico", "trae psicologia", "trae psicología",
+    "incluye psicologia", "incluye psicología",
+
+    # Colors mapped to packages
+    "el verde", "verde", "de color verde",
+    "el azul", "azul", "de color azul",
+    "el amarillo", "amarillo", "de color amarillo",
+
+    # Prices as references
+    "45k", "45 mil", "45mil",
+    "60k", "60 mil", "60mil",
+    "75k", "75 mil", "75mil",
+
+    # Keywords for each package
+    "esencial", "salud activa", "activa",
+    "bienestar total", "bienestar", "total", "completo",
+
+    # General info questions
+    "que paquetes tienen", "qué paquetes tienen",
+    "ofrecen paquetes", "tienen paquetes",
+    "como funcionan los paquetes", "examenes escolares",
+    "exámenes escolares", "paquetes escolares",
+]
+# ======================================================================
+#                  PART 4B — BOOKING / MODIFY / CANCEL
+# ======================================================================
+
+# ------------------------------------------------------------
+# BOOKING REQUEST PATTERNS
+# ------------------------------------------------------------
+INTENTS["booking_request"]["patterns"] = [
+
+    # Direct booking phrases
+    "quiero reservar",
+    "quiero una cita",
+    "quiero agendar",
+    "quiero sacar una cita",
+    "quiero sacar cita",
+    "quiero hacer una cita",
+    "quiero hacer cita",
+    "necesito una cita",
+    "necesito agendar",
+    "necesito reservar",
+    "necesito sacar cita",
+
+    # More explicit
+    "quiero reservar el paquete",
+    "quiero reservar el de",
+    "quiero agendar una cita para",
+    "quiero agendar cita para",
+    "quiero reservar para mi hijo",
+    "quiero reservar para mi hija",
+
+    # When users say they want the exam
+    "quiero el examen",
+    "quiero hacer el examen",
+    "quiero hacer el examen escolar",
+    "quiero hacer los exámenes",
+    "quiero hacer el examen del colegio",
+
+    # Indirect booking intent
+    "me pueden reservar",
+    "me puedes reservar",
+    "me pueden agendar",
+    "me puedes agendar",
+    "me ayudan a reservar",
+    "me ayudas a reservar",
+    "me ayudas a agendar",
+
+    # Misspellings / shortcuts
+    "agendar cita",
+    "agendar una cita",
+    "reservar examen",
+    "reservar el examen",
+    "reservar examen escolar",
+    "reservar paquete",
+    "agendar paquete",
+
+    # Colombian slang
+    "quiero pedir la cita",
+    "quiero pedir cita",
+    "quiero separar cita",
+    "quiero separar el examen",
+
+    # For parents
+    "quiero una cita para mi hijo",
+    "quiero una cita para mi hija",
+    "necesito cita para mi hijo",
+    "necesito cita para mi hija",
+]
+
+
+# ------------------------------------------------------------
+# MODIFY PATTERNS
+# ------------------------------------------------------------
+INTENTS["modify"]["patterns"] = [
+
+    # Direct change
+    "cambiar cita",
+    "cambiar la cita",
+    "quiero cambiar la cita",
+    "necesito cambiar la cita",
+    "puedo cambiar la cita",
+
+    # Time change
+    "cambiar hora",
+    "cambiar la hora",
+    "quiero otra hora",
+    "me sirve otra hora",
+    "puedo mover la hora",
+
+    # Date change
+    "cambiar fecha",
+    "cambiar la fecha",
+    "quiero otra fecha",
+    "mover fecha",
+    "puedo mover la fecha",
+
+    # Combined
+    "quiero mover la cita",
+    "necesito mover la cita",
+    "quiero reagendar",
+    "quiero re agendar",
+    "quiero re-agendar",
+    "reagendar cita",
+    "mover cita",
+
+    # Common errors and slang
+    "reagendarr", "reagenda", "re agendar cita",
+    "otra hora", "otra fecha",
+]
+
+
+# ------------------------------------------------------------
+# CANCEL PATTERNS
+# ------------------------------------------------------------
+INTENTS["cancel"]["patterns"] = [
+
+    # Direct cancellation
+    "cancelar",
+    "cancelar cita",
+    "cancelar la cita",
+    "quiero cancelar",
+    "quiero cancelar la cita",
+
+    # Parents cancel for kids
+    "quiero cancelar la cita de mi hijo",
+    "quiero cancelar la cita de mi hija",
+
+    # Variations
+    "anular", "anular cita", "anular la cita",
+    "inhabilitar cita",
+    "quitar la cita",
+
+    # More formal
+    "me gustaría cancelar",
+    "necesito cancelar",
+    "me ayudas a cancelar",
+
+    # Typos and slang
+    "cancelarr", "cancelala", "cancela la", "cancela eso",
+    "ya no quiero la cita",
+]
+# ======================================================================
+#                  PART 4C — CONFIRMATION PATTERNS
+# ======================================================================
+
+INTENTS["confirmation"]["patterns"] = [
+
+    # Strong confirmations
+    "confirmo",
+    "sí confirmo",
+    "si confirmo",
+    "confirmar",
+    "confirmada",
+    "confirmado",
+
+    # Simple yes
+    "si", "sí", "ok", "dale", "listo", "perfecto",
+    "super", "claro", "de una", "por supuesto",
+
+    # Longer confirmations
+    "si está bien",
+    "sí está bien",
+    "si esta bien",
+    "sí esta bien",
+    "está bien",
+    "esta bien",
+    "si claro",
+    "sí claro",
+    "si dale",
+    "sí dale",
+    "si por favor",
+    "sí por favor",
+    "si gracias",
+    "sí gracias",
+
+    # Parents confirming for kids
+    "si es para mi hijo",
+    "si es para mi hija",
+    "si está correcto",
+    "sí está correcto",
+
+    # WhatsApp common quick replies
+    "ok listo",
+    "okay",
+    "okk",
+    "okey",
+    "gracias si",
+    "si gracias",
+    "si señora",
+    "si señor",
+    "ah bueno",
+    "perfecto gracias",
+]
+
+@app.post("/whatsapp")
+async def whatsapp_reply(request: Request):
+    form = await request.form()
+    incoming_msg = form.get("Body", "").strip()
+    phone = form.get("From", "").replace("whatsapp:", "").strip()
+
+    # Get or create session for this phone
+    session = get_session(phone)
+
+    # MAIN LOGIC → pass message + session to chatbot engine
+    response_text = process_message(incoming_msg, session)
+
+    # If empty → silence (your rule)
+    if not response_text:
+        return Response(status_code=204)
+
+    # Respond through Twilio
+    twilio_resp = MessagingResponse()
+    twilio_resp.message(response_text)
+
+    return Response(content=str(twilio_resp), media_type="application/xml")
+
 # ---------------------------------------------------------
 # DASHBOARD (BOGOTÁ)
 # ---------------------------------------------------------
@@ -608,3 +1025,5 @@ async def create_reservation(data: dict):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
+
