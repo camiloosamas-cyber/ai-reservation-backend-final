@@ -410,6 +410,8 @@ def handle_cancel(msg, session):
 # Handler: Confirmation (final)
 # ----------------------------------------------------------------------
 def handle_confirmation(msg, session):
+    
+    update_session_with_info(msg, session)
 
     required = [
         session["student_name"],
@@ -422,6 +424,9 @@ def handle_confirmation(msg, session):
     # Not all data collected yet
     if not all(required):
         return "Perfecto, ¿me confirmas algo más?"
+
+    if not session["date"] or not session["time"]:
+        return "Necesito la fecha y la hora exactas para confirmar."
 
     # Build datetime to ISO for saving
     try:
@@ -499,18 +504,25 @@ import dateparser
 # STUDENT NAME EXTRACTOR
 # --------------------------------------------------------------
 def extract_student_name(msg):
-    msg = msg.strip()
+    msg = msg.strip().lower()
 
-    banned = ["si", "sí", "ok", "dale", "claro", "perfecto", "bueno", "listo"]
-    if msg.lower() in banned:
+    # HARD BLOCK: confirmations should NEVER be names
+    blocked_phrases = [
+        "si", "sí", "si por favor", "sí por favor", "por favor",
+        "ok", "dale", "claro", "perfecto", "bueno", "listo",
+        "de una", "super", "ok listo", "okk", "okay", "okey"
+    ]
+    if msg in blocked_phrases:
         return None
 
+    # Structured name patterns
     patterns = [
         r"es para ([a-zA-Záéíóúñ ]+)",
         r"para ([a-zA-Záéíóúñ ]+)",
         r"mi hijo ([a-zA-Záéíóúñ ]+)",
         r"mi hija ([a-zA-Záéíóúñ ]+)",
         r"nombre es ([a-zA-Záéíóúñ ]+)",
+        r"se llama ([a-zA-Záéíóúñ ]+)",
     ]
 
     for p in patterns:
@@ -518,9 +530,10 @@ def extract_student_name(msg):
         if m:
             return m.group(1).strip().title()
 
-    # Only accept standalone names (1–4 words)
-    if len(msg.split()) <= 4 and all(c.isalpha() or c.isspace() for c in msg):
-        return msg.title()
+    # Fallback name — but protect against confirmations
+    if 1 <= len(msg.split()) <= 3:
+        if all(c.isalpha() or c.isspace() for c in msg):
+            return msg.title()
 
     return None
 
@@ -576,18 +589,16 @@ def detect_package(msg):
 def extract_date(msg):
     msg = msg.lower()
 
+    # Common weekday expressions
+    weekdays = r"(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)"
+
     patterns = [
-        # “este viernes”, “para este viernes”, “sería este viernes”
-        r"((?:para|el|es|seria|sería|este|para este|para el)?\s*este\s+(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo))",
-
-        # single weekday: “viernes”, “jueves”
-        r"((lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo))",
-
-        # mañana / pasado mañana
+        rf"(este\s+{weekdays})",
+        rf"(para\s+este\s+{weekdays})",
+        rf"(el\s+{weekdays})",
+        rf"({weekdays})",  # single weekday
         r"(mañana)",
         r"(pasado mañana)",
-
-        # explicit date
         r"(el\s+\d{1,2}\s+de\s+[a-záéíóú]+)",
         r"(\d{1,2}/\d{1,2}/\d{2,4})",
         r"(\d{4}-\d{2}-\d{2})"
@@ -600,28 +611,17 @@ def extract_date(msg):
             dt = dateparser.parse(
                 phrase,
                 languages=["es"],
-                settings={
-                    "PREFER_DATES_FROM": "future",
-                    "TIMEZONE": "America/Bogota"
-                }
+                settings={"PREFER_DATES_FROM": "future", "TIMEZONE": "America/Bogota"}
             )
             if dt:
                 return dt.strftime("%Y-%m-%d")
 
     # fallback
-    dt = dateparser.parse(
-        msg,
-        languages=["es"],
-        settings={
-            "PREFER_DATES_FROM": "future",
-            "TIMEZONE": "America/Bogota"
-        }
-    )
+    dt = dateparser.parse(msg, languages=["es"], settings={"PREFER_DATES_FROM": "future", "TIMEZONE": "America/Bogota"})
     if dt:
         return dt.strftime("%Y-%m-%d")
 
     return None
-
     
 # --------------------------------------------------------------
 # TIME EXTRACTOR
