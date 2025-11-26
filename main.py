@@ -4,9 +4,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
+
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import json, os, re
+import dateparser
 
 # ---------- Supabase ----------
 from supabase import create_client, Client
@@ -260,16 +262,18 @@ session_state = {}
 def get_session(phone):
     if phone not in session_state:
         session_state[phone] = {
-            "phone": phone,
-            "student_name": None,
-            "school": None,
-            "package": None,
-            "date": None,
-            "time": None,
-            "booking_started": False,
-            "info_mode": False,          # true = user is only asking questions
-            "first_booking_message": False
+           "phone": phone,
+           "student_name": None,
+           "school": None,
+           "package": None,
+           "date": None,
+           "time": None,
+           "booking_started": False,
+           "info_mode": False,          # true = user is only asking questions
+           "first_booking_message": False,
+           "greeted": False,
         }
+
     return session_state[phone]
 
 # ----------------------------------------------------------------------
@@ -328,9 +332,13 @@ def detect_intent(msg):
 # Handler: Greeting (INFO MODE)
 # ----------------------------------------------------------------------
 def handle_greeting(msg, session):
-    # Only for info-mode, soft tone, no pressure
-    session["info_mode"] = True
-    return "Hola, claro que sí. ¿En qué te puedo ayudar?"
+
+    if not session["greeted"]:
+        session["greeted"] = True
+        return "Hola, claro que sí. ¿En qué te puedo ayudar?"
+
+    # Already greeted → respond softly without "Hola"
+    return "Claro que sí, ¿en qué te puedo ayudar?"
 
 # ----------------------------------------------------------------------
 # Handler: Package Info (INFO MODE)
@@ -398,45 +406,73 @@ def handle_cancel(msg, session):
 # ----------------------------------------------------------------------
 def handle_confirmation(msg, session):
 
-    # Check if ALL fields exist
-    if all([session["student_name"], session["school"], session["package"], session["date"], session["time"]]):
-        name = session["student_name"]
-        school = session["school"]
-        pkg = session["package"]
-        date = session["date"]
-        time = session["time"]
+    required = [
+        session["student_name"],
+        session["school"],
+        session["package"],
+        session["date"],
+        session["time"]
+    ]
 
-        # Clear session after confirm
-        session_state.pop(session["phone"], None)
+    # Not all data collected yet
+    if not all(required):
+        return "Perfecto, ¿me confirmas algo más?"
 
-        return (
-            f"Listo, tu cita quedó agendada para {name} en el {school}, "
-            f"paquete {pkg}, el día {date} a las {time}. Te esperamos."
-        )
+    # Build datetime to ISO for saving
+    try:
+        dt_text = f"{session['date']} {session['time']}"
+        dt = dateparser.parse(dt_text, languages=["es"], settings={"TIMEZONE": "America/Bogota"})
+        iso = dt.isoformat()
+    except:
+        return "Hubo un error procesando la fecha/hora."
 
-    return "Perfecto, ¿me confirmas algo más?"
+    # SAVE INTO SUPABASE
+    save_reservation({
+        "customer_name": session["student_name"],
+        "package": session["package"],
+        "school_name": session["school"],
+        "datetime": iso,
+        "party_size": 1,
+        "table_number": None
+    })
 
+    # Clear session
+    phone = session["phone"]
+    session_state.pop(phone, None)
+
+    return (
+        f"¡Perfecto! La cita de {session['student_name']} quedó confirmada "
+        f"en el {session['school']}, paquete {session['package']}, "
+        f"el día {session['date']} a las {session['time']}."
+    )
+    
 # ----------------------------------------------------------------------
 # MAIN CHATBOT ENGINE
 # ----------------------------------------------------------------------
 def process_message(msg, session):
 
-    # If we are mid-booking AND not first message → use booking logic directly
-    if session["booking_started"] and not session["first_booking_message"]:
+    # Always update student/school/package/date/time
+    update_session_with_info(msg, session)
+
+    # If already in booking mode → skip intent detection
+    if session["booking_started"]:
         return continue_booking_process(msg, session)
 
-    # Detect intent
+    # Not booking yet → detect intent
     intent = detect_intent(msg)
 
+    # Silence fallback
     if intent is None:
-        return ""  # Silence fallback
+        return ""
 
     handler_name = INTENTS[intent]["handler"]
     handler = globals()[handler_name]
 
+    # Mark that next message is no longer first-booking-message
     session["first_booking_message"] = False
 
     return handler(msg, session)
+
 # ======================================================================
 #                        EXTRACTORS (PART 2)
 # ======================================================================
@@ -450,7 +486,10 @@ import dateparser
 def extract_student_name(msg):
     msg = msg.strip()
 
-    # If message starts with "es para", "para", "mi hijo", "mi hija"
+    banned = ["si", "sí", "ok", "dale", "claro", "perfecto", "bueno", "listo"]
+    if msg.lower() in banned:
+        return None
+
     patterns = [
         r"es para ([a-zA-Záéíóúñ ]+)",
         r"para ([a-zA-Záéíóúñ ]+)",
@@ -464,33 +503,34 @@ def extract_student_name(msg):
         if m:
             return m.group(1).strip().title()
 
-    # If user ONLY sends a name (simple case)
+    # Only accept standalone names (1–4 words)
     if len(msg.split()) <= 4 and all(c.isalpha() or c.isspace() for c in msg):
         return msg.title()
 
     return None
 
-
 # --------------------------------------------------------------
 # SCHOOL EXTRACTOR
 # --------------------------------------------------------------
 def extract_school(msg):
-
-    # Remove noise
     msg_clean = msg.lower()
 
-    # Patterns for common Colombian school formats
-    p = re.search(r"(colegio|col\.?|school|inst\.?) ([a-zA-Záéíóúñ ]+)", msg_clean)
-    if p:
-        school = p.group(2).strip().title()
-        return school
+    patterns = [
+        r"del colegio ([a-zA-Záéíóúñ ]+)",
+        r"de colegio ([a-zA-Záéíóúñ ]+)",
+        r"del col ([a-zA-Záéíóúñ ]+)",
+        r"colegio ([a-zA-Záéíóúñ ]+)",
+        r"gimnasio ([a-zA-Záéíóúñ ]+)",
+        r"liceo ([a-zA-Záéíóúñ ]+)",
+        r"instituto ([a-zA-Záéíóúñ ]+)",
+    ]
 
-    # If user sends something like “San José Norte” alone
-    if len(msg.split()) <= 4 and any(word.istitle() for word in msg.split()):
-        return msg.title()
+    for p in patterns:
+        m = re.search(p, msg_clean)
+        if m:
+            return m.group(1).strip().title()
 
     return None
-
 
 # --------------------------------------------------------------
 # PACKAGE DETECTOR
