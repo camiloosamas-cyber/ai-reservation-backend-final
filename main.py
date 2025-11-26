@@ -42,6 +42,7 @@ LOCAL_TZ = ZoneInfo("America/Bogota")
 # MEMORY PER USER
 # ---------------------------------------------------------
 session_state = {}
+df_session_state = {}
 
 
 # ---------------------------------------------------------
@@ -392,7 +393,103 @@ Hola 😊
     resp.message("Hola 😊 ¿Me confirmas porfa?")
     return Response(str(resp), media_type="application/xml")
 
+# ---------------------------------------------------------
+# DIALOGFLOW WEBHOOK
+# ---------------------------------------------------------
+from fastapi.responses import JSONResponse
 
+@app.post("/dialogflow-webhook")
+async def dialogflow_webhook(request: Request):
+    body = await request.json()
+
+    session_id = body["session"]   # Dialogflow session string
+    user_text = body["queryResult"]["queryText"]
+    action = body["queryResult"].get("action", "")
+
+    # Init memory for this Dialogflow session
+    if session_id not in df_session_state:
+        df_session_state[session_id] = {
+            "customer_name": None,
+            "school_name": None,
+            "package": None,
+            "datetime": None,
+            "party_size": "1"
+        }
+
+    memory = df_session_state[session_id]
+
+    # Route to the correct mode
+    if action == "booking.package":
+        mode = "booking"
+    elif action == "modify.reservation":
+        mode = "modify"
+    elif action == "cancel.reservation":
+        mode = "cancel"
+    elif action == "common.question":
+        mode = "info"
+    elif action == "greetings":
+        mode = "greeting"
+    else:
+        mode = "fallback"
+
+    # Run AI
+    ai_result = smart_ai_brain(memory, user_text)
+    fields = ai_result.get("fields", {})
+    missing = ai_result.get("missing", [])
+    reply = ai_result.get("reply", "")
+    intent = ai_result.get("intent", "")
+
+    # Apply extracted fields
+    if fields.get("customer_name"):
+        memory["customer_name"] = fields["customer_name"]
+    if fields.get("school_name"):
+        memory["school_name"] = fields["school_name"]
+    if fields.get("datetime"):
+        memory["datetime"] = fields["datetime"]
+    if fields.get("package"):
+        memory["package"] = fields["package"]
+
+    df_session_state[session_id] = memory  # save memory
+
+    # If info intent
+    if mode == "info":
+        return JSONResponse({
+            "fulfillmentText": "Hola 😊\nSí, aquí realizamos los exámenes escolares.\n¿Te interesa algún paquete?"
+        })
+
+    # Missing info
+    if missing:
+        return JSONResponse({"fulfillmentText": "Hola 😊\n" + reply})
+
+    # If all complete → confirm
+    if memory["customer_name"] and memory["school_name"] and memory["datetime"] and memory["package"]:
+        dt_display = memory["datetime"].replace("T", " ")[:16]
+
+        confirm_msg = f"""
+Hola 😊
+✅ ¡Reserva confirmada!
+👤 {memory['customer_name']}
+👥 1 estudiantes
+📦 *{memory['package']}*
+🏫 {memory['school_name']}
+🗓 {dt_display}
+"""
+
+        save_reservation(memory)
+
+        # Reset memory after saving
+        df_session_state[session_id] = {
+            "customer_name": None,
+            "school_name": None,
+            "package": None,
+            "datetime": None,
+            "party_size": "1"
+        }
+
+        return JSONResponse({"fulfillmentText": confirm_msg})
+
+    # Safety fallback
+    return JSONResponse({"fulfillmentText": "Hola 😊 ¿Me confirmas porfa?"})
 
 # ---------------------------------------------------------
 # DASHBOARD
