@@ -400,13 +400,19 @@ from fastapi.responses import JSONResponse
 
 @app.post("/dialogflow-webhook")
 async def dialogflow_webhook(request: Request):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except:
+        return JSONResponse({"fulfillmentText": "Hola 😊 No pude leer tu mensaje, ¿me repites porfa?"})
 
-    session_id = body["session"]   # Dialogflow session string
-    user_text = body["queryResult"]["queryText"]
-    action = body["queryResult"].get("action", "")
+    # Safe get
+    session_id = body.get("session", "default")
+    queryResult = body.get("queryResult", {})
 
-    # Init memory for this Dialogflow session
+    user_text = queryResult.get("queryText", "")
+    action = queryResult.get("action", "")
+
+    # Init memory
     if session_id not in df_session_state:
         df_session_state[session_id] = {
             "customer_name": None,
@@ -418,7 +424,7 @@ async def dialogflow_webhook(request: Request):
 
     memory = df_session_state[session_id]
 
-    # Route to the correct mode
+    # Routing
     if action == "booking.package":
         mode = "booking"
     elif action == "modify.reservation":
@@ -432,14 +438,14 @@ async def dialogflow_webhook(request: Request):
     else:
         mode = "fallback"
 
-    # Run AI
+    # AI logic
     ai_result = smart_ai_brain(memory, user_text)
     fields = ai_result.get("fields", {})
     missing = ai_result.get("missing", [])
     reply = ai_result.get("reply", "")
     intent = ai_result.get("intent", "")
 
-    # Apply extracted fields
+    # Save updated fields
     if fields.get("customer_name"):
         memory["customer_name"] = fields["customer_name"]
     if fields.get("school_name"):
@@ -449,23 +455,23 @@ async def dialogflow_webhook(request: Request):
     if fields.get("package"):
         memory["package"] = fields["package"]
 
-    df_session_state[session_id] = memory  # save memory
+    df_session_state[session_id] = memory
 
-    # If info intent
+    # INFO
     if mode == "info":
         return JSONResponse({
             "fulfillmentText": "Hola 😊\nSí, aquí realizamos los exámenes escolares.\n¿Te interesa algún paquete?"
         })
 
-    # Missing info
+    # MISSING FIELDS
     if missing:
         return JSONResponse({"fulfillmentText": "Hola 😊\n" + reply})
 
-    # If all complete → confirm
+    # COMPLETE BOOKING
     if memory["customer_name"] and memory["school_name"] and memory["datetime"] and memory["package"]:
         dt_display = memory["datetime"].replace("T", " ")[:16]
 
-        confirm_msg = f"""
+        msg = f"""
 Hola 😊
 ✅ ¡Reserva confirmada!
 👤 {memory['customer_name']}
@@ -477,7 +483,6 @@ Hola 😊
 
         save_reservation(memory)
 
-        # Reset memory after saving
         df_session_state[session_id] = {
             "customer_name": None,
             "school_name": None,
@@ -486,9 +491,9 @@ Hola 😊
             "party_size": "1"
         }
 
-        return JSONResponse({"fulfillmentText": confirm_msg})
+        return JSONResponse({"fulfillmentText": msg})
 
-    # Safety fallback
+    # FALLBACK
     return JSONResponse({"fulfillmentText": "Hola 😊 ¿Me confirmas porfa?"})
 
 # ---------------------------------------------------------
