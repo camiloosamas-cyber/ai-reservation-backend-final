@@ -202,19 +202,30 @@ Mensaje:
         )
         result = json.loads(r.choices[0].message.content)
         dt_text = result.get("datetime", "").strip()
+        
     except:
         dt_text = ""
 
-    dt_local = dateparser.parse(
-        dt_text,
-        settings={
-            "PREFER_DATES_FROM": "future",
-            "TIMEZONE": "America/Bogota",
-            "RETURN_AS_TIMEZONE_AWARE": True
-        }
-    )
+        final_iso = ""
 
-    final_iso = dt_local.isoformat() if dt_local else ""
+    try:
+        dt = dateparser.parse(
+
+            dt_text,
+            settings={
+                "PREFER_DATES_FROM": "future",
+                "TIMEZONE": "America/Bogota",
+                "RETURN_AS_TIMEZONE_AWARE": True
+            }
+        )
+
+        if dt:
+            dt = dt.astimezone(LOCAL_TZ)
+            final_iso = dt.isoformat()
+
+    except:
+        pass
+
 
     # -------------------------
     # INTENT
