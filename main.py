@@ -114,45 +114,46 @@ def detect_package(msg: str):
 
     # Direct names
     if "cuidado esencial" in msg or "esencial" in msg or "kit escolar" in msg:
-        return "Cuidado Esencial"
+        return "Paquete Cuidado Esencial"
 
     if "salud activa" in msg or "activa" in msg:
-        return "Salud Activa"
+        return "Paquete Salud Activa"
 
     if "bienestar total" in msg or "total" in msg or "completo" in msg:
-        return "Bienestar Total"
+        return "Paquete Bienestar Total"
 
     # Price-based
     if "45" in msg or "45k" in msg or "45 mil" in msg or "45mil" in msg:
-        return "Cuidado Esencial"
+        return "Paquete Cuidado Esencial"
 
     if "60" in msg or "60k" in msg or "60 mil" in msg or "60mil" in msg:
-        return "Salud Activa"
+        return "Paquete Salud Activa"
 
     if "75" in msg or "75k" in msg or "75 mil" in msg or "75mil" in msg:
-        return "Bienestar Total"
+        return "Paquete Bienestar Total"
 
     # Exam-based
     if "odont" in msg:
-        return "Bienestar Total"
+        return "Paquete Bienestar Total"
 
-    if "psico" in msg or "psicologia" in msg or "psicología" in msg:
-        return "Salud Activa"
+    if "psico" in msg:
+        return "Paquete Salud Activa"
 
     if "audio" in msg or "optometr" in msg or "medicina" in msg:
-        return "Cuidado Esencial"
+        return "Paquete Cuidado Esencial"
 
     # Color-based
     if "verde" in msg:
-        return "Cuidado Esencial"
+        return "Paquete Cuidado Esencial"
 
     if "azul" in msg:
-        return "Salud Activa"
+        return "Paquete Salud Activa"
 
     if "amarillo" in msg:
-        return "Bienestar Total"
+        return "Paquete Bienestar Total"
 
     return None
+
 
 # ---------------------------------------------------------
 # AI EXTRACTION (from backup, with dateparser)
