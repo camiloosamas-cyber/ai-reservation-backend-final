@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, Response, JSONResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,7 +40,6 @@ LOCAL_TZ = ZoneInfo("America/Bogota")
 # MEMORY PER USER
 # ---------------------------------------------------------
 session_state = {}
-df_session_state = {}
 
 # ---------------------------------------------------------
 # SUPABASE
@@ -52,7 +51,6 @@ supabase: Client = create_client(
 
 TABLE_LIMIT = 10
 
-
 def assign_table(iso_local: str):
     booked = supabase.table("reservations").select("table_number").eq("datetime", iso_local).execute()
     taken = {r["table_number"] for r in (booked.data or [])}
@@ -63,45 +61,55 @@ def assign_table(iso_local: str):
             return t
     return None
 
+
 # ---------------------------------------------------------
-# PACKAGE DETECTION (RULE-BASED)
+# PACKAGE DETECTION (UPDATED EXACTLY AS REQUESTED)
 # ---------------------------------------------------------
 def detect_package(msg: str):
     msg = msg.lower().strip()
 
-    # names
+    # Direct names
     if "cuidado esencial" in msg or "esencial" in msg or "kit escolar" in msg:
         return "Paquete Cuidado Esencial"
+
     if "salud activa" in msg or "activa" in msg:
         return "Paquete Salud Activa"
+
     if "bienestar total" in msg or "total" in msg or "completo" in msg:
         return "Paquete Bienestar Total"
 
-    # price
-    if "45" in msg or "45k" in msg or "45 mil" in msg:
+    # Price-based
+    if "45" in msg or "45k" in msg or "45 mil" in msg or "45mil" in msg:
         return "Paquete Cuidado Esencial"
-    if "60" in msg or "60k" in msg or "60 mil" in msg:
+
+    if "60" in msg or "60k" in msg or "60 mil" in msg or "60mil" in msg:
         return "Paquete Salud Activa"
-    if "75" in msg or "75k" in msg or "75 mil" in msg:
+
+    if "75" in msg or "75k" in msg or "75 mil" in msg or "75mil" in msg:
         return "Paquete Bienestar Total"
 
-    # exam type
+    # Exam-based
     if "odont" in msg:
         return "Paquete Bienestar Total"
+
     if "psico" in msg:
         return "Paquete Salud Activa"
+
     if "audio" in msg or "optometr" in msg or "medicina" in msg:
         return "Paquete Cuidado Esencial"
 
-    # colors
+    # Color-based (TEXT ONLY, NO IMAGE DETECTION)
     if "verde" in msg:
         return "Paquete Cuidado Esencial"
+
     if "azul" in msg:
         return "Paquete Salud Activa"
+
     if "amarillo" in msg:
         return "Paquete Bienestar Total"
 
     return None
+
 
 # ---------------------------------------------------------
 # SAVE RESERVATION
@@ -113,15 +121,22 @@ def save_reservation(data: dict):
             dt_local = raw_dt.replace(tzinfo=LOCAL_TZ)
         else:
             dt_local = raw_dt.astimezone(LOCAL_TZ)
+
         iso_to_store = dt_local.isoformat()
+
     except:
         return "❌ Error procesando la fecha."
 
     # table
-    table = data.get("table_number") or assign_table(iso_to_store)
+    if data.get("table_number"):
+        table = data["table_number"]
+    else:
+        table = assign_table(iso_to_store)
+
     if not table:
         return "❌ No hay mesas disponibles para ese horario."
 
+    # Insert
     supabase.table("reservations").insert({
         "customer_name": data["customer_name"],
         "customer_email": "",
@@ -131,86 +146,190 @@ def save_reservation(data: dict):
         "table_number": table,
         "notes": "",
         "status": "confirmado",
-        "business_id": 2,
+        "business_id": 2,  # ALWAYS IPS ID
         "package": data.get("package", ""),
         "school_name": data.get("school_name", ""),
     }).execute()
 
-    return "ok"
+    return (
+        "✅ *¡Reserva confirmada!*\n"
+        f"👤 {data['customer_name']}\n"
+        f"👥 {data['party_size']} estudiantes\n"
+        f"📦 {data.get('package','')}\n"
+        f"🏫 {data.get('school_name','')}\n"
+        f"🗓 {dt_local.strftime('%Y-%m-%d %H:%M')}"
+    )
+
 
 # ---------------------------------------------------------
-# AI BRAIN
+# AI EXTRACTION  (PROMPT UPDATED EXACTLY AS REQUESTED)
 # ---------------------------------------------------------
-def smart_ai_brain(memory, user_msg):
+def ai_extract(user_msg: str):
+    import dateparser
 
-    system_prompt = """
-Eres un asistente de WhatsApp para un IPS.
+    text = user_msg.lower().strip()
 
-Siempre responde humano, amable, comenzando con “Hola 😊” y terminando con una pregunta.
+    # -------------------------
+    # PACKAGE
+    # -------------------------
+    detected_package = detect_package(text)
 
-Extrae del mensaje:
-- customer_name
-- school_name
-- datetime
-- package
+    # -------------------------
+    # SCHOOL DETECTION
+    # -------------------------
+    school_name = ""
+    school_patterns = [
+        r"(colegio [a-zA-Záéíóúñ ]+)",
+        r"(gimnasio [a-zA-Záéíóúñ ]+)",
+        r"(liceo [a-zA-Záéíóúñ ]+)",
+        r"(instituto [a-zA-Záéíóúñ ]+)",
+    ]
+    for p in school_patterns:
+        m = re.search(p, text)
+        if m:
+            school_name = m.group(1).strip()
+            break
 
-Si falta algo → pregunta solo eso.
-Si es informativo → pregunta si desea un paquete.
-Si todo está completo → responde confirmación EXACTA.
+    # -------------------------
+    # NAME DETECTION (FIXED)
+    # -------------------------
+    customer_name = ""
 
-Responde siempre en JSON:
-{
- "fields": { "customer_name": "", "school_name": "", "datetime": "", "package": "" },
- "missing": [],
- "reply": "",
- "intent": ""
-}
+    name_patterns = [
+        r"se llama ([a-zA-Záéíóúñ ]+)",
+        r"mi hijo ([a-zA-Záéíóúñ ]+)",
+        r"nombre es ([a-zA-Záéíóúñ ]+)",
+    ]
+
+    # 1) Structured name detection
+    for p in name_patterns:
+        m = re.search(p, text)
+        if m:
+            candidate = m.group(1).strip()
+            customer_name = " ".join(candidate.split()[:3])
+            break
+
+    # 2) FALLBACK NAME DETECTION (DO NOT CONFUSE WITH SCHOOL NAMES)
+    if not customer_name:
+        package_words = [
+            "esencial", "activa", "total", "bienestar", "cuidado", "salud",
+            "paquete", "kit", "45", "60", "75"
+        ]
+
+        school_words = ["colegio", "gimnasio", "liceo", "instituto", "school"]
+
+        is_just_text = re.fullmatch(r"[a-zA-Záéíóúñ ]{2,30}", text)
+        is_short = len(text.split()) <= 3
+        contains_package_word = any(w in text for w in package_words)
+        contains_school_word = any(w in text for w in school_words)
+
+        if is_just_text and is_short and not contains_package_word and not contains_school_word:
+            ignored = ["hola", "ola", "buenas", "buenos dias", "buen día"]
+            if text not in ignored:
+                customer_name = " ".join(text.split()[:3])
+
+    # -------------------------
+    # PARTY SIZE
+    # -------------------------
+    party_size = ""
+    m = re.search(r"(\d+)\s*(estudiantes|alumnos|niños|personas)", text)
+    if m:
+        party_size = m.group(1)
+
+    # -------------------------
+    # DATE/TIME — LLM extraction
+    # -------------------------
+    prompt = f"""
+Extrae SOLO la fecha y hora del siguiente mensaje.
+Devuélvelo exactamente así:
+
+{{
+"datetime": "texto exacto de fecha y hora"
+}}
+
+No inventes nada.
+
+Mensaje:
+\"\"\"{user_msg}\"\"\"
 """
 
-
-    r = client.chat.completions.create(
-    model="gpt-4o-mini",
-    temperature=0,
-    messages=[
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_msg}
-    ]
-)
-
     try:
-        return json.loads(r.choices[0].message.content)
+        r = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0,
+            messages=[{"role": "system", "content": prompt}]
+        )
+        result = json.loads(r.choices[0].message.content)
+        dt_text = result.get("datetime", "").strip()
     except:
-        return {
-            "fields": {},
-            "missing": ["unknown"],
-            "reply": "Hola 😊 No entendí bien, ¿me repites porfa?",
-            "intent": "confused"
+        dt_text = ""
+
+    dt_local = dateparser.parse(
+        dt_text,
+        settings={
+            "PREFER_DATES_FROM": "future",
+            "TIMEZONE": "America/Bogota",
+            "RETURN_AS_TIMEZONE_AWARE": True
         }
+    )
+
+    final_iso = dt_local.isoformat() if dt_local else ""
+
+    # -------------------------
+    # INTENT
+    # -------------------------
+    reserve_keywords = ["agendar", "reservar", "cita", "examen"]
+    info_keywords = ["cuánto", "precio", "vale", "incluye"]
+
+    if any(k in text for k in reserve_keywords):
+        intent = "reserve"
+    elif any(k in text for k in info_keywords):
+        intent = "info"
+    else:
+        intent = "other"
+
+    # -------------------------
+    # RETURN
+    # -------------------------
+    return {
+        "intent": intent,
+        "customer_name": customer_name,
+        "school_name": school_name,
+        "datetime": final_iso,
+        "party_size": party_size,
+        "package": detected_package,
+    }
 
 # ---------------------------------------------------------
-# WHATSAPP WEBHOOK
+# WHATSAPP HANDLER (CLEAN + UPDATED)
 # ---------------------------------------------------------
 @app.post("/whatsapp")
 async def whatsapp(Body: str = Form(...)):
     resp = MessagingResponse()
     msg_raw = Body.strip()
-    msg_lower = msg_raw.lower()
+    msg = msg_raw.lower()
     user_id = "default"
 
-    # RESET
-    if msg_lower in ["reset", "reiniciar", "nuevo", "borrar"]:
+    # -----------------------------------------------------
+    # 0. RESET MEMORY
+    # -----------------------------------------------------
+    if msg in ["reset", "reiniciar", "nuevo", "borrar"]:
         session_state[user_id] = {
             "customer_name": None,
             "school_name": None,
             "package": None,
             "datetime": None,
             "party_size": "1",
-            "started": False
+            "started": False,
+            "awaiting_info": False,
+            "waiting_for_confirmation": False
         }
-        resp.message("Hola 😊\nMemoria reiniciada.\n¿En qué puedo ayudarte?")
+        resp.message("🔄 Memoria reiniciada.\n\nPuedes empezar una conversación nueva 😊")
         return Response(str(resp), media_type="application/xml")
 
-    # INIT MEMORY
+    # -----------------------------------------------------
+    # 1. IF NEW USER → INIT MEMORY
+    # -----------------------------------------------------
     if user_id not in session_state:
         session_state[user_id] = {
             "customer_name": None,
@@ -218,247 +337,179 @@ async def whatsapp(Body: str = Form(...)):
             "package": None,
             "datetime": None,
             "party_size": "1",
-            "started": False
+            "started": False,
+            "awaiting_info": False,
+            "waiting_for_confirmation": False
         }
 
     memory = session_state[user_id]
 
-    # FIRST MESSAGE ALWAYS GREET
+    # -----------------------------------------------------
+    # 2. FIRST MESSAGE HANDLER (FIXED)
+    # -----------------------------------------------------
     if not memory["started"]:
         memory["started"] = True
-        resp.message("Hola 😊 ¿En qué puedo ayudarte?")
-        return Response(str(resp), media_type="application/xml")
 
-    # PRICE QUESTIONS
-    price_words = ["cuánto", "cuanto", "precio", "vale", "cuesta", "coste", "valor"]
+        # 🔍 detect if user is asking for PRICE / INFO
+        info_words = ["cuánto", "cuanto", "precio", "vale", "incluye", "trae"]
+        if any(w in msg for w in info_words):
+            pkg = detect_package(msg)
 
-    if any(w in msg_lower for w in price_words):
-        pkg = detect_package(msg_lower)
+            if pkg:
+                resp.message(
+                    f"Hola 😊\nEl paquete que mencionas es *{pkg}*.\n\n"
+                    "Precios:\n"
+                    "• *Cuidado Esencial* – $45.000\n"
+                    "• *Salud Activa* – $60.000\n"
+                    "• *Bienestar Total* – $75.000\n\n"
+                    "¿Te gustaría agendar una cita?"
+                )
+                return Response(str(resp), media_type="application/xml")
 
-        price_map = {
-            "Paquete Cuidado Esencial": "$45.000",
-            "Paquete Salud Activa": "$60.000",
-            "Paquete Bienestar Total": "$75.000"
-        }
-
-        if pkg:
             resp.message(
-                f"Hola 😊\n"
-                f"El *{pkg}* cuesta **{price_map[pkg]}**.\n"
+                "Hola 😊\nAquí tienes la información de los paquetes:\n\n"
+                "• *Cuidado Esencial* – $45.000\n"
+                "• *Salud Activa* – $60.000\n"
+                "• *Bienestar Total* – $75.000\n\n"
+                "¿Cuál te interesa?"
+            )
+            return Response(str(resp), media_type="application/xml")
+
+        # 🔍 detect package INSTANTLY (ONLY if not asking price)
+        pkg = detect_package(msg)
+        if pkg:
+            memory["package"] = pkg
+            memory["waiting_for_confirmation"] = True
+            resp.message(
+                f"Hola 😊 Claro, ese corresponde al *{pkg}*.\n"
                 "¿Te gustaría agendar una cita?"
             )
             return Response(str(resp), media_type="application/xml")
 
-        resp.message(
-            "Hola 😊 Aquí tienes los precios:\n\n"
-            "• *Cuidado Esencial* – $45.000\n"
-            "• *Salud Activa* – $60.000\n"
-            "• *Bienestar Total* – $75.000\n\n"
-            "¿Cuál te interesa?"
-        )
+        # 🔍 strong booking intent
+        strong_booking = [
+        "examen", "exmanes", "examenes", "exam", 
+        "escolar", "escolares",
+        "colegio", "cole",
+        "matricula", "matrícula",
+        "para mi hijo", "para mi hija",
+        "urgente",
+        "cupo", "hay cupo"
+        ]
+
+        if any(k in msg for k in strong_booking):
+            memory["awaiting_info"] = True
+            resp.message(
+                "Hola 😊\nClaro, te ayudo con eso.\n"
+                "Para agendar necesito estos datos:\n"
+                "• Nombre del estudiante\n"
+                "• Colegio\n"
+                "• Fecha y hora\n"
+                "• Paquete que deseas"
+            )
+            return Response(str(resp), media_type="application/xml")
+
+        # 🔍 greetings
+        if any(g in msg for g in ["hola", "ola", "buenas", "buen día"]):
+            resp.message("Hola 👋 ¿En qué puedo ayudarte?")
+            return Response(str(resp), media_type="application/xml")
+
+        resp.message("Hola 👋 ¿En qué puedo ayudarte?")
         return Response(str(resp), media_type="application/xml")
 
-    # PACKAGE DETECTION WITHOUT PRICE
-    pkg_detected = detect_package(msg_lower)
-    if pkg_detected and not memory["package"]:
-        memory["package"] = pkg_detected
+    # -----------------------------------------------------
+    # 3. USER CONFIRMS AFTER PACKAGE DETECTION
+    # -----------------------------------------------------
+    if memory["waiting_for_confirmation"]:
+        yes_words = ["si", "sí", "claro", "dale", "ok", "listo", "quiero", "hagale", "hágale"]
+        no_words = ["no", "nel", "ahora no", "más tarde", "mas tarde"]
 
-        resp.message(
-            f"Hola 😊\n"
-            f"Perfecto, ese es el *{pkg_detected}*.\n"
-            "¿Te gustaría agendar una cita?"
-        )
+        if any(w in msg for w in yes_words):
+            memory["waiting_for_confirmation"] = False
+            memory["awaiting_info"] = True
+            resp.message(
+                "Perfecto 😊\nPara agendar necesito:\n"
+                "• Nombre del estudiante\n"
+                "• Colegio\n"
+                "• Fecha y hora deseada"
+            )
+            return Response(str(resp), media_type="application/xml")
+
+        if any(w in msg for w in no_words):
+            memory["waiting_for_confirmation"] = False
+            resp.message("Perfecto 😊 Si deseas agendar luego, estaré aquí para ayudarte.")
+            return Response(str(resp), media_type="application/xml")
+
+        resp.message("¿Te gustaría agendar una cita?")
         return Response(str(resp), media_type="application/xml")
 
-    # AI SMART BRAIN
-    ai_result = smart_ai_brain(memory, msg_raw)
+    # -----------------------------------------------------
+    # 4. SECOND MESSAGE AND BEYOND → AI EXTRACTION
+    # -----------------------------------------------------
+    extracted = ai_extract(msg)
 
-    fields = ai_result.get("fields", {})
-    missing = ai_result.get("missing", [])
-    reply = ai_result.get("reply", "")
-    intent = ai_result.get("intent", "")
+    if extracted.get("customer_name"):
+        memory["customer_name"] = extracted["customer_name"]
 
-    # Apply extracted fields
-    if fields.get("customer_name"):
-        memory["customer_name"] = fields["customer_name"]
-    if fields.get("school_name"):
-        memory["school_name"] = fields["school_name"]
-    if fields.get("datetime"):
-        memory["datetime"] = fields["datetime"]
-    if fields.get("package"):
-        memory["package"] = fields["package"]
+    if extracted.get("school_name"):
+        memory["school_name"] = extracted["school_name"]
+
+    if extracted.get("datetime"):
+        memory["datetime"] = extracted["datetime"]
+
+    if extracted.get("package"):
+        memory["package"] = extracted["package"]
 
     memory["party_size"] = "1"
 
-    # INFORMATIVE MESSAGE ONLY
-    if intent == "info":
+    # 🔒 ALWAYS ask for the student name FIRST
+    if not memory["customer_name"]:
+        resp.message("¿Cuál es el nombre del estudiante?")
+        return Response(str(resp), media_type="application/xml")
+
+    # -----------------------------------------------------
+    # 5. ASK FOR ANY MISSING FIELD
+    # -----------------------------------------------------
+
+    if not memory["school_name"]:
+        resp.message("¿De qué colegio viene?")
+        return Response(str(resp), media_type="application/xml")
+
+    if not memory["datetime"]:
+        resp.message("¿Para qué fecha y hora deseas la cita?")
+        return Response(str(resp), media_type="application/xml")
+
+    if not memory["package"]:
         resp.message(
-            "Hola 😊\n"
-            "Sí, aquí realizamos los exámenes escolares.\n"
-            "¿Te interesa algún paquete?"
+            "¿Qué paquete deseas reservar?\n\n"
+            "• *Cuidado Esencial* – $45.000\n"
+            "• *Salud Activa* – $60.000\n"
+            "• *Bienestar Total* – $75.000"
         )
         return Response(str(resp), media_type="application/xml")
 
-    # ASK FOR MISSING FIELDS
-    if missing:
-        resp.message("Hola 😊\n" + reply)
-        return Response(str(resp), media_type="application/xml")
+    # -----------------------------------------------------
+    # 6. SAVE RESERVATION
+    # -----------------------------------------------------
+    confirmation = save_reservation(memory)
+    resp.message("Hola 😊\n" + confirmation)
 
-    # COMPLETE RESERVATION
-    if memory["customer_name"] and memory["school_name"] and memory["datetime"] and memory["package"]:
-        dt_display = memory["datetime"].replace("T", " ")[:16]
+    session_state[user_id] = {
+        "customer_name": None,
+        "school_name": None,
+        "package": None,
+        "datetime": None,
+        "party_size": "1",
+        "started": False,
+        "awaiting_info": False,
+        "waiting_for_confirmation": False
+    }
 
-        confirm_msg = f"""
-Hola 😊
-✅ ¡Reserva confirmada!
-👤 {memory['customer_name']}
-👥 1 estudiantes
-📦 *{memory['package']}*
-🏫 {memory['school_name']}
-🗓 {dt_display}
-"""
-
-        save_reservation(memory)
-        resp.message(confirm_msg)
-
-        session_state[user_id] = {
-            "customer_name": None,
-            "school_name": None,
-            "package": None,
-            "datetime": None,
-            "party_size": "1",
-            "started": False
-        }
-
-        return Response(str(resp), media_type="application/xml")
-
-    # SAFETY FALLBACK
-    resp.message("Hola 😊 ¿Me confirmas porfa?")
     return Response(str(resp), media_type="application/xml")
 
+  
 # ---------------------------------------------------------
-# DIALOGFLOW WEBHOOK
-# ---------------------------------------------------------
-@app.post("/dialogflow-webhook")
-async def dialogflow_webhook(request: Request):
-    try:
-        body = await request.json()
-    except:
-        return JSONResponse({"fulfillmentText": "Hola 😊 No pude leer tu mensaje, ¿me repites porfa?"})
-
-    # Safe get
-    session_id = body.get("session", "default")
-    queryResult = body.get("queryResult", {})
-
-    user_text = queryResult.get("queryText", "")
-    action = queryResult.get("action", "")
-
-    # Init memory
-    if session_id not in df_session_state:
-        df_session_state[session_id] = {
-            "customer_name": None,
-            "school_name": None,
-            "package": None,
-            "datetime": None,
-            "party_size": "1"
-        }
-
-    memory = df_session_state[session_id]
-
-    # -------------------------
-    # ROUTING
-    # -------------------------
-    if action == "booking.package":
-        mode = "booking"
-    elif action == "modify.reservation":
-        mode = "modify"
-    elif action == "cancel.reservation":
-        mode = "cancel"
-    elif action == "common.question":
-        mode = "info"
-    elif action == "greetings":
-        mode = "greeting"
-    else:
-        mode = "fallback"
-
-    # -------------------------
-    # SPECIAL GREETING
-    # -------------------------
-    if mode == "greeting":
-        return JSONResponse({
-            "fulfillmentText": "Hola 😊 ¿En qué puedo ayudarte?"
-        })
-
-    # -------------------------
-    # AI LOGIC
-    # -------------------------
-    ai_result = smart_ai_brain(memory, user_text)
-    fields = ai_result.get("fields", {})
-    missing = ai_result.get("missing", [])
-    reply = ai_result.get("reply", "")
-    intent = ai_result.get("intent", "")
-
-    # Save updated fields
-    if fields.get("customer_name"):
-        memory["customer_name"] = fields["customer_name"]
-    if fields.get("school_name"):
-        memory["school_name"] = fields["school_name"]
-    if fields.get("datetime"):
-        memory["datetime"] = fields["datetime"]
-    if fields.get("package"):
-        memory["package"] = fields["package"]
-
-    df_session_state[session_id] = memory
-
-    # -------------------------
-    # INFO MODE
-    # -------------------------
-    if mode == "info":
-        return JSONResponse({
-            "fulfillmentText": "Hola 😊\nSí, aquí realizamos los exámenes escolares.\n¿Te interesa algún paquete?"
-        })
-
-    # -------------------------
-    # ASK FOR MISSING FIELDS
-    # -------------------------
-    if missing:
-        return JSONResponse({"fulfillmentText": "Hola 😊\n" + reply})
-
-    # -------------------------
-    # COMPLETE BOOKING
-    # -------------------------
-    if memory["customer_name"] and memory["school_name"] and memory["datetime"] and memory["package"]:
-        dt_display = memory["datetime"].replace("T", " ")[:16]
-
-        msg = f"""
-Hola 😊
-✅ ¡Reserva confirmada!
-👤 {memory['customer_name']}
-👥 1 estudiantes
-📦 *{memory['package']}*
-🏫 {memory['school_name']}
-🗓 {dt_display}
-"""
-
-        save_reservation(memory)
-
-        df_session_state[session_id] = {
-            "customer_name": None,
-            "school_name": None,
-            "package": None,
-            "datetime": None,
-            "party_size": "1"
-        }
-
-        return JSONResponse({"fulfillmentText": msg})
-
-    # -------------------------
-    # FALLBACK
-    # -------------------------
-    return JSONResponse({"fulfillmentText": "Hola 😊 ¿Me confirmas porfa?"})
-
-# ---------------------------------------------------------
-# DASHBOARD
+# DASHBOARD (BOGOTÁ)
 # ---------------------------------------------------------
 from dateutil import parser
 
@@ -468,6 +519,7 @@ async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
 
     rows = res.data or []
+
     fixed = []
     weekly_count = 0
 
@@ -497,8 +549,9 @@ async def dashboard(request: Request):
         "weekly_count": weekly_count
     })
 
+
 # ---------------------------------------------------------
-# UPDATE & ACTIONS
+# UPDATE / ACTIONS
 # ---------------------------------------------------------
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
@@ -519,38 +572,35 @@ async def cancel_reservation(update: dict):
     supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", update["reservation_id"]).execute()
     return {"success": True}
 
-
 @app.post("/archiveReservation")
 async def archive_reservation(update: dict):
     supabase.table("reservations").update({"status": "archived"}).eq("reservation_id", update["reservation_id"]).execute()
-    return {"success": True}
-
+    return {"success":True}
 
 @app.post("/markArrived")
 async def mark_arrived(update: dict):
     supabase.table("reservations").update({"status": "arrived"}).eq("reservation_id", update["reservation_id"]).execute()
     return {"success": True}
 
-
 @app.post("/markNoShow")
 async def mark_no_show(update: dict):
     supabase.table("reservations").update({"status": "no_show"}).eq("reservation_id", update["reservation_id"]).execute()
     return {"success": True}
 
-
 @app.post("/createReservation")
 async def create_reservation(data: dict):
-    save_reservation({
-        "customer_name": data.get("customer_name", ""),
-        "customer_email": data.get("customer_email", ""),
-        "contact_phone": data.get("contact_phone", ""),
-        "datetime": data.get("datetime", ""),
-        "party_size": data.get("party_size", 1),
-        "school_name": data.get("school_name", ""),
-        "package": data.get("package", ""),
+    result = save_reservation({
+        "customer_name": data.get("customer_name",""),
+        "customer_email": data.get("customer_email",""),
+        "contact_phone": data.get("contact_phone",""),
+        "datetime": data.get("datetime",""),
+        "party_size": data.get("party_size",1),
+        "school_name": data.get("school_name",""),
+        "package": data.get("package",""),
         "table_number": None
     })
     return {"success": True}
+
 
 # ---------------------------------------------------------
 # RUN
