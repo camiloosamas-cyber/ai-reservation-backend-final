@@ -418,14 +418,15 @@ def handle_confirmation(msg, session):
 
     if not session["date"] or not session["time"]:
         return "Necesito la fecha y la hora exactas para confirmar."
-
-    # Build datetime to ISO for saving
+        
+    # Build datetime to ISO safely
     try:
         dt_text = f"{session['date']} {session['time']}"
-        dt = dateparser.parse(dt_text, languages=["es"], settings={"TIMEZONE": "America/Bogota"})
+        dt = datetime.strptime(dt_text, "%Y-%m-%d %H:%M").replace(tzinfo=LOCAL_TZ)
         iso = dt.isoformat()
-    except:
-        return "Hubo un error procesando la fecha/hora."
+    except Exception as e:
+        return f"Hubo un error procesando la fecha/hora. ({e})"
+
 
     # SAVE INTO SUPABASE
     save_reservation({
