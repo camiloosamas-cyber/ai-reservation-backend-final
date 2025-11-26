@@ -8,7 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import json, os, re
-import dateparser
 
 # ---------- Supabase ----------
 from supabase import create_client, Client
@@ -112,8 +111,6 @@ def save_reservation(data: dict):
 # AI EXTRACTION  (PROMPT UPDATED EXACTLY AS REQUESTED)
 # ---------------------------------------------------------
 def ai_extract(user_msg: str):
-    import dateparser
-
     text = user_msg.lower().strip()
 
     # -------------------------
@@ -138,7 +135,7 @@ def ai_extract(user_msg: str):
             break
 
     # -------------------------
-    # NAME
+    # STUDENT NAME (unchanged)
     # -------------------------
     customer_name = ""
 
@@ -155,21 +152,6 @@ def ai_extract(user_msg: str):
             customer_name = " ".join(candidate.split()[:3])
             break
 
-    # fallback
-    if not customer_name:
-        package_words = ["esencial", "activa", "total", "bienestar", "cuidado", "salud", "paquete", "kit", "45", "60", "75"]
-        school_words = ["colegio", "gimnasio", "liceo", "instituto", "school"]
-
-        is_just_text = re.fullmatch(r"[a-zA-Záéíóúñ ]{2,30}", text)
-        is_short = len(text.split()) <= 3
-        contains_package_word = any(w in text for w in package_words)
-        contains_school_word = any(w in text for w in school_words)
-
-        if is_just_text and is_short and not contains_package_word and not contains_school_word:
-            ignored = ["hola", "ola", "buenas", "buenos dias", "buen día"]
-            if text not in ignored:
-                customer_name = " ".join(text.split()[:3])
-
     # -------------------------
     # PARTY SIZE
     # -------------------------
@@ -179,17 +161,22 @@ def ai_extract(user_msg: str):
         party_size = m.group(1)
 
     # -------------------------
-    # DATE + TIME — GPT
+    # GPT ISO EXTRACTION (NO DATEPARSER)
     # -------------------------
-    prompt = f"""
-Extrae SOLO la fecha y hora del siguiente mensaje.
-Devuélvelo exactamente así:
+
+    gpt_prompt = f"""
+Extrae fecha y hora EXACTAS del mensaje y devuélvelas SOLO en este formato JSON:
 
 {{
-"datetime": "texto exacto de fecha y hora"
+  "date": "YYYY-MM-DD",
+  "time": "HH:MM"
 }}
 
-No inventes nada.
+Reglas:
+- Si dice "mañana", "hoy", "este viernes", "próximo jueves" → convierte a una fecha real (Bogotá).
+- La hora debe ser de 24 horas ("3 pm" → "15:00").
+- Si falta fecha o hora, devuelve "" en ese campo.
+- NO inventes información.
 
 Mensaje:
 \"\"\"{user_msg}\"\"\""""
@@ -198,34 +185,27 @@ Mensaje:
         r = client.chat.completions.create(
             model="gpt-4o-mini",
             temperature=0,
-            messages=[{"role": "system", "content": prompt}]
+            messages=[{"role": "system", "content": gpt_prompt}]
         )
         result = json.loads(r.choices[0].message.content)
-        dt_text = result.get("datetime", "").strip()
-        
+
+        date_str = result.get("date", "").strip()
+        time_str = result.get("time", "").strip()
+
     except:
-        dt_text = ""
+        date_str = ""
+        time_str = ""
 
-        final_iso = ""
-
-    try:
-        dt = dateparser.parse(
-
-            dt_text,
-            settings={
-                "PREFER_DATES_FROM": "future",
-                "TIMEZONE": "America/Bogota",
-                "RETURN_AS_TIMEZONE_AWARE": True
-            }
-        )
-
-        if dt:
-            dt = dt.astimezone(LOCAL_TZ)
+    # Build ISO if both exist
+    if date_str and time_str:
+        try:
+            dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+            dt = dt.replace(tzinfo=LOCAL_TZ)
             final_iso = dt.isoformat()
-
-    except:
-        pass
-
+        except:
+            final_iso = ""
+    else:
+        final_iso = ""
 
     # -------------------------
     # INTENT
@@ -501,7 +481,6 @@ def process_message(msg, session):
 # ======================================================================
 
 import re
-import dateparser
 
 # --------------------------------------------------------------
 # STUDENT NAME EXTRACTOR
@@ -593,45 +572,53 @@ def detect_package(msg):
 def update_session_with_info(msg, session):
     """
     Update session with ANY information the user provided.
-    This runs EVERY TIME the user sends a message.
     """
 
-    # Extract student name
+    text = msg.lower().strip()
+
+    # FULL BLOCK: ignore ANY confirmation words
+    confirmation_words = set(INTENTS["confirmation"]["patterns"])
+    if text in confirmation_words:
+        return  # Do NOT extract ANYTHING from confirmations
+
+    # ----------------------------
+    # STUDENT NAME
+    # ----------------------------
     if session["student_name"] is None:
         name = extract_student_name(msg)
         if name:
             session["student_name"] = name
 
-    # Extract school
+    # ----------------------------
+    # SCHOOL
+    # ----------------------------
     if session["school"] is None:
         school = extract_school(msg)
         if school:
             session["school"] = school
 
-    # Detect package
+    # ----------------------------
+    # PACKAGE
+    # ----------------------------
     if session["package"] is None:
         pkg = detect_package(msg)
         if pkg:
             session["package"] = pkg
 
     # ----------------------------
-    # DATE + TIME VIA GPT (AI)
+    # DATE + TIME (GPT ISO)
     # ----------------------------
     extracted = ai_extract(msg)
     iso = extracted.get("datetime")
 
-    # ISO strings should NOT be parsed with dateparser
     if iso:
         try:
             dt = datetime.fromisoformat(iso)
             dt = dt.astimezone(LOCAL_TZ)
-
             session["date"] = dt.strftime("%Y-%m-%d")
             session["time"] = dt.strftime("%H:%M")
         except:
             pass
-
-
 
 def build_missing_fields_message(session):
     """
