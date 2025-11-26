@@ -400,7 +400,9 @@ async def dialogflow_webhook(request: Request):
 
     memory = df_session_state[session_id]
 
-    # Routing
+    # -------------------------
+    # ROUTING
+    # -------------------------
     if action == "booking.package":
         mode = "booking"
     elif action == "modify.reservation":
@@ -414,13 +416,17 @@ async def dialogflow_webhook(request: Request):
     else:
         mode = "fallback"
 
-    # SPECIAL CASE FOR GREETING
+    # -------------------------
+    # SPECIAL GREETING
+    # -------------------------
     if mode == "greeting":
         return JSONResponse({
             "fulfillmentText": "Hola 😊 ¿En qué puedo ayudarte?"
         })
 
-    # AI logic
+    # -------------------------
+    # AI LOGIC
+    # -------------------------
     ai_result = smart_ai_brain(memory, user_text)
     fields = ai_result.get("fields", {})
     missing = ai_result.get("missing", [])
@@ -439,17 +445,23 @@ async def dialogflow_webhook(request: Request):
 
     df_session_state[session_id] = memory
 
-    # INFO
+    # -------------------------
+    # INFO MODE
+    # -------------------------
     if mode == "info":
         return JSONResponse({
             "fulfillmentText": "Hola 😊\nSí, aquí realizamos los exámenes escolares.\n¿Te interesa algún paquete?"
         })
 
-    # MISSING FIELDS
+    # -------------------------
+    # ASK FOR MISSING FIELDS
+    # -------------------------
     if missing:
         return JSONResponse({"fulfillmentText": "Hola 😊\n" + reply})
 
+    # -------------------------
     # COMPLETE BOOKING
+    # -------------------------
     if memory["customer_name"] and memory["school_name"] and memory["datetime"] and memory["package"]:
         dt_display = memory["datetime"].replace("T", " ")[:16]
 
@@ -475,7 +487,9 @@ Hola 😊
 
         return JSONResponse({"fulfillmentText": msg})
 
+    # -------------------------
     # FALLBACK
+    # -------------------------
     return JSONResponse({"fulfillmentText": "Hola 😊 ¿Me confirmas porfa?"})
 
 # ---------------------------------------------------------
