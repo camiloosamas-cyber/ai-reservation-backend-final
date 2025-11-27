@@ -63,13 +63,15 @@ def save_reservation(data: dict):
         "customer_email": "",
         "contact_phone": "",
         "datetime": iso_to_store,
-        "party_size": int(data["party_size"]),
+        "party_size": int(data.get("party_size", 1) or 1),
         "table_number": table,
         "notes": "",
         "status": "confirmado",
         "business_id": 2,
         "package": data.get("package", ""),
         "school_name": data.get("school_name", ""),
+        "cedula": data.get("cedula", ""),
+        "edad": data.get("edad", ""),
     }).execute()
     return (
         "✅ *¡Reserva confirmada!*\n"
@@ -223,6 +225,18 @@ Mensaje:
                 customer_name = candidate
 
     party_size = ""
+    # Detectar cédula (número largo)
+    cedula = ""
+    m = re.search(r"\b(\d{6,12})\b", user_msg)
+    if m:
+        cedula = m.group(1)
+
+    # Detectar edad (1 a 18)
+    edad = ""
+    m = re.search(r"\b([1-9]|1[0-8])\b", user_msg)
+    if m:
+        edad = m.group(1)
+
     m = re.search(r"(\d+)\s*(estudiantes|alumnos|niños|personas)", user_msg.lower())
     if m:
         party_size = m.group(1)
@@ -238,6 +252,8 @@ Mensaje:
         "datetime": final_iso,
         "party_size": party_size,
         "package": detected_package,
+        "cedula": cedula,
+        "edad": edad,
     }
 session_state = {}
 
@@ -246,6 +262,8 @@ def get_session(phone):
         session_state[phone] = {
             "phone": phone,
             "student_name": None,
+            "cedula": None,
+            "edad": None,
             "school": None,
             "package": None,
             "date": None,
@@ -357,7 +375,9 @@ def handle_confirmation(msg, session):
         session["school"],
         session["package"],
         session["date"],
-        session["time"]
+        session["time"],
+        session["cedula"],
+        session["edad"],
     ]
     if not all(required):
         return "Perfecto, ¿me confirmas algo más?"
@@ -374,6 +394,8 @@ def handle_confirmation(msg, session):
         "datetime": iso,
         "party_size": 1,
         "table_number": None,
+        "cedula": session["cedula"],
+        "edad": session["edad"],
     })
     phone = session["phone"]
     session_state.pop(phone, None)
@@ -585,6 +607,8 @@ def update_session_with_info(msg, session):
     new_package = extracted.get("package")
     new_datetime = extracted.get("datetime")
     new_size = extracted.get("party_size")
+    new_cedula = extracted.get("cedula")
+    new_edad = extracted.get("edad")
 
     if correction_flags:
         if new_datetime:
@@ -626,6 +650,12 @@ def update_session_with_info(msg, session):
     if new_size:
         session["party_size"] = new_size
 
+    if new_cedula:
+        session["cedula"] = new_cedula
+
+    if new_edad:
+        session["edad"] = new_edad
+
     apply_student_name_fix(session, msg)
 
 def build_missing_fields_message(session):
@@ -640,6 +670,10 @@ def build_missing_fields_message(session):
         missing.append("la fecha en que deseas la cita")
     if not session["time"]:
         missing.append("la hora")
+    if not session["cedula"]:
+        missing.append("el número de cédula")
+    if not session["edad"]:
+        missing.append("la edad")
     if len(missing) == 0:
         return None
     if len(missing) == 1:
@@ -655,9 +689,15 @@ def finish_booking(session):
     pkg = session["package"]
     date = session["date"]
     time = session["time"]
+
     return (
-        f"Listo, tu cita quedó agendada para {name} en el {school}, "
-        f"paquete {pkg}, el día {date} a las {time}. ¿Deseas confirmar?"
+        f"Listo 😊 Tu cita quedó agendada para *{name}* en el *{school}*.\n"
+        f"📦 Paquete: {pkg}\n"
+        f"🗓 Fecha: {date}\n"
+        f"⏰ Hora: {time}\n"
+        f"🪪 Cédula: {session['cedula']}\n"
+        f"🎂 Edad: {session['edad']}\n\n"
+        "¿Deseas confirmar?"
     )
 
 def is_confirmation_message(msg: str) -> bool:
@@ -678,7 +718,9 @@ def continue_booking_process(msg, session):
             session["school"],
             session["package"],
             session["date"],
-            session["time"]
+            session["time"],
+            session["cedula"],
+            session["edad"],
         ]
         if all(required):
             return handle_confirmation(msg, session)
