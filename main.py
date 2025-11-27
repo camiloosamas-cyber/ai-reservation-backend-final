@@ -641,12 +641,14 @@ def update_session_with_info(msg, session):
     # -------------------------
     # SCHOOL
     # -------------------------
-    if extracted.get("school_name"):
-        session["school"] = extracted["school_name"]
-    elif session["school"] is None:
-        school = extract_school(msg)
-        if school:
+    if extracted.get("school_name") and not session["school"]:
+       session["school"] = extracted["school_name"]
+
+    elif not session["school"]:
+       school = extract_school(msg)
+       if school:
             session["school"] = school
+
 
     # -------------------------
     # PACKAGE – allow OVERRIDES
