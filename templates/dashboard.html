@@ -14,55 +14,85 @@
       --head:#1d4ed8;
     }
 
-    body{ margin:0; background:var(--bg); font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Arial; color:var(--ink); }
+    body{
+      margin:0; background:var(--bg);
+      font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Arial;
+      color:var(--ink);
+    }
     .wrap{ max-width:1200px; margin:auto; padding:30px 16px; }
-    header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
+
+    header{
+      display:flex; justify-content:space-between;
+      align-items:center; margin-bottom:24px;
+    }
+
     header h1{ font-size:26px; font-weight:700; margin:0; }
     .sub{ margin-top:4px; font-size:14px; color:var(--muted); }
+
     .toolbar{ display:flex; gap:10px; }
 
-    .btn{ padding:10px 14px; border-radius:10px; border:1px solid var(--border); font-weight:600; cursor:pointer; background:white; }
+    .btn{
+      padding:10px 14px; border-radius:10px;
+      border:1px solid var(--border);
+      font-weight:600; cursor:pointer; background:white;
+    }
     .btn.primary{ background:var(--primary); color:white; border:none; }
 
-    .cards{ display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:22px; }
-    .card{ background:white; border-radius:16px; padding:18px; border:1px solid var(--border); box-shadow:var(--shadow); }
+    .cards{
+      display:grid; grid-template-columns:repeat(4,1fr);
+      gap:16px; margin-bottom:22px;
+    }
+
+    .card{
+      background:white; border-radius:16px;
+      padding:18px; border:1px solid var(--border);
+      box-shadow:var(--shadow);
+    }
     .card h3{ margin:0; font-size:13px; color:var(--muted); }
     .card p{ margin:0; font-size:28px; font-weight:800; }
 
     .filters{
-      display:flex; align-items:center; gap:14px; background:white; padding:14px;
-      border-radius:14px; border:1px solid var(--border); box-shadow:var(--shadow);
-      margin-bottom:22px;
+      display:flex; align-items:center; gap:14px;
+      background:white; padding:14px;
+      border-radius:14px; border:1px solid var(--border);
+      box-shadow:var(--shadow); margin-bottom:22px;
     }
-    .filters input, .filters select{ height:38px; border-radius:10px; border:1px solid var(--border); padding:8px 12px; font-size:14px; }
 
-    .table-wrap{ border-radius:14px; background:white; border:1px solid var(--border); }
+    .filters input, .filters select{
+      height:38px; border-radius:10px;
+      border:1px solid var(--border);
+      padding:8px 12px; font-size:14px;
+    }
+
+    .table-wrap{
+      border-radius:14px; background:white; border:1px solid var(--border);
+    }
+
     table{ width:100%; border-collapse:collapse; }
-    thead th{ padding:12px; background:var(--head); color:white; font-weight:600; font-size:13px; }
-    tbody td{ padding:12px; border-top:1px solid var(--border); font-size:14px; }
+    thead th{
+      padding:12px; background:var(--head);
+      color:white; font-weight:600; font-size:13px;
+    }
+    tbody td{
+      padding:12px; border-top:1px solid var(--border);
+      font-size:14px;
+    }
     tbody tr:hover{ background:#f9fbff; }
 
-    .chip{ padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700; display:inline-block; }
+    .chip{
+      padding:4px 10px; border-radius:20px;
+      font-size:12px; font-weight:700; display:inline-block;
+    }
+
     .pkg-tag{
-  padding:6px 12px;
-  border-radius:12px;
-  font-weight:600;
-  font-size:12px;
-  color:white;
-  display:inline-block;
-}
+      padding:6px 12px; border-radius:12px;
+      font-weight:600; font-size:12px;
+      color:white; display:inline-block;
+    }
+    .pkg-esencial{ background:#2563eb; }
+    .pkg-activa{ background:#16a34a; }
+    .pkg-total{ background:#9333ea; }
 
-.pkg-esencial{
-  background:#2563eb; /* blue */
-}
-
-.pkg-activa{
-  background:#16a34a; /* green */
-}
-
-.pkg-total{
-  background:#9333ea; /* purple */
-}
     .confirmed{ background:#dcfce7; color:#166534; }
     .arrived{ background:#bbf7d0; color:#064e3b; }
     .updated{ background:#fef9c3; color:#854d0e; }
@@ -71,26 +101,43 @@
     .archived{ background:#d1d5db; color:#4b5563; }
 
     .contact-actions{ display:flex; gap:4px; margin-top:4px; }
-    .icon-btn{ padding:4px 6px; font-size:13px; border-radius:6px; border:none; cursor:pointer; background:#eef2ff; }
-
+    .icon-btn{
+      padding:4px 6px; font-size:13px; border-radius:6px;
+      border:none; cursor:pointer; background:#eef2ff;
+    }
     .menu-wrapper{ position:relative; }
     .menu-btn{ border:none; background:none; font-size:18px; cursor:pointer; }
     .dropdown-menu{
-      display:none; position:absolute; right:0; top:22px; background:white;
-      border:1px solid var(--border); border-radius:8px; min-width:150px;
+      display:none; position:absolute; right:0; top:22px;
+      background:white; border:1px solid var(--border);
+      border-radius:8px; min-width:150px;
       box-shadow:var(--shadow); z-index:50;
     }
-    .dropdown-menu button{ width:100%; background:none; border:none; padding:8px 12px; text-align:left; font-size:13px; cursor:pointer; }
+    .dropdown-menu button{
+      width:100%; background:none; border:none;
+      padding:8px 12px; text-align:left; font-size:13px; cursor:pointer;
+    }
     .dropdown-menu button:hover{ background:#eef2ff; }
 
-    .modal-backdrop{ position:fixed; inset:0; background:#0008; display:none; align-items:center; justify-content:center; z-index:100; }
-    .modal{ background:white; width:600px; max-width:90vw; border-radius:16px; padding:16px; border:1px solid var(--border); box-sizing:border-box; }
+    .modal-backdrop{
+      position:fixed; inset:0; background:#0008;
+      display:none; align-items:center; justify-content:center;
+      z-index:100;
+    }
+    .modal{
+      background:white; width:600px; max-width:90vw;
+      border-radius:16px; padding:16px;
+      border:1px solid var(--border); box-sizing:border-box;
+    }
     .modal header{ padding-bottom:12px; border-bottom:1px solid var(--border); }
     .modal footer{ padding-top:12px; display:flex; justify-content:flex-end; gap:10px; }
 
     .form-row{ display:flex; justify-content:space-between; gap:20px; margin-bottom:14px; }
     .field{ width:48%; box-sizing:border-box; }
-    .field input,.field textarea{ width:100%; padding:10px; border-radius:10px; border:1px solid var(--border); }
+    .field input,.field textarea{
+      width:100%; padding:10px; border-radius:10px;
+      border:1px solid var(--border);
+    }
   </style>
 </head>
 
@@ -114,7 +161,7 @@
     <input id="dateFilter" type="date">
     <select id="statusFilter">
       <option value="active">Activas</option>
-      <option value="archarchived">Archivadas</option>
+      <option value="archived">Archivadas</option>
       <option value="all">Todas</option>
       <option value="confirmed">Confirmadas</option>
       <option value="pending">Pendientes</option>
@@ -129,10 +176,19 @@
     <table>
       <thead>
       <tr>
-        <th>Fecha</th><th>Hora</th><th>Estudiante</th><th>Contacto</th>
-        <th>Colegio</th><th>Paquete</th><th>Estado</th><th>Acciones</th>
+        <th>Fecha</th>
+        <th>Hora</th>
+        <th>Estudiante</th>
+        <th>Cédula</th>
+        <th>Edad</th>
+        <th>Contacto</th>
+        <th>Colegio</th>
+        <th>Paquete</th>
+        <th>Estado</th>
+        <th>Acciones</th>
       </tr>
       </thead>
+
       <tbody id="tbody">
 
       {% for r in reservations %}
@@ -157,6 +213,9 @@
 
         <td>{{ r.customer_name }}</td>
 
+        <td>{{ r.cedula or '-' }}</td>
+        <td>{{ r.edad or '-' }}</td>
+
         <td>
           {{ r.customer_email or r.contact_phone or '-' }}
           <div class="contact-actions">
@@ -167,18 +226,17 @@
 
         <td>{{ r.school_name or '-' }}</td>
 
-<td>
-  {% if r.package == "Paquete Cuidado Esencial" %}
-      <span class="pkg-tag pkg-esencial">Cuidado Esencial</span>
-  {% elif r.package == "Paquete Salud Activa" %}
-      <span class="pkg-tag pkg-activa">Salud Activa</span>
-  {% elif r.package == "Paquete Bienestar Total" %}
-      <span class="pkg-tag pkg-total">Bienestar Total</span>
-  {% else %}
-      -
-  {% endif %}
-</td>
-
+        <td>
+          {% if r.package == "Paquete Cuidado Esencial" %}
+              <span class="pkg-tag pkg-esencial">Cuidado Esencial</span>
+          {% elif r.package == "Paquete Salud Activa" %}
+              <span class="pkg-tag pkg-activa">Salud Activa</span>
+          {% elif r.package == "Paquete Bienestar Total" %}
+              <span class="pkg-tag pkg-total">Bienestar Total</span>
+          {% else %}
+              -
+          {% endif %}
+        </td>
 
         <td><span class="chip {{ r.status }}">{{ r.status.replace("_"," ") }}</span></td>
 
@@ -186,13 +244,15 @@
           <div class="menu-wrapper" onclick="event.stopPropagation()">
             <button class="menu-btn" onclick="toggleMenu(this);event.stopPropagation()">⋮</button>
             <div class="dropdown-menu" onclick="event.stopPropagation()">
-             <button onclick="openEdit(
-  {{ r.reservation_id }},
-  `{{ r.datetime or '' }}`,
-  {{ r.party_size or 1 }},
-  `{{ r.school_name or '' }}`,
-  `{{ r.package or '' }}`
-)">✏️ Editar</button>
+              <button onclick="openEdit(
+                {{ r.reservation_id }},
+                `{{ r.datetime or '' }}`,
+                {{ r.party_size or 1 }},
+                `{{ r.school_name or '' }}`,
+                `{{ r.package or '' }}`,
+                `{{ r.cedula or '' }}`,
+                `{{ r.edad or '' }}`
+              )">✏️ Editar</button>
               <button onclick="markStatus({{ r.reservation_id }}, 'arrived')">✅ Marcar como Llegó</button>
               <button onclick="markStatus({{ r.reservation_id }}, 'no_show')">⚠️ Marcar No-Show</button>
               <button onclick="doArchive({{ r.reservation_id }})">🗄️ Archivar</button>
@@ -200,16 +260,15 @@
             </div>
           </div>
         </td>
+
       </tr>
       {% endfor %}
-
       </tbody>
     </table>
   </div>
 
 <h2 style="margin-top:24px;">📊 Estadísticas</h2>
 
-<!-- NEW SCHOOL KPIS -->
 <div class="cards" style="grid-template-columns:repeat(3,1fr); margin-bottom:20px;">
   <div class="card"><h3>Citas Hoy</h3><p id="todayCount">–</p></div>
   <div class="card"><h3>Ingresos Estimados</h3><p id="estimatedIncome">–</p></div>
@@ -223,6 +282,7 @@
   <div class="modal">
     <header><h3>Editar Reserva</h3></header>
     <div style="padding:16px;">
+
       <div class="form-row">
         <div class="field">
           <label for="dt">Fecha y Hora</label>
@@ -233,24 +293,33 @@
           <input id="ps" type="number" min="1" value="1">
         </div>
       </div>
+
       <div class="form-row">
-
         <div class="field">
-        <label for="notes">Colegio</label>
-        <textarea id="notes"></textarea>
-          <div class="form-row">
-  <div class="field">
-    <label for="edit_package">Paquete</label>
-    <select id="edit_package">
-      <option value="Paquete Cuidado Esencial">Cuidado Esencial</option>
-      <option value="Paquete Salud Activa">Salud Activa</option>
-      <option value="Paquete Bienestar Total">Bienestar Total</option>
-    </select>
-  </div>
-</div>
-
+          <label for="edit_cedula">Cédula</label>
+          <input id="edit_cedula" type="text">
+        </div>
+        <div class="field">
+          <label for="edit_edad">Edad</label>
+          <input id="edit_edad" type="number" min="1">
         </div>
       </div>
+
+      <div class="form-row">
+        <div class="field">
+          <label for="notes">Colegio</label>
+          <textarea id="notes"></textarea>
+        </div>
+        <div class="field">
+          <label for="edit_package">Paquete</label>
+          <select id="edit_package">
+            <option value="Paquete Cuidado Esencial">Cuidado Esencial</option>
+            <option value="Paquete Salud Activa">Salud Activa</option>
+            <option value="Paquete Bienestar Total">Bienestar Total</option>
+          </select>
+        </div>
+      </div>
+
     </div>
     <footer>
       <button class="btn" onclick="closeEdit()">Cancelar</button>
@@ -263,32 +332,58 @@
 <div class="modal-backdrop" id="newModal">
   <div class="modal">
     <header><h3>Nueva Reserva</h3></header>
+
     <div style="padding:16px;">
       <div class="form-row">
-        <div class="field"><label for="new_name">Nombre *</label><input id="new_name" required></div>
-        <div class="field"><label for="new_email">Email</label><input id="new_email" type="email"></div>
+        <div class="field">
+          <label for="new_name">Nombre *</label>
+          <input id="new_name" required>
+        </div>
+        <div class="field">
+          <label for="new_phone">Teléfono</label>
+          <input id="new_phone" type="tel">
+        </div>
       </div>
-      <div class="form-row">
-        <div class="field"><label for="new_phone">Teléfono</label><input id="new_phone" type="tel"></div>
-        <div class="field"><label for="new_party">Estudiantes *</label><input id="new_party" type="number" min="1" value="2"></div>
-      </div>
-      <div class="form-row">
-        <div class="field"><label for="new_dt">Fecha y Hora *</label><input id="new_dt" type="datetime-local"></div>
 
-      </div>
-      <div class="field"><label for="new_notes">Colegio</label><textarea id="new_notes"></textarea></div>
       <div class="form-row">
-  <div class="field">
-    <label for="new_package">Paquete</label>
-    <select id="new_package">
-      <option value="">Seleccionar paquete</option>
-      <option value="Paquete Cuidado Esencial">Cuidado Esencial</option>
-      <option value="Paquete Salud Activa">Salud Activa</option>
-      <option value="Paquete Bienestar Total">Bienestar Total</option>
-    </select>
-  </div>
-</div>
+        <div class="field">
+          <label for="new_cedula">Cédula *</label>
+          <input id="new_cedula" required>
+        </div>
+        <div class="field">
+          <label for="new_edad">Edad *</label>
+          <input id="new_edad" type="number" min="1" required>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="field">
+          <label for="new_party">Estudiantes *</label>
+          <input id="new_party" type="number" min="1" value="1">
+        </div>
+        <div class="field">
+          <label for="new_dt">Fecha y Hora *</label>
+          <input id="new_dt" type="datetime-local" required>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="new_notes">Colegio</label>
+        <textarea id="new_notes"></textarea>
+      </div>
+
+      <div class="field">
+        <label for="new_package">Paquete</label>
+        <select id="new_package">
+          <option value="">Seleccionar paquete</option>
+          <option value="Paquete Cuidado Esencial">Cuidado Esencial</option>
+          <option value="Paquete Salud Activa">Salud Activa</option>
+          <option value="Paquete Bienestar Total">Bienestar Total</option>
+        </select>
+      </div>
+
     </div>
+
     <footer>
       <button class="btn" id="closeNewBtn">Cancelar</button>
       <button class="btn primary" id="createBtn">Crear</button>
@@ -296,62 +391,80 @@
   </div>
 </div>
 
+
 <script>
 
 function toggleMenu(el){
   const menu = el.nextElementSibling;
-  document.querySelectorAll(".dropdown-menu").forEach(m=>{ if(m!==menu) m.style.display="none"; });
+  document.querySelectorAll(".dropdown-menu").forEach(m=>{
+    if(m!==menu) m.style.display="none";
+  });
   menu.style.display = menu.style.display==="block" ? "none" : "block";
 }
+
 document.body.addEventListener("click", ()=> {
   document.querySelectorAll(".dropdown-menu").forEach(m=> m.style.display="none");
 });
 
-const tbody=document.getElementById("tbody");
-const q=document.getElementById("q");
-const dateF=document.getElementById("dateFilter");
-const statusF=document.getElementById("statusFilter");
+const tbody = document.getElementById("tbody");
+const q = document.getElementById("q");
+const dateF = document.getElementById("dateFilter");
+const statusF = document.getElementById("statusFilter");
 
 function filter(){
-  const qv=q.value.toLowerCase();
-  const dv=dateF.value;
-  const sv=statusF.value;
+  const qv = q.value.toLowerCase();
+  const dv = dateF.value;
+  const sv = statusF.value;
 
   [...tbody.rows].forEach(r=>{
-    const okQ=r.dataset.name.includes(qv);
-    const okD=!dv || r.dataset.date===dv;
-    const s=r.dataset.status;
-    const okS=
+    const okQ = r.dataset.name.includes(qv);
+    const okD = !dv || r.dataset.date === dv;
+    const s = r.dataset.status;
+    const okS =
       (sv==="active" && s!=="archived") ||
       (sv==="archived" && s==="archived") ||
       (sv==="all") ||
       (sv===s);
 
-    r.style.display=(okQ&&okD&&okS)?"":"none";
+    r.style.display = (okQ && okD && okS) ? "" : "none";
   });
 
   computeInsights();
 }
 
-q.oninput=filter;
-dateF.onchange=filter;
-statusF.onchange=filter;
+q.oninput = filter;
+dateF.onchange = filter;
+statusF.onchange = filter;
 
-document.getElementById("todayBtn").onclick=()=>{
-  dateF.value=new Date().toISOString().slice(0,10);
+document.getElementById("todayBtn").onclick = ()=>{
+  dateF.value = new Date().toISOString().slice(0,10);
   filter();
 };
 
-async function markStatus(id,s){
-  await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:s})});
+async function markStatus(id, s){
+  await fetch("/updateReservation", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ reservation_id:id, status:s })
+  });
   location.reload();
 }
+
 async function doArchive(id){
-  await fetch("/updateReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id,status:"archived"})});
+  await fetch("/updateReservation", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ reservation_id:id, status:"archived" })
+  });
   location.reload();
 }
+
 async function doCancel(id){
-  await fetch("/cancelReservation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reservation_id:id})});
+  await fetch("/cancelReservation", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ reservation_id:id })
+  });
   location.reload();
 }
 
@@ -359,93 +472,115 @@ function callCustomer(phone){
   if(!phone) return alert("No hay número de teléfono.");
   window.location.href = `tel:${phone}`;
 }
-function sendWhatsApp(phone,name,dt){
+
+function sendWhatsApp(phone, name, dt){
   if(!phone) return alert("No hay número de teléfono.");
   const msg = `Hola ${name}, estamos confirmando la entrega del paquete escolar programado para ${dt}.`;
   window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
 }
 
-document.getElementById("refreshBtn").onclick=()=>location.reload();
+document.getElementById("refreshBtn").onclick = ()=>location.reload();
+
 (function(){
   try{
-    const ws=new WebSocket(`${location.protocol==="https:"?"wss":"ws"}://${location.host}/ws`);
-    ws.onmessage=()=>location.reload();
+    const ws = new WebSocket(`${location.protocol==="https:"?"wss":"ws"}://${location.host}/ws`);
+    ws.onmessage = ()=>location.reload();
   }catch(e){}
 })();
 
-document.getElementById("newBtn").onclick=()=>{ document.getElementById("newModal").style.display="flex"; };
-document.getElementById("closeNewBtn").onclick=()=>{ document.getElementById("newModal").style.display="none"; };
+document.getElementById("newBtn").onclick = ()=>{
+  document.getElementById("newModal").style.display="flex";
+};
+document.getElementById("closeNewBtn").onclick = ()=>{
+  document.getElementById("newModal").style.display="none";
+};
 
 document.getElementById("createBtn").onclick = async () => {
   const name = document.getElementById("new_name").value.trim();
-  const party = Number(document.getElementById("new_party").value || 1);
+  const cedula = document.getElementById("new_cedula").value.trim();
+  const edad = document.getElementById("new_edad").value.trim();
   const dtVal = document.getElementById("new_dt").value;
 
-  if (!name || !dtVal) {
-    alert("El nombre y la fecha/hora son obligatorios.");
+  if (!name || !cedula || !edad || !dtVal) {
+    alert("Todos los campos marcados con * son obligatorios.");
     return;
   }
 
   const payload = {
     customer_name: name,
-    customer_email: document.getElementById("new_email").value.trim() || null,
+    cedula: cedula,
+    edad: Number(edad),
+    customer_email: null,
     contact_phone: document.getElementById("new_phone").value.trim() || null,
     datetime: new Date(dtVal).toISOString(),
-    party_size: party,
-   school_name: document.getElementById("new_notes").value.trim() || null,
-   package: document.getElementById("new_package").value || null
-
+    party_size: Number(document.getElementById("new_party").value || 1),
+    school_name: document.getElementById("new_notes").value.trim() || null,
+    package: document.getElementById("new_package").value || null
   };
 
   await fetch("/createReservation", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(payload)
   });
 
-  document.getElementById("newModal").style.display = "none";
+  document.getElementById("newModal").style.display="none";
   location.reload();
 };
 
 let currentId = null;
 
-function openEdit(id, dt, ps, school, pkg){
-  document.getElementById("edit_package").value = pkg || "";
+function openEdit(id, dt, ps, school, pkg, cedula, edad){
   currentId = id;
+  document.getElementById("edit_package").value = pkg || "";
   document.getElementById("dt").value = dt && dt.includes("T") ? dt.slice(0,16) : "";
   document.getElementById("ps").value = ps || 1;
   document.getElementById("notes").value = school || "";
+  document.getElementById("edit_cedula").value = cedula || "";
+  document.getElementById("edit_edad").value = edad || "";
   document.getElementById("editModal").style.display="flex";
 }
-function closeEdit(){ document.getElementById("editModal").style.display="none"; }
+
+function closeEdit(){
+  document.getElementById("editModal").style.display="none";
+}
 
 document.getElementById("saveBtn").onclick = async () => {
   const payload = {
-  reservation_id: currentId,
-  datetime: document.getElementById("dt").value ? new Date(document.getElementById("dt").value).toISOString() : undefined,
-  party_size: document.getElementById("ps").value ? Number(document.getElementById("ps").value) : undefined,
-  school_name: document.getElementById("notes").value || undefined,
-  package: document.getElementById("edit_package").value || undefined,
-  status: "updated"
-};
+    reservation_id: currentId,
+    datetime: document.getElementById("dt").value
+      ? new Date(document.getElementById("dt").value).toISOString()
+      : undefined,
+    party_size: Number(document.getElementById("ps").value || 1),
+    school_name: document.getElementById("notes").value || undefined,
+    package: document.getElementById("edit_package").value || undefined,
+    cedula: document.getElementById("edit_cedula").value || undefined,
+    edad: Number(document.getElementById("edit_edad").value || 0),
+    status: "updated"
+  };
 
   await fetch("/updateReservation", {
-    method: "POST",
-    headers: { "Content-Type":"application/json" },
-    body: JSON.stringify(payload)
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(payload)
   });
 
   closeEdit();
   location.reload();
 };
 
-document.getElementById("exportBtn").onclick=()=>{
-  const header = ["Fecha","Hora","Estudiante","Contacto","Colegio","Paquete","Estado"];
+document.getElementById("exportBtn").onclick = ()=>{
+  const header = [
+    "Fecha","Hora","Estudiante","Cédula","Edad","Contacto","Colegio","Paquete","Estado"
+  ];
+
   const rows = [header];
 
   [...tbody.rows].forEach(r=>{
     if(r.style.display==="none") return;
+
     const cells = [...r.cells];
+
     rows.push([
       cells[0].innerText.trim(),
       cells[1].innerText.trim(),
@@ -453,11 +588,16 @@ document.getElementById("exportBtn").onclick=()=>{
       cells[3].innerText.trim(),
       cells[4].innerText.trim(),
       cells[5].innerText.trim(),
-      cells[6].innerText.trim()
+      cells[6].innerText.trim(),
+      cells[7].innerText.trim(),
+      cells[8].innerText.trim()
     ]);
   });
 
-  const csv = rows.map(r => r.map(v => `"${(v||"").replace(/"/g,'""')}"`).join(",")).join("\n");
+  const csv = rows
+    .map(r => r.map(v => `"${(v||"").replace(/"/g,'""')}"`).join(","))
+    .join("\n");
+
   const a = document.createElement("a");
   a.href="data:text/csv;charset=utf-8," + encodeURIComponent(csv);
   a.download="reservas.csv";
@@ -466,57 +606,57 @@ document.getElementById("exportBtn").onclick=()=>{
 
 function localizeStatusBadges(){
   const map = {
-    confirmed: "Confirmado",
-    pending: "Pendiente",
-    cancelled: "Cancelado",
-    arrived: "Entregado",
-    no_show: "No asistió",
-    archived: "Archivado",
-    updated: "Actualizado"
+    confirmed:"Confirmado",
+    pending:"Pendiente",
+    cancelled:"Cancelado",
+    arrived:"Entregado",
+    no_show:"No asistió",
+    archived:"Archivado",
+    updated:"Actualizado"
   };
+
   document.querySelectorAll("td .chip").forEach(span=>{
     const cls = [...span.classList].find(c => map[c]);
     if(cls) span.innerText = map[cls];
   });
 }
 
-function computeSchoolStats() {
+function computeSchoolStats(){
   const rows = [...tbody.rows];
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0,10);
 
   let todayCount = 0;
   let income = 0;
   const pkgCount = {
-    "Cuidado Esencial": 0,
-    "Salud Activa": 0,
-    "Bienestar Total": 0
+    "Cuidado Esencial":0,
+    "Salud Activa":0,
+    "Bienestar Total":0
   };
 
-  rows.forEach(r => {
+  rows.forEach(r=>{
     const date = r.dataset.date;
 
-    // today count
-    if (date === today) todayCount++;
+    if(date === today) todayCount++;
 
-    // package frequency + income
-    const pkgCell = r.cells[5].innerText.trim();
-    if (pkgCell === "Cuidado Esencial") {
+    const pkgCell = r.cells[7].innerText.trim();
+
+    if(pkgCell === "Cuidado Esencial"){
       pkgCount["Cuidado Esencial"]++;
       income += 45000;
-    } else if (pkgCell === "Salud Activa") {
+    }else if(pkgCell === "Salud Activa"){
       pkgCount["Salud Activa"]++;
       income += 60000;
-    } else if (pkgCell === "Bienestar Total") {
+    }else if(pkgCell === "Bienestar Total"){
       pkgCount["Bienestar Total"]++;
       income += 75000;
     }
   });
 
-  // compute top package
   let top = "–";
   let best = 0;
-  Object.entries(pkgCount).forEach(([name, qty]) => {
-    if (qty > best) {
+
+  Object.entries(pkgCount).forEach(([name,qty])=>{
+    if(qty > best){
       best = qty;
       top = name;
     }
@@ -528,10 +668,8 @@ function computeSchoolStats() {
     "$" + income.toLocaleString("es-CO");
 }
 
-// extend DOM load
 document.addEventListener("DOMContentLoaded", () => {
-  
-  computeSchoolStats();  // NEW FUNCTION
+  computeSchoolStats();
   localizeStatusBadges();
 });
 
@@ -539,8 +677,3 @@ document.addEventListener("DOMContentLoaded", () => {
 
 </body>
 </html>
-
-
-
-
-
