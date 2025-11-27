@@ -607,7 +607,9 @@ def update_session_with_info(msg, session):
     # FIRST: use ai_extract (robust)
     extracted = ai_extract(msg)
 
+    # -------------------------
     # STUDENT NAME
+    # -------------------------
     if extracted.get("customer_name"):
         session["student_name"] = extracted["customer_name"]
     elif session["student_name"] is None:
@@ -616,7 +618,9 @@ def update_session_with_info(msg, session):
         if name:
             session["student_name"] = name
 
+    # -------------------------
     # SCHOOL
+    # -------------------------
     if extracted.get("school_name"):
         session["school"] = extracted["school_name"]
     elif session["school"] is None:
@@ -624,12 +628,16 @@ def update_session_with_info(msg, session):
         if school:
             session["school"] = school
 
-    # PACKAGE – allow OVERRIDES (if user changes package)
+    # -------------------------
+    # PACKAGE – allow OVERRIDES
+    # -------------------------
     pkg = extracted.get("package")
     if pkg:
         session["package"] = pkg
 
+    # -------------------------
     # DATE/TIME from extracted ISO
+    # -------------------------
     iso = extracted.get("datetime")
     if iso:
         try:
