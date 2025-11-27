@@ -161,115 +161,39 @@ def detect_package(msg: str):
 def ai_extract(user_msg: str):
     text = user_msg.lower().strip()
 
-    # -------------------------
-    # PACKAGE
-    # -------------------------
+    # ============================================================
+    # 1) DETECT PACKAGE FIRST
+    # ============================================================
     detected_package = detect_package(text)
 
-    # -------------------------
-    # SCHOOL DETECTION (clean)
-    # -------------------------
-    school_name = ""
-    school_patterns = [
-        r"(colegio [a-záéíóúñ ]+)",
-        r"(gimnasio [a-záéíóúñ ]+)",
-        r"(liceo [a-záéíóúñ ]+)",
-        r"(instituto [a-záéíóúñ ]+)",
-    ]
-    for p in school_patterns:
-        m = re.search(p, text)
-        if m:
-            raw = m.group(1).strip()
-            clean = re.split(r" a las | a la | mañana | hoy | pasado mañana|,|\.|\n", raw)[0]
-            school_name = clean.strip()
-            break
-            
-    # -------------------------
-    # NAME DETECTION
-    # -------------------------
-    customer_name = ""
+    # Remove package words from the text so they don't contaminate school/name
+    if detected_package:
+        if "esencial" in text: text = text.replace("esencial", "")
+        if "activa" in text: text = text.replace("activa", "")
+        if "total" in text: text = text.replace("total", "")
+        if "bienestar" in text: text = text.replace("bienestar", "")
+        if "verde" in text: text = text.replace("verde", "")
+        if "azul" in text: text = text.replace("azul", "")
+        if "amarillo" in text: text = text.replace("amarillo", "")
 
-    name_patterns = [
-        r"el estudiante se llama ([a-zA-Záéíóúñ ]+)",
-        r"el estudiante es ([a-zA-Záéíóúñ ]+)",
-        r"es para ([a-zA-Záéíóúñ ]+)",
-        r"mi hijo ([a-zA-Záéíóúñ ]+)",
-        r"mi hija ([a-zA-Záéíóúñ ]+)",
-        r"nombre es ([a-zA-Záéíóúñ ]+)",
-        r"se llama ([a-zA-Záéíóúñ ]+)",
-    ]
-
-    def clean_candidate(raw: str):
-        cand = raw.strip()
-
-        # Stop at school keywords
-        cand = re.split(r"\b(colegio|gimnasio|liceo|instituto)\b", cand)[0].strip()
-
-        # Remove date/time contamination
-        cand = re.sub(
-            r"\b(mañana|hoy|tarde|noche|pasado mañana|a las|a la)\b.*",
-            "",
-            cand
-        ).strip()
-
-        # Remove prepositions
-        cand = re.sub(r"\b(de|del|la|el|los|las)$", "", cand).strip()
-        cand = re.sub(r"\b(a|al|para)$", "", cand).strip()
-
-        # Remove digits
-        if any(ch.isdigit() for ch in cand):
-            return None
-
-        if not cand:
-            return None
-
-        # Max 3 words
-        words = cand.split()
-        if len(words) > 3:
-            cand = " ".join(words[:3])
-
-        return cand.title()
-
-    # Pattern-based
-    for p in name_patterns:
-        m = re.search(p, text)
-        if m:
-            candidate = clean_candidate(m.group(1))
-            if candidate:
-                customer_name = candidate
-                break
-
-    # Fallback (short messages that are just a name)
-    if not customer_name:
-        if re.fullmatch(r"[a-zA-Záéíóúñ ]{2,30}", text):
-            if len(text.split()) <= 3:
-                ignored = ["hola", "ola", "buenas", "buenos dias", "buen día"]
-                if text not in ignored:
-                    customer_name = text.title()
-
-    # -------------------------
-    # PARTY SIZE
-    # -------------------------
-    party_size = ""
-    m = re.search(r"(\d+)\s*(estudiantes|alumnos|niños|personas)", text)
-    if m:
-        party_size = m.group(1)
-
-    # -------------------------
-    # DATE/TIME — GPT extraction
-    # -------------------------
+    # ============================================================
+    # 2) GPT EXTRACT DATE/TIME (more precise prompt)
+    # ============================================================
     prompt = f"""
-Extrae SOLO la fecha y hora del siguiente mensaje.
-Devuélvelo exactamente así:
+Extrae SOLO la fecha y la hora del siguiente mensaje.
+NO agregues texto adicional.
+Devuélvelo EXACTAMENTE así:
 
 {{
-"datetime": "texto exacto de fecha y hora"
+"datetime": "texto exacto"
 }}
 
-No inventes nada.
+Si no hay hora, déjalo vacío.
+Si no hay fecha, déjalo vacío.
 
 Mensaje:
-\"\"\"{user_msg}\"\"\""""
+\"\"\"{user_msg}\"\"\"
+"""
 
     try:
         r = client.chat.completions.create(
@@ -279,58 +203,117 @@ Mensaje:
         )
         result = json.loads(r.choices[0].message.content)
         dt_text = result.get("datetime", "").strip()
-    except Exception:
+    except:
         dt_text = ""
 
-    # -------------------------
-    # PARSE DATE/TIME CLEANLY
-    # -------------------------
+    # PARSE DATE/TIME
     dt_local = None
     if dt_text:
-        dt_local = dateparser.parse(
-            dt_text,
-            settings={
-                "PREFER_DATES_FROM": "future",
-                "TIMEZONE": "America/Bogota",
-                "RETURN_AS_TIMEZONE_AWARE": True
-            }
-        )
+        try:
+            dt_local = dateparser.parse(
+                dt_text,
+                settings={
+                    "TIMEZONE": "America/Bogota",
+                    "RETURN_AS_TIMEZONE_AWARE": True,
+                    "PREFER_DATES_FROM": "future"
+                }
+            )
+        except:
+            dt_local = None
 
-    # -------------------------
-    # FIX MINUTES bug
-    # -------------------------
-    if dt_local:
-        # user DID specify hour?
-        has_hour = re.search(r"\b\d{1,2}\b", dt_text)
-        # did they specify minutes?
-        has_minutes = re.search(r":\d{2}", dt_text)
-
-        # If hour but NOT minutes → force :00
-        if has_hour and not has_minutes:
-            dt_local = dt_local.replace(minute=0)
-
-        # If no hour at all → we DO NOT assign time (important!)
-        if not has_hour:
-            # leave dt_local with date only, but without time
-            pass
-
+    # Convert to ISO
     final_iso = dt_local.isoformat() if dt_local else ""
 
-    # -------------------------
-    # INTENT
-    # -------------------------
-    reserve_keywords = ["agendar", "reservar", "cita", "examen"]
-    info_keywords = ["cuánto", "precio", "vale", "incluye"]
+    # ============================================================
+    # 3) REMOVE DATE/TIME FROM TEXT BEFORE SCHOOL/NAME EXTRACTION
+    # ============================================================
+    if dt_text:
+        cleaned_dt = re.escape(dt_text)
+        text = re.sub(cleaned_dt, "", text)
 
-    if any(k in text for k in reserve_keywords):
-        intent = "reserve"
-    elif any(k in text for k in info_keywords):
-        intent = "info"
-    else:
-        intent = "other"
+    # Common date words to remove
+    date_words = [
+        "mañana", "pasado mañana", "hoy", "tarde", "noche",
+        "a las", "a la", "am", "pm", "viernes", "jueves",
+        "lunes", "martes", "miércoles", "miercoles",
+        "sabado", "sábado", "domingo", "semana", "mes"
+    ]
+    for w in date_words:
+        text = text.replace(w, "")
 
+    # ============================================================
+    # 4) DETECT SCHOOL — NEW SUPER-ROBUST REGEX
+    # ============================================================
+    school_name = ""
+
+    school_patterns = [
+        r"(colegio\s+[a-záéíóúñ0-9 ]+)",
+        r"(gimnasio\s+[a-záéíóúñ0-9 ]+)",
+        r"(liceo\s+[a-záéíóúñ0-9 ]+)",
+        r"(instituto\s+[a-záéíóúñ0-9 ]+)"
+    ]
+
+    for p in school_patterns:
+        m = re.search(p, text)
+        if m:
+            raw = m.group(1).strip()
+            raw = re.split(r"[,.!\n]", raw)[0]
+            school_name = raw.strip().title()
+            break
+
+    # ============================================================
+    # 5) DETECT NAME — AFTER CLEANING DATE & SCHOOL
+    # ============================================================
+    customer_name = ""
+
+    # remove school from text to avoid contamination:
+    if school_name:
+        text = text.replace(school_name.lower(), "")
+
+    name_patterns = [
+        r"mi hijo ([a-záéíóúñ ]+)",
+        r"mi hija ([a-záéíóúñ ]+)",
+        r"es para ([a-záéíóúñ ]+)",
+        r"se llama ([a-záéíóúñ ]+)",
+        r"nombre es ([a-záéíóúñ ]+)",
+    ]
+
+    def clean_name(raw):
+        raw = raw.strip()
+        raw = re.split(r"[,.!\n]", raw)[0]
+        if any(char.isdigit() for char in raw):
+            return None
+        words = raw.split()
+        if len(words) > 3:
+            raw = " ".join(words[:3])
+        return raw.title()
+
+    for p in name_patterns:
+        m = re.search(p, user_msg.lower())
+        if m:
+            candidate = clean_name(m.group(1))
+            if candidate:
+                customer_name = candidate
+                break
+
+    # fallback: if message is just a short name
+    if not customer_name:
+        if re.fullmatch(r"[a-zA-Záéíóúñ ]{2,30}", text.strip()):
+            customer_name = text.strip().title()
+
+    # ============================================================
+    # 6) PARTY SIZE
+    # ============================================================
+    party_size = ""
+    m = re.search(r"(\d+)\s*(estudiantes|alumnos|niños|personas)", user_msg.lower())
+    if m:
+        party_size = m.group(1)
+
+    # ============================================================
+    # FINAL OUTPUT
+    # ============================================================
     return {
-        "intent": intent,
+        "intent": "reserve" if "cita" in user_msg.lower() or "reserv" in user_msg.lower() else "info",
         "customer_name": customer_name,
         "school_name": school_name,
         "datetime": final_iso,
