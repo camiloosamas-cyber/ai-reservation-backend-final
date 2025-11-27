@@ -402,24 +402,42 @@ def handle_package_info(msg, session):
 
     pkg = detect_package(msg)
 
-    if pkg == "Cuidado Esencial":
-        price = "45.000"
-    elif pkg == "Salud Activa":
-        price = "60.000"
-    elif pkg == "Bienestar Total":
-        price = "75.000"
-    else:
+    # Price mapping with NEW package names
+    prices = {
+        "Paquete Cuidado Esencial": "45.000",
+        "Paquete Salud Activa": "60.000",
+        "Paquete Bienestar Total": "75.000",
+    }
+
+    # Package descriptions (added as requested)
+    details = {
+        "Paquete Cuidado Esencial": "Medicina General, Optometría y Audiometría.",
+        "Paquete Salud Activa": "Medicina General, Optometría, Audiometría y Psicología.",
+        "Paquete Bienestar Total": "Medicina General, Optometría, Audiometría, Psicología y Odontología.",
+    }
+
+    # If a package was detected
+    if pkg:
+        price = prices.get(pkg)
+        detail = details.get(pkg)
+
         return (
-            "Claro. Ofrecemos tres paquetes:\n\n"
-            "• Cuidado Esencial — $45.000\n"
-            "• Salud Activa — $60.000\n"
-            "• Bienestar Total — $75.000\n\n"
-            "¿Cuál te interesa?"
+            f"Claro 😊\n"
+            f"*{pkg}* cuesta *${price}*.\n\n"
+            f"📋 *Incluye:*\n{detail}\n\n"
+            "¿Te gustaría agendar una cita?"
         )
 
+    # If no package detected → show menu with details
     return (
-        f"Claro. El paquete {pkg} cuesta ${price}. "
-        "Si deseas, puedo ayudarte a agendar una cita. ¿Te gustaría hacerlo?"
+        "Claro. Ofrecemos tres paquetes:\n\n"
+        "• *Cuidado Esencial* — $45.000\n"
+        "  Medicina General, Optometría, Audiometría\n\n"
+        "• *Salud Activa* — $60.000\n"
+        "  Medicina General, Optometría, Audiometría, Psicología\n\n"
+        "• *Bienestar Total* — $75.000\n"
+        "  Medicina General, Optometría, Audiometría, Psicología, Odontología\n\n"
+        "¿Cuál te interesa?"
     )
 
 def handle_booking_request(msg, session):
