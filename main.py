@@ -183,11 +183,10 @@ def ai_extract(user_msg: str):
             break
 
     # -------------------------
-    # NAME DETECTION (safer)
+    # NAME DETECTION
     # -------------------------
     customer_name = ""
 
-    # We ADD patterns for "el estudiante es..." etc.
     name_patterns = [
         r"el estudiante se llama ([a-zA-Záéíóúñ ]+)",
         r"el estudiante es ([a-zA-Záéíóúñ ]+)",
@@ -198,31 +197,38 @@ def ai_extract(user_msg: str):
         r"se llama ([a-zA-Záéíóúñ ]+)",
     ]
 
-    def clean_candidate(raw: str) -> str | None:
+    def clean_candidate(raw: str):
         cand = raw.strip()
 
-        # Stop at school keywords to avoid "... del colegio San José"
+        # Stop at school keywords
         cand = re.split(r"\b(colegio|gimnasio|liceo|instituto)\b", cand)[0].strip()
 
-        # Remove trailing connectors like "de", "del"
+        # Remove date/time contamination
+        cand = re.sub(
+            r"\b(mañana|hoy|tarde|noche|pasado mañana|a las|a la)\b.*",
+            "",
+            cand
+        ).strip()
+
+        # Remove prepositions
         cand = re.sub(r"\b(de|del|la|el|los|las)$", "", cand).strip()
+        cand = re.sub(r"\b(a|al|para)$", "", cand).strip()
 
-        # Too short or empty
-        if not cand:
-            return None
-
-        # Remove any digits (we don't want "3 pm" etc.)
+        # Remove digits
         if any(ch.isdigit() for ch in cand):
             return None
 
-        # Limit to first 3 words max
+        if not cand:
+            return None
+
+        # Max 3 words
         words = cand.split()
         if len(words) > 3:
             cand = " ".join(words[:3])
 
         return cand.title()
 
-    # 1) Structured name detection
+    # Pattern-based
     for p in name_patterns:
         m = re.search(p, text)
         if m:
@@ -231,23 +237,13 @@ def ai_extract(user_msg: str):
                 customer_name = candidate
                 break
 
-    # 2) Fallback name detection (short, no package/school words)
+    # Fallback (short messages that are just a name)
     if not customer_name:
-        package_words = [
-            "esencial", "activa", "total", "bienestar", "cuidado", "salud",
-            "paquete", "kit", "45", "60", "75"
-        ]
-        school_words = ["colegio", "gimnasio", "liceo", "instituto", "school"]
-
-        is_just_text = re.fullmatch(r"[a-zA-Záéíóúñ ]{2,30}", text)
-        is_short = len(text.split()) <= 3
-        contains_package_word = any(w in text for w in package_words)
-        contains_school_word = any(w in text for w in school_words)
-
-        if is_just_text and is_short and not contains_package_word and not contains_school_word:
-            ignored = ["hola", "ola", "buenas", "buenos dias", "buen día"]
-            if text not in ignored:
-                customer_name = " ".join(text.split()[:3]).title()
+        if re.fullmatch(r"[a-zA-Záéíóúñ ]{2,30}", text):
+            if len(text.split()) <= 3:
+                ignored = ["hola", "ola", "buenas", "buenos dias", "buen día"]
+                if text not in ignored:
+                    customer_name = text.title()
 
     # -------------------------
     # PARTY SIZE
@@ -258,7 +254,7 @@ def ai_extract(user_msg: str):
         party_size = m.group(1)
 
     # -------------------------
-    # DATE/TIME — GPT extraction + dateparser
+    # DATE/TIME — GPT extraction
     # -------------------------
     prompt = f"""
 Extrae SOLO la fecha y hora del siguiente mensaje.
@@ -284,19 +280,42 @@ Mensaje:
     except Exception:
         dt_text = ""
 
-    dt_local = dateparser.parse(
-        dt_text,
-        settings={
-            "PREFER_DATES_FROM": "future",
-            "TIMEZONE": "America/Bogota",
-            "RETURN_AS_TIMEZONE_AWARE": True
-        }
-    )
+    # -------------------------
+    # PARSE DATE/TIME CLEANLY
+    # -------------------------
+    dt_local = None
+    if dt_text:
+        dt_local = dateparser.parse(
+            dt_text,
+            settings={
+                "PREFER_DATES_FROM": "future",
+                "TIMEZONE": "America/Bogota",
+                "RETURN_AS_TIMEZONE_AWARE": True
+            }
+        )
+
+    # -------------------------
+    # FIX MINUTES bug
+    # -------------------------
+    if dt_local:
+        # user DID specify hour?
+        has_hour = re.search(r"\b\d{1,2}\b", dt_text)
+        # did they specify minutes?
+        has_minutes = re.search(r":\d{2}", dt_text)
+
+        # If hour but NOT minutes → force :00
+        if has_hour and not has_minutes:
+            dt_local = dt_local.replace(minute=0)
+
+        # If no hour at all → we DO NOT assign time (important!)
+        if not has_hour:
+            # leave dt_local with date only, but without time
+            pass
 
     final_iso = dt_local.isoformat() if dt_local else ""
 
     # -------------------------
-    # INTENT (basic, engine uses its own too)
+    # INTENT
     # -------------------------
     reserve_keywords = ["agendar", "reservar", "cita", "examen"]
     info_keywords = ["cuánto", "precio", "vale", "incluye"]
@@ -316,6 +335,7 @@ Mensaje:
         "party_size": party_size,
         "package": detected_package,
     }
+
 
 # ======================================================================
 #                      CHATBOT ENGINE (INTENTS)
@@ -696,14 +716,28 @@ def is_confirmation_message(msg: str) -> bool:
 def continue_booking_process(msg, session):
     update_session_with_info(msg, session)
 
-    missing_message = build_missing_fields_message(session)
-    if missing_message:
-        return missing_message
+# Ask for missing fields FIRST
+missing_message = build_missing_fields_message(session)
+if missing_message:
+    return missing_message
 
-    if is_confirmation_message(msg):
+# Only allow confirmation if ALL fields exist
+if is_confirmation_message(msg):
+    required = [
+        session["student_name"],
+        session["school"],
+        session["package"],
+        session["date"],
+        session["time"]
+    ]
+    if all(required):
         return handle_confirmation(msg, session)
+    else:
+        return "Antes de confirmar necesito toda la información completa 😊"
 
-    return finish_booking(session)
+# Otherwise, just show the summary
+return finish_booking(session)
+
 
 # ======================================================================
 #                       INTENT PATTERNS
@@ -887,7 +921,10 @@ async def whatsapp_reply(request: Request):
     response_text = process_message(incoming_msg, session)
 
     if not response_text:
-        return Response(status_code=204)
+        return Response(content=str(MessagingResponse().message(
+             "Disculpa, no entendí bien. ¿Me lo repites por favor?"
+        )), media_type="application/xml")
+
 
     twilio_resp = MessagingResponse()
     twilio_resp.message(response_text)
