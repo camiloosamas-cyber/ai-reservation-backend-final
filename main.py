@@ -639,18 +639,13 @@ def update_session_with_info(msg, session):
             session["student_name"] = name
 
     # -------------------------
-    # SCHOOL  (más fuerte)
+    # SCHOOL  (solo regex, como antes)
     # -------------------------
-    school_ai = extracted.get("school_name")
-    school_regex = extract_school(msg)
+    if not session["school"]:
+        school = extract_school(msg)
+        if school:
+            session["school"] = school
 
-    # 1) Si la IA detectó colegio, usamos eso
-    if school_ai:
-        session["school"] = school_ai.strip().title()
-
-    # 2) Si no, usamos el regex clásico
-    elif school_regex:
-        session["school"] = school_regex
 
 
     # -------------------------
