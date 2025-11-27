@@ -167,21 +167,23 @@ def ai_extract(user_msg: str):
     detected_package = detect_package(text)
 
     # -------------------------
-    # SCHOOL DETECTION
+    # SCHOOL DETECTION (clean)
     # -------------------------
     school_name = ""
     school_patterns = [
-        r"(colegio [a-zA-Záéíóúñ ]+)",
-        r"(gimnasio [a-zA-Záéíóúñ ]+)",
-        r"(liceo [a-zA-Záéíóúñ ]+)",
-        r"(instituto [a-zA-Záéíóúñ ]+)",
+        r"(colegio [a-záéíóúñ ]+)",
+        r"(gimnasio [a-záéíóúñ ]+)",
+        r"(liceo [a-záéíóúñ ]+)",
+        r"(instituto [a-záéíóúñ ]+)",
     ]
     for p in school_patterns:
         m = re.search(p, text)
         if m:
-            school_name = m.group(1).strip()
+            raw = m.group(1).strip()
+            clean = re.split(r" a las | a la | mañana | hoy | pasado mañana|,|\.|\n", raw)[0]
+            school_name = clean.strip()
             break
-
+            
     # -------------------------
     # NAME DETECTION
     # -------------------------
@@ -606,7 +608,7 @@ def extract_school(msg):
         if m:
             name = m.group(1).strip()
             # stop at punctuation, hours, dates, or extra text
-            name = re.split(r"[,.!?\n]| a las | a la | mañana|hoy|pasado mañana", name)[0]
+            name = re.split(r"[,.!?\n]| a las | a la | mañana | hoy | pasado mañana", name)[0]
             return name.title().strip()
 
     return None
@@ -642,12 +644,13 @@ def update_session_with_info(msg, session):
         if name:
             session["student_name"] = name
 
-    # -------------------------
-    # SCHOOL (always detect every message)
-    # -------------------------
-    school = extract_school(msg)
-    if school:
-        session["school"] = school
+    # SCHOOL (use ai_extract first, fallback)
+    if extracted.get("school_name"):
+        session["school"] = extracted["school_name"].title()
+    else:
+        school = extract_school(msg)
+        if school:
+            session["school"] = school
 
     # -------------------------
     # PACKAGE – allow OVERRIDES
