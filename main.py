@@ -716,27 +716,27 @@ def is_confirmation_message(msg: str) -> bool:
 def continue_booking_process(msg, session):
     update_session_with_info(msg, session)
 
-# Ask for missing fields FIRST
-missing_message = build_missing_fields_message(session)
-if missing_message:
-    return missing_message
+    # Ask for missing fields FIRST
+    missing_message = build_missing_fields_message(session)
+    if missing_message:
+        return missing_message
 
-# Only allow confirmation if ALL fields exist
-if is_confirmation_message(msg):
-    required = [
-        session["student_name"],
-        session["school"],
-        session["package"],
-        session["date"],
-        session["time"]
-    ]
-    if all(required):
-        return handle_confirmation(msg, session)
-    else:
-        return "Antes de confirmar necesito toda la información completa 😊"
+    # Only allow confirmation if ALL fields exist
+    if is_confirmation_message(msg):
+        required = [
+            session["student_name"],
+            session["school"],
+            session["package"],
+            session["date"],
+            session["time"]
+        ]
+        if all(required):
+            return handle_confirmation(msg, session)
+        else:
+            return "Antes de confirmar necesito toda la información completa 😊"
 
-# Otherwise, just show the summary
-return finish_booking(session)
+    # Otherwise, just show the summary
+    return finish_booking(session)
 
 
 # ======================================================================
