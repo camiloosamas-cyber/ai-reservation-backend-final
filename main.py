@@ -233,6 +233,10 @@ Mensaje:
     if "cita" in user_msg.lower() or "reserv" in user_msg.lower():
         intent = "reserve"
 
+    # --- If user provides full booking info, force booking intent ---
+    if school_name or customer_name or final_iso or detected_package:
+        intent = "reserve"
+        
     return {
         "intent": intent,
         "customer_name": customer_name,
@@ -346,6 +350,8 @@ def handle_booking_request(msg, session):
         "– Paquete\n"
         "– Fecha en que deseas la cita\n"
         "– Hora\n\n"
+        "– Edad del estudiante\n"
+        "– Cédula del estudiante\n\n"
         "¿Me los puedes compartir?"
     )
 
@@ -384,6 +390,7 @@ def handle_confirmation(msg, session):
         "age": session["age"],
         "cedula": session["cedula"],
     })
+    session["_ai_intent"] = None
     phone = session["phone"]
     session_state.pop(phone, None)
     return (
@@ -590,6 +597,8 @@ def update_session_with_info(msg, session):
         apply_correction(session, correction_flags)
 
     extracted = ai_extract(msg)
+    ai_intent = extracted.get("intent")
+    session["_ai_intent"] = ai_intent
     new_name = extracted.get("customer_name")
     new_school = extracted.get("school_name")
     new_package = extracted.get("package")
@@ -734,6 +743,9 @@ def process_message(msg, session):
             return natural_tone(ans)
 
     intent = detect_intent(msg)
+    
+    if session.get("_ai_intent") == "reserve":
+        intent = "booking_request"
 
     if intent == "confirmation" and session["info_mode"] and not session["booking_started"]:
         intent = "booking_request"
