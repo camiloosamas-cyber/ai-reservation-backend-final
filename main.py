@@ -70,6 +70,8 @@ def save_reservation(data: dict):
         "business_id": 2,
         "package": data.get("package", ""),
         "school_name": data.get("school_name", ""),
+        "age": data.get("age", None),
+        "cedula": data.get("cedula", None),
     }).execute()
     return (
         "✅ *¡Reserva confirmada!*\n"
@@ -255,6 +257,8 @@ def get_session(phone):
             "info_mode": False,
             "first_booking_message": False,
             "greeted": False,
+            "age": None,
+            "cedula": None,
         }
     return session_state[phone]
 
@@ -331,7 +335,8 @@ def handle_booking_request(msg, session):
         return auto
     if (
         session["student_name"] and session["school"] and
-        session["package"] and session["date"] and session["time"]
+        session["package"] and session["date"] and session["time"] and
+        session["age"] and session["cedula"]
     ):
         return finish_booking(session)
     return (
@@ -357,7 +362,9 @@ def handle_confirmation(msg, session):
         session["school"],
         session["package"],
         session["date"],
-        session["time"]
+        session["time"],
+        session["age"],
+        session["cedula"]
     ]
     if not all(required):
         return "Perfecto, ¿me confirmas algo más?"
@@ -374,6 +381,8 @@ def handle_confirmation(msg, session):
         "datetime": iso,
         "party_size": 1,
         "table_number": None,
+        "age": session["age"],
+        "cedula": session["cedula"],
     })
     phone = session["phone"]
     session_state.pop(phone, None)
@@ -427,7 +436,8 @@ def contextual_handler(intent: str, session):
 def auto_finalize_if_ready(session):
     if (
         session["student_name"] and session["school"] and
-        session["package"] and session["date"] and session["time"]
+        session["package"] and session["date"] and session["time"] and
+        session["age"] and session["cedula"]
     ):
         return finish_booking(session)
     return None
@@ -626,7 +636,20 @@ def update_session_with_info(msg, session):
     if new_size:
         session["party_size"] = new_size
 
+    # --- AGE detection ---
+    age_match = re.search(r"\b(\d{1,2})\s*(años|anos|año|ano)?\b", msg.lower())
+    if age_match:
+        age_num = int(age_match.group(1))
+        if 1 <= age_num <= 20:
+            session["age"] = age_num
+
+    # --- CEDULA detection ---
+    ced_match = re.search(r"\b(\d{5,12})\b", msg)
+    if ced_match:
+        session["cedula"] = ced_match.group(1)
+
     apply_student_name_fix(session, msg)
+
 
 def build_missing_fields_message(session):
     missing = []
@@ -640,6 +663,10 @@ def build_missing_fields_message(session):
         missing.append("la fecha en que deseas la cita")
     if not session["time"]:
         missing.append("la hora")
+    if not session["age"]:
+        missing.append("la edad del estudiante")
+    if not session["cedula"]:
+        missing.append("la cédula del estudiante")
     if len(missing) == 0:
         return None
     if len(missing) == 1:
@@ -655,9 +682,19 @@ def finish_booking(session):
     pkg = session["package"]
     date = session["date"]
     time = session["time"]
+    age = session["age"]
+    cedula = session["cedula"]
+
     return (
-        f"Listo, tu cita quedó agendada para {name} en el {school}, "
-        f"paquete {pkg}, el día {date} a las {time}. ¿Deseas confirmar?"
+        f"Listo, ya tengo toda la información:\n\n"
+        f"👤 Estudiante: {name}\n"
+        f"🎒 Colegio: {school}\n"
+        f"📦 Paquete: {pkg}\n"
+        f"📅 Fecha: {date}\n"
+        f"⏰ Hora: {time}\n"
+        f"🧒 Edad: {age}\n"
+        f"🪪 Cédula: {cedula}\n\n"
+        f"¿Deseas confirmar la cita?"
     )
 
 def is_confirmation_message(msg: str) -> bool:
@@ -678,7 +715,9 @@ def continue_booking_process(msg, session):
             session["school"],
             session["package"],
             session["date"],
-            session["time"]
+            session["time"],
+            session["age"],
+            session["cedula"]
         ]
         if all(required):
             return handle_confirmation(msg, session)
@@ -881,6 +920,8 @@ async def create_reservation(data: dict):
         "party_size": data.get("party_size", 1),
         "school_name": data.get("school_name", ""),
         "package": data.get("package", ""),
+        "age": data.get("age", None),
+        "cedula": data.get("cedula", None),
         "table_number": None,
     })
     return {"success": True}
