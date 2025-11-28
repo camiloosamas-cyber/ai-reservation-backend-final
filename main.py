@@ -55,9 +55,11 @@ def save_reservation(data: dict):
         iso_to_store = dt_local.isoformat()
     except Exception:
         return "❌ Error procesando la fecha."
+
     table = data.get("table_number") or assign_table(iso_to_store)
     if not table:
         return "❌ No hay mesas disponibles para ese horario."
+
     supabase.table("reservations").insert({
         "customer_name": data["customer_name"],
         "customer_email": "",
@@ -73,6 +75,7 @@ def save_reservation(data: dict):
         "age": data.get("age", None),
         "cedula": data.get("cedula", None),
     }).execute()
+
     return (
         "✅ *¡Reserva confirmada!*\n"
         f"👤 {data['customer_name']}\n"
@@ -84,39 +87,44 @@ def save_reservation(data: dict):
 
 def detect_package(msg: str):
     msg = msg.lower().strip()
+
     if any(w in msg for w in ["cuidado esencial", "esencial", "kit escolar"]):
         return "Paquete Cuidado Esencial"
     if any(w in msg for w in ["salud activa", "activa"]):
         return "Paquete Salud Activa"
     if any(w in msg for w in ["bienestar total", "total", "completo"]):
         return "Paquete Bienestar Total"
+
     if any(w in msg for w in ["45", "45k", "45 mil", "45mil"]):
         return "Paquete Cuidado Esencial"
     if any(w in msg for w in ["60", "60k", "60 mil", "60mil"]):
         return "Paquete Salud Activa"
     if any(w in msg for w in ["75", "75k", "75 mil", "75mil"]):
         return "Paquete Bienestar Total"
+
     if "odont" in msg:
         return "Paquete Bienestar Total"
     if "psico" in msg:
         return "Paquete Salud Activa"
+
     if any(w in msg for w in ["audio", "optometr", "medicina"]):
         return "Paquete Cuidado Esencial"
+
     if "verde" in msg:
         return "Paquete Cuidado Esencial"
     if "azul" in msg:
         return "Paquete Salud Activa"
     if "amarillo" in msg:
         return "Paquete Bienestar Total"
-    return None
 
+    return None
 def ai_extract(user_msg: str):
     msg = user_msg.lower().strip()
+
     noise_words = [
         "no perdon", "no perdón", "perdon", "perdón",
         "quise decir", "me referia", "me refería",
-        "quise poner", "quise mandar", "ok", "vale",
-        "listo", "claro"
+        "quise poner", "quise mandar"
     ]
     for w in noise_words:
         msg = msg.replace(w, "")
@@ -160,10 +168,12 @@ Mensaje:
             )
         except:
             dt_local = None
+
     if dt_local:
         has_minutes = re.search(r":\d{2}", dt_text)
         if not has_minutes:
             dt_local = dt_local.replace(minute=0)
+
     final_iso = dt_local.isoformat() if dt_local else ""
 
     if dt_text:
@@ -172,21 +182,29 @@ Mensaje:
     for w in ["mañana", "pasado mañana", "hoy", "tarde", "noche", "am", "pm", "a las", "a la", "este", "próximo"]:
         msg = msg.replace(w, "")
 
+    # --- EXTRA school extractor (raw before cleaning)
     school_name = ""
-    school_patterns = [
-        r"colegio\s+[a-záéíóúñ0-9 ]+",
-        r"gimnasio\s+[a-záéíóúñ0-9 ]+",
-        r"liceo\s+[a-záéíóúñ0-9 ]+",
-        r"instituto\s+[a-záéíóúñ0-9 ]+"
-    ]
-    for p in school_patterns:
-        m = re.search(p, msg)
-        if m:
-            raw = m.group(0)
-            raw = re.split(r"[,.!\n]", raw)[0]
-            school_name = raw.strip().title()
-            msg = msg.replace(raw.lower(), "")
-            break
+    school_raw = re.search(r"colegio\s+([a-záéíóúñ0-9 ]+)", user_msg.lower())
+    if school_raw:
+        school_name = school_raw.group(1).strip()
+        school_name = re.split(r"[,.!?\n]", school_name)[0].title()
+
+    # Now fallback to cleaned message only if school_name is still empty
+    if not school_name:
+        school_patterns = [
+            r"colegio\s+[a-záéíóúñ0-9 ]+",
+            r"gimnasio\s+[a-záéíóúñ0-9 ]+",
+            r"liceo\s+[a-záéíóúñ0-9 ]+",
+            r"instituto\s+[a-záéíóúñ0-9 ]+"
+        ]
+        for p in school_patterns:
+            m = re.search(p, msg)
+            if m:
+                raw = m.group(0)
+                raw = re.split(r"[,.!\n]", raw)[0]
+                school_name = raw.strip().title()
+                msg = msg.replace(raw.lower(), "")
+                break
 
     customer_name = ""
     name_stopwords = [
@@ -199,6 +217,7 @@ Mensaje:
         r"es para ([a-záéíóúñ ]+)",
         r"se llama ([a-záéíóúñ ]+)"
     ]
+
     def clean_name(n):
         n = n.strip()
         n = re.split(r"[,.!\n]", n)[0]
@@ -224,6 +243,12 @@ Mensaje:
             if candidate:
                 customer_name = candidate
 
+    # --- EXTRA name extractor (first word name logic FIXED) ---
+    if not customer_name:
+        first_word = user_msg.strip().split()[0]
+        if re.fullmatch(r"[a-záéíóúñ]{3,15}", first_word.lower()):
+            customer_name = first_word.title()
+
     party_size = ""
     m = re.search(r"(\d+)\s*(estudiantes|alumnos|niños|personas)", user_msg.lower())
     if m:
@@ -233,10 +258,10 @@ Mensaje:
     if "cita" in user_msg.lower() or "reserv" in user_msg.lower():
         intent = "reserve"
 
-    # --- If user provides full booking info, force booking intent ---
+    # --- If user provides full booking info ---
     if school_name or customer_name or final_iso or detected_package:
         intent = "reserve"
-        
+
     return {
         "intent": intent,
         "customer_name": customer_name,
@@ -245,6 +270,8 @@ Mensaje:
         "party_size": party_size,
         "package": detected_package,
     }
+
+
 session_state = {}
 
 def get_session(phone):
@@ -265,14 +292,13 @@ def get_session(phone):
             "cedula": None,
         }
     return session_state[phone]
-
 INTENTS = {
     "greeting": {"patterns": [], "handler": "handle_greeting"},
     "package_info": {"patterns": [], "handler": "handle_package_info"},
     "booking_request": {"patterns": [], "handler": "handle_booking_request"},
     "modify": {"patterns": [], "handler": "handle_modify"},
     "cancel": {"patterns": [], "handler": "handle_cancel"},
-    "confirmation": {"patterns": [], "handler": "handle_confirmation"}
+    "confirmation": {"patterns": [], "handler": "handle_confirmation"},
 }
 
 INTENT_PRIORITY = [
@@ -302,16 +328,19 @@ def handle_greeting(msg, session):
 def handle_package_info(msg, session):
     session["info_mode"] = True
     pkg = detect_package(msg)
+
     prices = {
         "Paquete Cuidado Esencial": "45.000",
         "Paquete Salud Activa": "60.000",
         "Paquete Bienestar Total": "75.000",
     }
+
     details = {
         "Paquete Cuidado Esencial": "Medicina General, Optometría y Audiometría.",
         "Paquete Salud Activa": "Medicina General, Optometría, Audiometría y Psicología.",
         "Paquete Bienestar Total": "Medicina General, Optometría, Audiometría, Psicología y Odontología.",
     }
+
     if pkg:
         return (
             f"Claro 😊\n"
@@ -319,6 +348,7 @@ def handle_package_info(msg, session):
             f"📋 *Incluye:*\n{details[pkg]}\n\n"
             "¿Te gustaría agendar una cita?"
         )
+
     return (
         "Claro. Ofrecemos tres paquetes:\n\n"
         "• *Cuidado Esencial* — $45.000\n"
@@ -333,16 +363,19 @@ def handle_package_info(msg, session):
 def handle_booking_request(msg, session):
     session["booking_started"] = True
     session["info_mode"] = False
+
     update_session_with_info(msg, session)
     auto = auto_finalize_if_ready(session)
     if auto:
         return auto
+
     if (
         session["student_name"] and session["school"] and
         session["package"] and session["date"] and session["time"] and
         session["age"] and session["cedula"]
     ):
         return finish_booking(session)
+
     return (
         "Por supuesto. Para agendar la cita necesito los siguientes datos:\n\n"
         "– Nombre del estudiante\n"
@@ -363,6 +396,7 @@ def handle_cancel(msg, session):
 
 def handle_confirmation(msg, session):
     update_session_with_info(msg, session)
+
     required = [
         session["student_name"],
         session["school"],
@@ -370,16 +404,18 @@ def handle_confirmation(msg, session):
         session["date"],
         session["time"],
         session["age"],
-        session["cedula"]
+        session["cedula"],
     ]
     if not all(required):
         return "Perfecto, ¿me confirmas algo más?"
+
     try:
         dt_text = f"{session['date']} {session['time']}"
         dt = datetime.strptime(dt_text, "%Y-%m-%d %H:%M").replace(tzinfo=LOCAL_TZ)
         iso = dt.isoformat()
     except Exception as e:
         return f"Hubo un error procesando la fecha/hora. ({e})"
+
     save_reservation({
         "customer_name": session["student_name"],
         "package": session["package"],
@@ -390,9 +426,11 @@ def handle_confirmation(msg, session):
         "age": session["age"],
         "cedula": session["cedula"],
     })
+
     session["_ai_intent"] = None
     phone = session["phone"]
     session_state.pop(phone, None)
+
     return (
         f"¡Perfecto! La cita de {session['student_name']} quedó confirmada "
         f"en el {session['school']}, paquete {session['package']}, "
@@ -464,8 +502,10 @@ def natural_tone(text: str):
     }
     for k, v in replacements.items():
         text = text.replace(k, v)
+
     if text.strip().endswith("?") and "😊" not in text:
         text = text.rstrip("?") + " 😊?"
+
     return text
 
 def extract_student_name(msg):
@@ -524,6 +564,7 @@ def infer_time_period(raw_text: str, hour: int) -> int:
     if 1 <= hour <= 7:
         return hour + 12
     return hour
+
 def detect_correction(msg: str) -> dict:
     t = msg.lower().strip()
     corrections = {
@@ -544,8 +585,9 @@ def detect_correction(msg: str) -> dict:
             "no a las","no es a las","no es a la","quise decir a las",
             "me refería a las","no esa hora","no a esa hora",
             "no a esa fecha","me equivoqué de hora","no es mañana","no es hoy"
-        ]
+        ],
     }
+
     result = {}
     for field, words in corrections.items():
         for w in words:
@@ -599,6 +641,7 @@ def update_session_with_info(msg, session):
     extracted = ai_extract(msg)
     ai_intent = extracted.get("intent")
     session["_ai_intent"] = ai_intent
+
     new_name = extracted.get("customer_name")
     new_school = extracted.get("school_name")
     new_package = extracted.get("package")
@@ -645,20 +688,19 @@ def update_session_with_info(msg, session):
     if new_size:
         session["party_size"] = new_size
 
-    # --- AGE detection ---
+    # AGE DETECTION
     age_match = re.search(r"\b(\d{1,2})\s*(años|anos|año|ano)?\b", msg.lower())
     if age_match:
         age_num = int(age_match.group(1))
         if 1 <= age_num <= 20:
             session["age"] = age_num
 
-    # --- CEDULA detection ---
+    # CEDULA DETECTION
     ced_match = re.search(r"\b(\d{5,12})\b", msg)
     if ced_match:
         session["cedula"] = ced_match.group(1)
 
     apply_student_name_fix(session, msg)
-
 
 def build_missing_fields_message(session):
     missing = []
@@ -676,12 +718,14 @@ def build_missing_fields_message(session):
         missing.append("la edad del estudiante")
     if not session["cedula"]:
         missing.append("la cédula del estudiante")
+
     if len(missing) == 0:
         return None
     if len(missing) == 1:
         return f"Listo, solo me falta {missing[0]}. ¿Me lo compartes?"
     if len(missing) == 2:
         return f"Perfecto, me falta {missing[0]} y {missing[1]}. ¿Me los compartes?"
+
     joined = ", ".join(missing[:-1]) + " y " + missing[-1]
     return f"Perfecto, me falta {joined}. ¿Me los compartes?"
 
@@ -718,6 +762,7 @@ def continue_booking_process(msg, session):
     missing_message = build_missing_fields_message(session)
     if missing_message:
         return missing_message
+
     if is_confirmation_message(msg):
         required = [
             session["student_name"],
@@ -726,11 +771,13 @@ def continue_booking_process(msg, session):
             session["date"],
             session["time"],
             session["age"],
-            session["cedula"]
+            session["cedula"],
         ]
         if all(required):
             return handle_confirmation(msg, session)
+
         return "Antes de confirmar necesito toda la información completa 😊"
+
     return finish_booking(session)
 
 def process_message(msg, session):
@@ -743,7 +790,7 @@ def process_message(msg, session):
             return natural_tone(ans)
 
     intent = detect_intent(msg)
-    
+
     if session.get("_ai_intent") == "reserve":
         intent = "booking_request"
 
@@ -849,29 +896,37 @@ INTENTS["confirmation"]["patterns"] = [
 
 from dateutil import parser
 
+from dateutil import parser
+
 @app.post("/whatsapp")
 async def whatsapp_reply(request: Request):
     form = await request.form()
     incoming_msg = form.get("Body", "").strip()
     phone = form.get("From", "").replace("whatsapp:", "").strip()
+
     session = get_session(phone)
     response_text = process_message(incoming_msg, session)
+
     if not response_text:
-        return Response(content=str(MessagingResponse().message(
-            "Disculpa, no entendí bien. ¿Me lo repites por favor?"
-        )), media_type="application/xml")
+        return Response(content=str(
+            MessagingResponse().message("Disculpa, no entendí bien. ¿Me lo repites por favor?")
+        ), media_type="application/xml")
+
     twilio_resp = MessagingResponse()
     twilio_resp.message(response_text)
+
     return Response(content=str(twilio_resp), media_type="application/xml")
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
     rows = res.data or []
+
     fixed = []
     weekly_count = 0
     now = datetime.now(LOCAL_TZ)
     week_ago = now - timedelta(days=7)
+
     for r in rows:
         iso = r.get("datetime")
         row = r.copy()
@@ -885,10 +940,11 @@ async def dashboard(request: Request):
             row["date"] = "-"
             row["time"] = "-"
         fixed.append(row)
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "reservations": fixed,
-        "weekly_count": weekly_count
+        "weekly_count": weekly_count,
     })
 
 @app.post("/updateReservation")
@@ -896,10 +952,15 @@ async def update_reservation(update: dict):
     rid = update.get("reservation_id")
     if not rid:
         return {"success": False}
-    fields = {k: v for k, v in update.items()
-              if k != "reservation_id" and v not in ["", None, "-", "null"]}
+
+    fields = {
+        k: v for k, v in update.items()
+        if k != "reservation_id" and v not in ["", None, "-", "null"]
+    }
+
     if fields:
         supabase.table("reservations").update(fields).eq("reservation_id", rid).execute()
+
     return {"success": True}
 
 @app.post("/cancelReservation")
