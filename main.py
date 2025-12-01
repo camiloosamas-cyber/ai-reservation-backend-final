@@ -219,6 +219,11 @@ def detect_package(msg: str) -> str | None:
         # Use regex to enforce full word match for key (e.g., prevents 'total' from matching 'totalmente')
         if re.search(r"\b" + key.replace(' ', r'\s*') + r"\b", msg):
             return pkg_name
+            
+    # CRITICAL FIX 2: Psico/Psicologo detection for Salud Activa
+    # Match any word containing "psico" (e.g., psicología, psicólogo, psicosocial)
+    if "psico" in msg:
+        return PACKAGE_MAPPING["salud activa"]
 
     # 2. Price match (using whole word boundaries \b)
     if any(re.search(p, msg) for p in [r'\b45k\b', r'\b45\s*mil\b', r'\b45\.?000\b', r'\bcuarenta\s*y\s*cinco\b']):
@@ -389,8 +394,17 @@ INTENTS = {
     "confirmation": {"patterns": [], "handler": "handle_confirmation"},
 }
 
+# CRITICAL FIX 1: Use accent-safe matching and include "psicólogo"
+INTENTS["package_info"]["patterns"] = [
+    "cuanto vale","cuánto vale","cuanto cuesta","precio","valor","paquete",
+    "kit escolar",
+    "psicologia","psicología","psicologo","psicólogo",   
+    "odontologia","odontología",
+    "el verde","el azul","el amarillo",
+    "45k","60k","75k",
+    "esencial","salud activa","bienestar total"
+]
 INTENTS["greeting"]["patterns"] = ["hola","buenas","buenos dias","buen dia","buenas tardes","buenas noches","disculpa","una pregunta","consulta","informacion","quisiera saber"]
-INTENTS["package_info"]["patterns"] = ["cuanto vale","cuánto vale","cuanto cuesta","precio","valor","paquete","kit escolar","psicologia","odontologia","el verde","el azul","el amarillo","45k","60k","75k","esencial","salud activa","bienestar total"]
 INTENTS["booking_request"]["patterns"] = ["quiero reservar","quiero una cita","quiero agendar","necesito una cita","quiero el examen","me pueden reservar","agendar cita","reservar examen","separar cita"]
 INTENTS["modify"]["patterns"] = ["cambiar cita","cambiar la cita","quiero cambiar","cambiar hora","cambiar fecha","mover cita","reagendar"]
 INTENTS["cancel"]["patterns"] = ["cancelar","cancelar cita","anular","quitar la cita","ya no quiero la cita"]
@@ -668,8 +682,7 @@ def process_message(msg: str, session: dict) -> str:
         # 3. Perform Extraction (Captures data from mixed messages immediately)
         update_session_with_info(msg, session)
         
-        # FINAL CRITICAL FIX: Force booking_started=True if ANY relevant data was captured.
-        # This decouples flow activation from Intent detection.
+        # CRITICAL FIX 3: Force booking_started=True if ANY relevant data was captured.
         if session.get("student_name") or session.get("school") or session.get("package") or session.get("date") or session.get("time"):
             session["booking_started"] = True
             save_session(session)
