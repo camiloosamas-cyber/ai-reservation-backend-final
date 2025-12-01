@@ -48,6 +48,7 @@ try:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
     if not all([SUPABASE_URL, SUPABASE_SERVICE_ROLE, OPENAI_API_KEY]):
+        # This will print in your live server logs if variables are missing
         print("WARNING: Missing critical environment variables (SUPABASE_URL, SUPABASE_SERVICE_ROLE, OPENAI_API_KEY). Using NULL database clients.")
 
     if SUPABASE_URL and SUPABASE_SERVICE_ROLE:
@@ -347,7 +348,7 @@ def extract_student_name(msg: str) -> str | None:
     # We enforce a simple rule: 2-3 capitalized words, not matching common noise words.
     words = [w for w in msg.split() if w.lower() not in noise_words]
     if 2 <= len(words) <= 3 and all(w[0].isupper() for w in words):
-         return " ".join(words).title()
+          return " ".join(words).title()
 
     # Rely only on pattern matching, as per FIX 2 instruction (removed specific heuristic, but kept general pattern matching)
     return None
@@ -657,3 +658,42 @@ def process_message(msg: str, session: dict) -> str:
 
     # 8. Fallback
     return "Disculpa, no entendí bien. ¿Me lo repites o me indicas si quieres *agendar una cita* o saber sobre los *paquetes*? 😊"
+
+
+# --- 8. TWILIO WEBHOOK ENDPOINT (THE MISSING PIECE) ---
+
+@app.post("/whatsapp", response_class=Response)
+async def whatsapp_webhook(
+    request: Request,
+    WaId: str = Form(...), # Sender's WhatsApp ID (phone number)
+    Body: str = Form(...), # Message content
+):
+    """
+    Handles incoming POST requests from the Twilio WhatsApp webhook.
+    This is the critical entry point that connects Twilio to your bot logic.
+    """
+    
+    # Twilio sends the phone number in the format 'whatsapp:+1234567890'
+    # We clean it to just the digits for our database key.
+    phone = WaId.split(":")[-1].strip()
+    user_message = Body.strip()
+
+    # 1. Retrieve the user's current session state
+    session = get_session(phone)
+
+    # 2. Process the message and get the bot's response
+    bot_response_text = process_message(user_message, session)
+
+    # 3. Prepare the Twilio Messaging Response (TwiML)
+    twiml = MessagingResponse()
+    twiml.message(bot_response_text)
+
+    # 4. Return the TwiML response
+    return Response(content=str(twiml), media_type="application/xml")
+
+# --- 9. HEALTH CHECK (Optional, but useful for deployment status) ---
+
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    """Simple health check endpoint."""
+    return f"<h1>AI Reservation System is Running</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
