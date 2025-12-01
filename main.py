@@ -523,14 +523,15 @@ def handle_package_info(msg, session):
 
     # 2️⃣ If a package was detected → return that
     if pkg and pkg in prices:
-        # Crucial: Save the detected package back to the session if it wasn't already there
-        # This acts as a secondary extraction/confirmation step.
         session["package"] = pkg
-        save_session(session)
-
-        # Remove the internal info_mode flag, as the user is now active in the flow.
-        session["info_mode"] = False
         
+        # FIX APLICADO: If user included booking data in this message, force start booking flow
+        if session.get("student_name") or session.get("school") or session.get("date") or session.get("time"):
+            session["booking_started"] = True
+            
+        session["info_mode"] = False
+        save_session(session) # Save changes before returning
+
         return (
             f"Claro 😊\n"
             f"*{pkg}* cuesta *${prices[pkg]}*.\n\n"
@@ -698,6 +699,7 @@ def process_message(msg: str, session: dict) -> str:
         update_session_with_info(msg, session)
         
         # CRITICAL FIX 3: Force booking_started=True if ANY relevant data was captured.
+        # This handles cases where user starts with a simple query, then sends data.
         if session.get("student_name") or session.get("school") or session.get("package") or session.get("date") or session.get("time"):
             session["booking_started"] = True
             save_session(session)
