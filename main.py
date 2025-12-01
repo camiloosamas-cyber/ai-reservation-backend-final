@@ -99,20 +99,31 @@ def get_session(phone: str) -> dict:
 
     try:
         response = supabase.table(SESSION_TABLE).select("data").eq("phone", phone).maybe_single().execute()
-        if response.data and response.data.get('data'):
-            session_data = response.data['data']
-            session_data['phone'] = phone # Ensure phone is always present
-            # Merge with default to ensure all keys are present for new flags
-            return {**DEFAULT_SESSION, **session_data} 
-        
-        # New session
-        new_session = DEFAULT_SESSION.copy()
-        new_session['phone'] = phone
-        return new_session
+
+        # SAFETY CHECKS — THIS FIXES THE ERROR from Supabase returning unexpected data
+        # 1. Check if response is None or lacks the 'data' attribute
+        if not response or not hasattr(response, "data") or response.data is None:
+            new_session = DEFAULT_SESSION.copy()
+            new_session['phone'] = phone
+            return new_session
+
+        # 2. Check if the row exists but the 'data' field itself is None
+        if response.data.get("data") is None:
+            new_session = DEFAULT_SESSION.copy()
+            new_session['phone'] = phone
+            return new_session
+
+        # 3. If correct data exists
+        session_data = response.data["data"]
+        session_data["phone"] = phone
+        # Merge with default to ensure all keys (like new flags) are present
+        return {**DEFAULT_SESSION, **session_data}
+
     except Exception as e:
+        # Fallback in case of network/connection errors
         print(f"Error retrieving session for {phone}: {e}")
         new_session = DEFAULT_SESSION.copy()
-        new_session['phone'] = phone
+        new_session["phone"] = phone
         return new_session
 
 def save_session(session: dict):
@@ -699,7 +710,6 @@ def process_message(msg: str, session: dict) -> str:
         update_session_with_info(msg, session)
         
         # CRITICAL FIX 3: Force booking_started=True if ANY relevant data was captured.
-        # This handles cases where user starts with a simple query, then sends data.
         if session.get("student_name") or session.get("school") or session.get("package") or session.get("date") or session.get("time"):
             session["booking_started"] = True
             save_session(session)
