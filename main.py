@@ -294,6 +294,7 @@ def extract_school_name(msg: str) -> str | None:
             else:
                 name = m.group(2).strip()
 
+            # Split only by explicit punctuation or very clear separators (like date/time markers)
             name = re.split(r"[,.!?\n]| a las | a la | mañana | hoy | pasado mañana", name)[0]
             if name and len(name.split()) > 1:
                 return name.title().strip()
@@ -316,38 +317,47 @@ def extract_age_cedula(msg: str, session: dict):
         if ced_match:
             session["cedula"] = ced_match.group(1)
 
+
 def extract_student_name(msg: str) -> str | None:
     """
-    Finds a likely student name.
+    Extracts student name from natural Spanish messages like:
+    - "para mi hijo Samuel"
+    - "es para mi hija Valentina"
+    - "mi hijo se llama Juan"
+    - "para mi hijo Samuel del Colegio San Luis mañana a las 3pm"
     """
-    msg_lower = msg.lower()
-    
+    text = msg.lower()
+
+    # 1. Capture pattern – VERY flexible
+    pattern = r"(?:mi\s+(?:hijo|hija)\s+(?:se\s+llama\s+)?|para\s+mi\s+(?:hijo|hija)\s+|es\s+para\s+(?:mi\s+)?(?:hijo|hija)\s+)([a-záéíóúñ ]+)"
+    m = re.search(pattern, text)
+    if m:
+        raw = m.group(1).strip()
+
+        # 2. Cut trailing context (school, date, time, "del colegio...", "mañana", etc)
+        # Includes checks for school, time markers (am/pm, H:M) and date markers.
+        raw = re.split(
+            r"(del\s+colegio|colegio|gimnasio|liceo|instituto|escuela|a\s+las|a\s+la|mañana|hoy|pasado\s+mañana|\d{1,2}\s*(am|pm)|\d{1,2}:\d{2})",
+            raw
+        )[0].strip()
+
+        # 3. Clean extra spaces and leave only 1–3 name words
+        words = raw.split()
+        if 1 <= len(words) <= 3:
+            return " ".join(w.capitalize() for w in words)
+
+    # 4. Fallback: Detect if the user sent only capitalized words (e.g., "Juan Perez")
+    # This prevents regression for simple, name-only messages.
     noise_words = [
         "quiero", "cita", "reservar", "agendar", "necesito", "la", "el", "una", "un", "hora", "fecha",
         "dia", "día", "por", "favor", "gracias", "me", "referia", "refería", "perdon", "perdón", "mejor",
         "si", "sí", "ok", "dale", "listo", "perfecto", "super", "claro", "de una", "bueno", "mañana",
-        "tarde", "noche", "am", "pm", "es para", "para mi", "hijo", "hija", "mi", "se llama"
+        "tarde", "noche", "am", "pm", "es para", "para mi", "mi", "se llama", "hijo", "hija" 
     ]
     
-    # 1. Pattern matching (e.g., 'es para mi hijo X')
-    name_patterns = [
-        r"(mi\s+(hijo|hija)\s+(es\s+)?|se\s+llama|es\s+para)\s+([a-záéíóúñ ]+)",
-    ]
-    for p in name_patterns:
-        m = re.search(p, msg_lower)
-        if m and len(m.groups()) >= 4:
-            raw_name = m.group(4).strip()
-            if raw_name:
-                cleaned = raw_name.split(",")[0].strip()
-                words = [w for w in cleaned.split() if w not in noise_words]
-                if 1 <= len(words) <= 3:
-                    return " ".join(words).title()
-
-    # 2. If the user only sends a name (e.g., "Juan Perez"), try to capture it if it looks like a name
-    # We enforce a simple rule: 2-3 capitalized words, not matching common noise words.
     words = [w for w in msg.split() if w.lower() not in noise_words]
     if 2 <= len(words) <= 3 and all(w[0].isupper() for w in words):
-          return " ".join(words).title()
+        return " ".join(words).title()
 
     return None
 
@@ -394,7 +404,7 @@ INTENTS = {
     "confirmation": {"patterns": [], "handler": "handle_confirmation"},
 }
 
-# CRITICAL FIX 1: Use accent-safe matching and include "psicólogo"
+# Paquetes y acentos corregidos
 INTENTS["package_info"]["patterns"] = [
     "cuanto vale","cuánto vale","cuanto cuesta","precio","valor","paquete",
     "kit escolar",
@@ -408,8 +418,13 @@ INTENTS["greeting"]["patterns"] = ["hola","buenas","buenos dias","buen dia","bue
 INTENTS["booking_request"]["patterns"] = ["quiero reservar","quiero una cita","quiero agendar","necesito una cita","quiero el examen","me pueden reservar","agendar cita","reservar examen","separar cita"]
 INTENTS["modify"]["patterns"] = ["cambiar cita","cambiar la cita","quiero cambiar","cambiar hora","cambiar fecha","mover cita","reagendar"]
 INTENTS["cancel"]["patterns"] = ["cancelar","cancelar cita","anular","quitar la cita","ya no quiero la cita"]
-# Confirmation patterns must be exact matches to prevent pollution
-INTENTS["confirmation"]["patterns"] = ["confirmo","sí confirmo","si confirmo","confirmar","confirmada","confirmado","si","sí","ok","dale","listo","perfecto","super","claro","de una","por supuesto","está bien","esta bien","si está bien","sí está bien"] 
+# ❗ FIX APLICADO: Confirmation patterns must be STRICT, only explicit commands.
+INTENTS["confirmation"]["patterns"] = [
+    "confirmo",
+    "sí confirmo",
+    "si confirmo",
+    "confirmar"
+] 
 
 def detect_explicit_intent(msg: str, session: dict) -> str | None:
     """
@@ -429,7 +444,7 @@ def detect_explicit_intent(msg: str, session: dict) -> str | None:
                     # Only return intent if awaiting confirmation is True (safe guard)
                     if session.get("awaiting_confirmation"):
                         return intent
-                    # If not awaiting confirmation, an isolated "sí" is likely a greeting/acknowledgement, not an intent block
+                    # If not awaiting confirmation, an isolated word is likely a greeting/acknowledgement, not an intent block
                     continue 
 
             else:
@@ -475,7 +490,7 @@ def finish_booking_summary(session: dict) -> str:
         f"⏰ Hora: {session.get('time', 'N/A')}\n"
         f"🧒 Edad: {session.get('age', 'N/A')}\n"
         f"🪪 Cédula: {session.get('cedula', 'N/A')}\n\n"
-        f"¿*Deseas confirmar la cita* con estos datos? (Responde *Sí* o *Confirmar*)"
+        f"¿*Deseas confirmar la cita* con estos datos? (Responde *Confirmo*)"
     )
 
 # --- 6. HANDLERS (State Machine Steps) ---
@@ -600,7 +615,7 @@ def handle_cancel(msg, session):
     session["awaiting_confirmation"] = False
     # In a real app, this would check the DB for an active booking.
     # For now, it just prompts for confirmation.
-    return "Perfecto, ¿confirmas que deseas *cancelar* completamente la cita agendada? (Responde *Sí* si estás seguro)"
+    return "Perfecto, ¿confirmas que deseas *cancelar* completamente la cita agendada? (Responde *Sí Confirmo* si estás seguro)"
 
 def handle_contextual(msg: str, session: dict) -> str | None:
     """Handles non-booking questions (hours, location, process)."""
