@@ -262,10 +262,15 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
     
     if dt_local:
         
-        # FIX: Robust regex to capture explicit time, including formats like "8am" (no space).
-        # Catches: 8am, 8:00pm, 15h, 10 mañana
+        # FIX: Robust regex to capture ALL time formats including "8am" (no space), "8 a.m.", "8pm", "20:00"
         explicit_time_found = re.search(
-            r'\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|mañana|tarde|noche|hr|hrs|h)\b', 
+            r'\b\d{1,2}'
+            r'(?:[:h]\d{2})?'                 # 8:00, 8h30
+            r'\s*(?:a\.?m\.?|p\.?m\.?|am|pm)?'  # am, a.m., pm
+            r'|'
+            r'\b\d{1,2}\s*(mañana|tarde|noche)\b'  # 8 mañana, 7 tarde, etc.
+            r'|'
+            r'a\s+las\s+\d{1,2}(?::\d{2})?',        # "a las 8", "a las 8:30"
             msg.lower()
         )
         
