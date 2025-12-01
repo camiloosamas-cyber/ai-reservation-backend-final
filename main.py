@@ -412,7 +412,11 @@ def detect_explicit_intent(msg: str, session: dict) -> str | None:
             if intent == "confirmation":
                 # CRITICAL FIX: Confirmation intent is only detected if the message is a PURE match.
                 if msg_stripped == p:
-                    return intent 
+                    # Only return intent if awaiting confirmation is True (safe guard)
+                    if session.get("awaiting_confirmation"):
+                        return intent
+                    # If not awaiting confirmation, an isolated "sí" is likely a greeting/acknowledgement, not an intent block
+                    continue 
 
             else:
                 # For all other intents, use the standard substring match
@@ -500,11 +504,8 @@ def handle_package_info(msg, session):
             f"📋 *Incluye:*\n{details[pkg]}\n\n"
         )
         
-        # If data was extracted (name, date, etc.), transition to booking
-        if session.get("student_name") or session.get("date"):
-            # Set booking_started=True and proceed with the booking flow after this response
-            session["booking_started"] = True
-            save_session(session)
+        # If data was extracted, the booking flow is already activated in process_message.
+        if session["booking_started"]:
             return response + "Ya capturé los datos que me diste. ¿Deseas continuar con el agendamiento?"
         
         return response + "¿Te gustaría agendar una cita?"
@@ -522,7 +523,7 @@ def handle_package_info(msg, session):
     )
 
 def handle_booking_request(msg, session):
-    # booking_started is set here to ensure the booking flow takes over
+    # booking_started is set here to ensure the booking flow takes over (in case no data was sent initially)
     session["booking_started"] = True
     session["info_mode"] = False
     session["awaiting_confirmation"] = False 
@@ -539,7 +540,7 @@ def handle_booking_request(msg, session):
 
 
 def handle_confirmation(msg, session):
-    # This handler should only be called if awaiting_confirmation is True
+    # This handler should only be called if awaiting_confirmation is True and the message was a pure confirmation
     
     # 1. Final check for completeness (redundant but safe)
     required = [session.get(f) for f in ["student_name", "school", "package", "date", "time", "age", "cedula"]]
@@ -667,10 +668,9 @@ def process_message(msg: str, session: dict) -> str:
         # 3. Perform Extraction (Captures data from mixed messages immediately)
         update_session_with_info(msg, session)
         
-        # If this message was a mixed intent (e.g., booking + info), 
-        # the session now has the data. We must ensure the booking flow starts.
-        # Starting the flow if any of the three main data points exist (name, date, package)
-        if intent in ["booking_request", "modify"] or session.get("package") or session.get("student_name") or session.get("date"):
+        # FINAL CRITICAL FIX: Force booking_started=True if ANY relevant data was captured.
+        # This decouples flow activation from Intent detection.
+        if session.get("student_name") or session.get("school") or session.get("package") or session.get("date") or session.get("time"):
             session["booking_started"] = True
             save_session(session)
     
@@ -685,7 +685,6 @@ def process_message(msg: str, session: dict) -> str:
         
         # A. Handle Confirmation (Only if state flag is set AND it was a pure confirmation)
         if intent == "confirmation" and session.get("awaiting_confirmation"):
-            # is_pure_confirmation is already true here because of the detect_explicit_intent logic
             return natural_tone(handler(msg, session))
         
         # B. Handle other high-level intents.
