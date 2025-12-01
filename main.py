@@ -418,7 +418,7 @@ INTENTS["greeting"]["patterns"] = ["hola","buenas","buenos dias","buen dia","bue
 INTENTS["booking_request"]["patterns"] = ["quiero reservar","quiero una cita","quiero agendar","necesito una cita","quiero el examen","me pueden reservar","agendar cita","reservar examen","separar cita"]
 INTENTS["modify"]["patterns"] = ["cambiar cita","cambiar la cita","quiero cambiar","cambiar hora","cambiar fecha","mover cita","reagendar"]
 INTENTS["cancel"]["patterns"] = ["cancelar","cancelar cita","anular","quitar la cita","ya no quiero la cita"]
-# ❗ FIX APLICADO: Confirmation patterns must be STRICT, only explicit commands.
+# FIX APLICADO: Confirmation patterns must be STRICT, only explicit commands.
 INTENTS["confirmation"]["patterns"] = [
     "confirmo",
     "sí confirmo",
@@ -439,7 +439,7 @@ def detect_explicit_intent(msg: str, session: dict) -> str | None:
         for p in INTENTS[intent]["patterns"]:
             
             if intent == "confirmation":
-                # CRITICAL FIX: Confirmation intent is only detected if the message is a PURE match.
+                # Confirmation intent is only detected if the message is a PURE match.
                 if msg_stripped == p:
                     # Only return intent if awaiting confirmation is True (safe guard)
                     if session.get("awaiting_confirmation"):
@@ -502,17 +502,13 @@ def handle_greeting(msg, session):
     return "Claro que sí, ¿en qué te puedo ayudar?"
 
 def handle_package_info(msg, session):
-    # If the message contained data (e.g., package or name), extraction already captured it.
-    session["info_mode"] = True
-    # Reset confirmation flag if user asks for info mid-flow
+    # Reset confirmation state
     session["awaiting_confirmation"] = False
-    
-    # Check session for package, in case it was extracted from the message
-    pkg = session.get("package") 
-    
-    # If the package was not in the session, try detecting it from the raw message (for simple price inquiries)
-    if not pkg:
-        pkg = detect_package(msg)
+
+    # 1️⃣ Detect package ALWAYS (session or message)
+    # Call detect_package(msg) first to see if the user is asking about a *new* package
+    # then fallback to session.get("package") if the current message didn't mention one.
+    pkg = detect_package(msg) or session.get("package")
 
     prices = {
         "Paquete Cuidado Esencial": "45.000 COP",
@@ -525,29 +521,33 @@ def handle_package_info(msg, session):
         "Paquete Bienestar Total": "Medicina General, Optometría, Audiometría, Psicología y Odontología.",
     }
 
+    # 2️⃣ If a package was detected → return that
     if pkg and pkg in prices:
-        # If a package was confirmed (either by session or detection)
-        response = (
+        # Crucial: Save the detected package back to the session if it wasn't already there
+        # This acts as a secondary extraction/confirmation step.
+        session["package"] = pkg
+        save_session(session)
+
+        # Remove the internal info_mode flag, as the user is now active in the flow.
+        session["info_mode"] = False
+        
+        return (
             f"Claro 😊\n"
             f"*{pkg}* cuesta *${prices[pkg]}*.\n\n"
             f"📋 *Incluye:*\n{details[pkg]}\n\n"
+            "¿Te gustaría agendar una cita?"
         )
-        
-        # If data was extracted, the booking flow is already activated in process_message.
-        if session["booking_started"]:
-            return response + "Ya capturé los datos que me diste. ¿Deseas continuar con el agendamiento?"
-        
-        return response + "¿Te gustaría agendar una cita?"
 
-    # General package list if no specific package was detected
+    # 3️⃣ Otherwise → return generic list
+    # If no package was detected (neither in session nor in msg), return the full list.
     return (
         "Claro. Ofrecemos tres paquetes de exámenes escolares:\n\n"
         "• *Cuidado Esencial* (Verde) — $45.000 COP\n"
-        "  _Incluye: Medicina, Optometría, Audiometría_\n\n"
+        "  _Incluye: Medicina, Optometría, Audiometría_\n\n"
         "• *Salud Activa* (Azul) — $60.000 COP\n"
-        "  _Incluye: Paquete Esencial + Psicología_\n\n"
+        "  _Incluye: Paquete Esencial + Psicología_\n\n"
         "• *Bienestar Total* (Amarillo) — $75.000 COP\n"
-        "  _Incluye: Paquete Activa + Odontología_\n\n"
+        "  _Incluye: Paquete Activa + Odontología_\n\n"
         "¿Cuál te interesa o quieres agendar?"
     )
 
