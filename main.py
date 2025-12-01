@@ -1,24 +1,39 @@
+import os
+import json
+import re
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-import json, os, re
 import dateparser
-
-from supabase import create_client, Client
+from supabase import create_client, Client, PostgrestAPIError
 from openai import OpenAI
 from twilio.twiml.messaging_response import MessagingResponse
+from dateutil import parser as dateutil_parser
 
-app = FastAPI()
+# --- 1. CONFIGURATION & INITIALIZATION ---
+
+# Set up the environment (critical for external service access)
+# This will ensure the script works regardless of where it is executed from.
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+app = FastAPI(title="AI Reservation System", version="1.0.0")
+
+# Timezone: Must be explicitly defined and used consistently
+try:
+    LOCAL_TZ = ZoneInfo("America/Bogota")
+except ZoneInfoNotFoundError:
+    LOCAL_TZ = ZoneInfo("UTC") # Fallback
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
+# CORS setup
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,272 +41,381 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-LOCAL_TZ = ZoneInfo("America/Bogota")
+# External Service Initialization (API Keys must be in environment variables)
+try:
+    # Use environment variables for secure access
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-supabase: Client = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_SERVICE_ROLE")
-)
+    if not all([SUPABASE_URL, SUPABASE_SERVICE_ROLE, OPENAI_API_KEY]):
+        # WARNING: In a production environment like Render, these MUST be set.
+        # This print statement is a warning for local testing.
+        print("WARNING: Missing critical environment variables (SUPABASE_URL, SUPABASE_SERVICE_ROLE, OPENAI_API_KEY). Using NULL database clients.")
+        # Raise an error if you want the app to fail hard on missing keys:
+        # raise ValueError("Missing critical environment variables...")
+
+    if SUPABASE_URL and SUPABASE_SERVICE_ROLE:
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
+    else:
+        supabase = None # Safety measure
+
+    if OPENAI_API_KEY:
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    else:
+        openai_client = None # Safety measure
+
+
+except Exception as e:
+    print(f"FATAL ERROR during external service initialization: {e}")
+    supabase = None
+    openai_client = None
 
 TABLE_LIMIT = 10
+RESERVATION_TABLE = "reservations"
+SESSION_TABLE = "sessions"
+BUSINESS_ID = 2 # Fixed for this specific business instance
+
+# --- 2. DATABASE & SESSION MANAGEMENT (SCALABILITY FIX) ---
+
+# CRITICAL FIX: Session management is now externalized to Supabase
+DEFAULT_SESSION = {
+    "phone": None,
+    "student_name": None,
+    "school": None,
+    "package": None,
+    "date": None, # YYYY-MM-DD
+    "time": None, # HH:MM (24h format)
+    "age": None,
+    "cedula": None,
+    "booking_started": False,
+    "info_mode": False,
+    "greeted": False,
+}
+
+def get_session(phone: str) -> dict:
+    """Retrieves session state from Supabase or initializes a new one."""
+    if not supabase: 
+        # Emergency fallback for missing connection (sessions will NOT persist)
+        new_session = DEFAULT_SESSION.copy()
+        new_session['phone'] = phone
+        return new_session
+
+    try:
+        response = supabase.table(SESSION_TABLE).select("data").eq("phone", phone).maybe_single().execute()
+        if response.data and response.data.get('data'):
+            # The data field stores the session dictionary as JSON
+            session_data = response.data['data']
+            session_data['phone'] = phone # Ensure phone is always present
+            return session_data
+        
+        # New session
+        new_session = DEFAULT_SESSION.copy()
+        new_session['phone'] = phone
+        return new_session
+    except Exception as e:
+        print(f"Error retrieving session for {phone}: {e}")
+        new_session = DEFAULT_SESSION.copy()
+        new_session['phone'] = phone
+        return new_session
+
+def save_session(session: dict):
+    """Saves the current session state back to Supabase."""
+    if not supabase: return # Cannot save without connection
+    
+    phone = session.get("phone")
+    if not phone: return
+
+    # Store the entire session dictionary under the 'data' column
+    data_to_store = {k: v for k, v in session.items() if k != 'phone'}
+
+    try:
+        # Upsert: insert if phone doesn't exist, update if it does
+        supabase.table(SESSION_TABLE).upsert({
+            "phone": phone,
+            "data": data_to_store,
+            "last_updated": datetime.now(LOCAL_TZ).isoformat()
+        }).execute()
+    except Exception as e:
+        print(f"Error saving session for {phone}: {e}")
+
+# --- 3. RESERVATION HELPERS ---
 
 def assign_table(iso_local: str):
-    booked = supabase.table("reservations").select("table_number").eq("datetime", iso_local).execute()
-    taken = {r["table_number"] for r in (booked.data or [])}
-    for i in range(1, TABLE_LIMIT + 1):
-        t = f"T{i}"
-        if t not in taken:
-            return t
-    return None
+    """Assigns the first available table for a specific datetime."""
+    try:
+        # Query for all tables booked for the exact time slot
+        booked = supabase.table(RESERVATION_TABLE).select("table_number").eq("datetime", iso_local).execute()
+        taken = {r["table_number"] for r in (booked.data or [])}
+        
+        for i in range(1, TABLE_LIMIT + 1):
+            t = f"T{i}"
+            if t not in taken:
+                return t
+        return None
+    except Exception as e:
+        print(f"Database error during table assignment: {e}")
+        return None
 
 def save_reservation(data: dict):
+    """
+    Saves the final confirmed reservation.
+    Timezone FIX: Ensures the ISO string is timezone-aware and in Bogotá time.
+    """
+    if not supabase: return "❌ Error de conexión con la base de datos."
+
     try:
-        raw_dt = datetime.fromisoformat(data["datetime"])
-        if raw_dt.tzinfo is None:
-            dt_local = raw_dt.replace(tzinfo=LOCAL_TZ)
-        else:
-            dt_local = raw_dt.astimezone(LOCAL_TZ)
+        # Convert YYYY-MM-DD HH:MM string back to a timezone-aware datetime object
+        dt_text = f"{data['date']} {data['time']}"
+        # Parse the string and attach the LOCAL_TZ (Bogotá)
+        dt_local = datetime.strptime(dt_text, "%Y-%m-%d %H:%M").replace(tzinfo=LOCAL_TZ)
         iso_to_store = dt_local.isoformat()
     except Exception:
-        return "❌ Error procesando la fecha."
+        return "❌ Error interno procesando la fecha final."
 
     table = data.get("table_number") or assign_table(iso_to_store)
     if not table:
         return "❌ No hay mesas disponibles para ese horario."
 
-    supabase.table("reservations").insert({
-        "customer_name": data["customer_name"],
-        "customer_email": "",
-        "contact_phone": "",
-        "datetime": iso_to_store,
-        "party_size": int(data["party_size"]),
-        "table_number": table,
-        "notes": "",
-        "status": "confirmado",
-        "business_id": 2,
-        "package": data.get("package", ""),
-        "school_name": data.get("school_name", ""),
-        "age": data.get("age", None),
-        "cedula": data.get("cedula", None),
-    }).execute()
+    try:
+        supabase.table(RESERVATION_TABLE).insert({
+            "customer_name": data["student_name"],
+            "contact_phone": data["phone"], # Use the user's phone for contact
+            "datetime": iso_to_store,
+            "party_size": int(data.get("party_size") or 1), # Default to 1 if not extracted
+            "table_number": table,
+            "status": "confirmado",
+            "business_id": BUSINESS_ID,
+            "package": data.get("package", ""),
+            "school_name": data.get("school", ""),
+            "age": data.get("age", None),
+            "cedula": data.get("cedula", None),
+        }).execute()
 
-    return (
-        "✅ *¡Reserva confirmada!*\n"
-        f"👤 {data['customer_name']}\n"
-        f"👥 {data['party_size']} estudiantes\n"
-        f"📦 {data.get('package','')}\n"
-        f"🏫 {data.get('school_name','')}\n"
-        f"🗓 {dt_local.strftime('%Y-%m-%d %H:%M')}"
-    )
+        # SUCCESSFUL RESERVATION MESSAGE
+        return (
+            "✅ *¡Reserva confirmada!*\n"
+            f"👤 Estudiante: {data['student_name']}\n"
+            f"🎒 Colegio: {data.get('school', 'N/A')}\n"
+            f"📦 Paquete: {data.get('package','N/A')}\n"
+            f"📅 Fecha/Hora: {dt_local.strftime('%Y-%m-%d %H:%M')} ({LOCAL_TZ.key.split('/')[-1]})"
+        )
+    except PostgrestAPIError as e:
+        print(f"Supabase error inserting reservation: {e}")
+        return "❌ Error al guardar la reserva en la base de datos."
+    except Exception as e:
+        print(f"Unknown error in save_reservation: {e}")
+        return "❌ Error inesperado al confirmar la reserva."
 
-def detect_package(msg: str):
+# --- 4. DATA EXTRACTION & NLP (ROBUSTNESS FIX) ---
+
+PACKAGE_MAPPING = {
+    "cuidado esencial": "Paquete Cuidado Esencial", # $45.000 (verde)
+    "salud activa": "Paquete Salud Activa",        # $60.000 (azul)
+    "bienestar total": "Paquete Bienestar Total",  # $75.000 (amarillo)
+}
+
+def detect_package(msg: str) -> str | None:
+    """Robustly detects the package based on keywords or price."""
     msg = msg.lower().strip()
+    
+    # 1. Direct name match (using whole word boundaries)
+    for key, pkg_name in PACKAGE_MAPPING.items():
+        if re.search(r"\b" + key.replace(' ', r'\s*') + r"\b", msg):
+            return pkg_name
 
-    if any(w in msg for w in ["cuidado esencial", "esencial", "kit escolar"]):
-        return "Paquete Cuidado Esencial"
-    if any(w in msg for w in ["salud activa", "activa"]):
-        return "Paquete Salud Activa"
-    if any(w in msg for w in ["bienestar total", "total", "completo"]):
-        return "Paquete Bienestar Total"
-
-    if any(w in msg for w in ["45", "45k", "45 mil", "45mil"]):
-        return "Paquete Cuidado Esencial"
-    if any(w in msg for w in ["60", "60k", "60 mil", "60mil"]):
-        return "Paquete Salud Activa"
-    if any(w in msg for w in ["75", "75k", "75 mil", "75mil"]):
-        return "Paquete Bienestar Total"
-
-    if "odont" in msg:
-        return "Paquete Bienestar Total"
-    if "psico" in msg:
-        return "Paquete Salud Activa"
-
-    if any(w in msg for w in ["audio", "optometr", "medicina"]):
-        return "Paquete Cuidado Esencial"
-
-    if "verde" in msg:
-        return "Paquete Cuidado Esencial"
-    if "azul" in msg:
-        return "Paquete Salud Activa"
-    if "amarillo" in msg:
-        return "Paquete Bienestar Total"
+    # 2. Price match
+    if any(re.search(p, msg) for p in [r'\b45k\b', r'\b45\s*mil\b', r'\b45\.?000\b']):
+        return PACKAGE_MAPPING["cuidado esencial"]
+    if any(re.search(p, msg) for p in [r'\b60k\b', r'\b60\s*mil\b', r'\b60\.?000\b']):
+        return PACKAGE_MAPPING["salud activa"]
+    if any(re.search(p, msg) for p in [r'\b75k\b', r'\b75\s*mil\b', r'\b75\.?000\b']):
+        return PACKAGE_MAPPING["bienestar total"]
+        
+    # 3. Component/Color match (less reliable, but kept from original)
+    if "odont" in msg or "amarillo" in msg or "total" in msg:
+        return PACKAGE_MAPPING["bienestar total"]
+    if "psico" in msg or "azul" in msg or "activa" in msg:
+        return PACKAGE_MAPPING["salud activa"]
+    if any(w in msg for w in ["audio", "optometr", "medicina", "verde", "esencial"]):
+        return PACKAGE_MAPPING["cuidado esencial"]
 
     return None
-def ai_extract(user_msg: str):
-    msg = user_msg.lower().strip()
 
-    noise_words = [
-        "no perdon", "no perdón", "perdon", "perdón",
-        "quise decir", "me referia", "me refería",
-        "quise poner", "quise mandar"
-    ]
-    for w in noise_words:
-        msg = msg.replace(w, "")
-
-    detected_package = detect_package(msg)
-    if detected_package:
-        for w in ["esencial", "activa", "total", "bienestar", "verde", "azul", "amarillo"]:
-            msg = msg.replace(w, "")
-
-    prompt = f"""
-Extrae SOLO la fecha y hora exacta del mensaje.
-Devuelve exactamente este JSON:
-{{
-"fecha_hora": "texto exacto que contiene fecha y hora"
-}}
-Si no encuentras fecha o hora, deja "".
-Mensaje:
-\"\"\"{user_msg}\"\"\"
-"""
-    try:
-        r = client.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0,
-            messages=[{"role": "system", "content": prompt}]
-        )
-        result = json.loads(r.choices[0].message.content)
-        dt_text = result.get("fecha_hora", "")
-    except:
-        dt_text = ""
-
-    dt_local = None
-    if dt_text:
-        try:
-            dt_local = dateparser.parse(
-                dt_text,
-                settings={
-                    "RETURN_AS_TIMEZONE_AWARE": True,
-                    "TIMEZONE": "America/Bogota",
-                    "PREFER_DATES_FROM": "future"
-                }
-            )
-        except:
-            dt_local = None
+def extract_datetime_info(msg: str) -> tuple[str, str]:
+    """
+    Uses dateparser to extract date and time.
+    FIX: Removed costly GPT-4o-mini call for this simple extraction.
+    """
+    dt_local = dateparser.parse(
+        msg,
+        settings={
+            "TIMEZONE": LOCAL_TZ.key, # Use Bogotá timezone
+            "TO_TIMEZONE": LOCAL_TZ.key, # Ensure output is in Bogotá timezone
+            "RETURN_AS_TIMEZONE_AWARE": True,
+            "PREFER_DATES_FROM": "future",
+            "STRICT_PARSING": False, # Allow flexible parsing
+            "PREFER_DAY_OF_MONTH": "first"
+        }
+    )
 
     if dt_local:
-        has_minutes = re.search(r":\d{2}", dt_text)
-        if not has_minutes:
-            dt_local = dt_local.replace(minute=0)
+        # Apply normalization: If only date is provided, default to a reasonable time (e.g., 9:00 AM)
+        if not re.search(r'\d{1,2}(:\d{2})?\s*(am|pm|a\.m|p\.m|mañana|tarde|noche)', msg.lower()):
+             # If no time is explicitly mentioned, set to 9:00 AM for safety, checking if it is in the past
+            dt_local = dt_local.replace(hour=9, minute=0, second=0, microsecond=0)
+            if dt_local < datetime.now(LOCAL_TZ) - timedelta(minutes=5):
+                 # If 9 AM today is in the past, propose 9 AM tomorrow
+                dt_local += timedelta(days=1)
+                dt_local = dt_local.replace(hour=9, minute=0)
 
-    final_iso = dt_local.isoformat() if dt_local else ""
+        # Final check to ensure it's in the correct timezone (Bogota)
+        dt_local = dt_local.astimezone(LOCAL_TZ)
+        return dt_local.strftime("%Y-%m-%d"), dt_local.strftime("%H:%M")
+    
+    return "", ""
 
-    if dt_text:
-        msg = msg.replace(dt_text.lower(), "")
-
-    for w in ["mañana", "pasado mañana", "hoy", "tarde", "noche", "am", "pm", "a las", "a la", "este", "próximo"]:
-        msg = msg.replace(w, "")
-
-    # --- EXTRA school extractor (raw before cleaning)
-    school_name = ""
-    school_raw = re.search(r"colegio\s+([a-záéíóúñ0-9 ]+)", user_msg.lower())
-    if school_raw:
-        school_name = school_raw.group(1).strip()
-        school_name = re.split(r"[,.!?\n]", school_name)[0].title()
-
-    # Now fallback to cleaned message only if school_name is still empty
-    if not school_name:
-        school_patterns = [
-            r"colegio\s+[a-záéíóúñ0-9 ]+",
-            r"gimnasio\s+[a-záéíóúñ0-9 ]+",
-            r"liceo\s+[a-záéíóúñ0-9 ]+",
-            r"instituto\s+[a-záéíóúñ0-9 ]+"
-        ]
-        for p in school_patterns:
-            m = re.search(p, msg)
-            if m:
-                raw = m.group(0)
-                raw = re.split(r"[,.!\n]", raw)[0]
-                school_name = raw.strip().title()
-                msg = msg.replace(raw.lower(), "")
-                break
-
-    customer_name = ""
-    name_stopwords = [
-        "quiero","cita","reservar","agendar","necesito","la","el","una","un","hora","fecha",
-        "dia","día","por","favor","gracias","me","referia","refería","perdon","perdón","mejor"
-    ]
-    name_patterns = [
-        r"mi hijo ([a-záéíóúñ ]+)",
-        r"mi hija ([a-záéíóúñ ]+)",
-        r"es para ([a-záéíóúñ ]+)",
-        r"se llama ([a-záéíóúñ ]+)"
+def extract_school_name(msg: str) -> str | None:
+    """Robustly extracts school name using multiple patterns."""
+    msg_clean = msg.lower()
+    
+    # Prioritize 'colegio X' over raw names
+    patterns = [
+        r"(del\s+|de\s+|la\s+)?(colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+)",
+        r"(colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+)",
     ]
 
-    def clean_name(n):
-        n = n.strip()
-        n = re.split(r"[,.!\n]", n)[0]
-        words = n.split()
-        words = [w for w in words if w not in name_stopwords]
-        if len(words) == 0:
-            return ""
-        if len(words) > 3:
-            words = words[:3]
-        return " ".join(words).title()
-
-    for p in name_patterns:
-        m = re.search(p, msg)
+    for p in patterns:
+        m = re.search(p, msg_clean)
         if m:
-            candidate = clean_name(m.group(1))
-            if candidate:
-                customer_name = candidate
-                break
+            # Group 3 is usually the name part after the school type
+            if len(m.groups()) == 3:
+                name = m.group(3).strip()
+            else:
+                # Handle pattern without prefix group
+                name = m.group(2).strip()
 
-    if not customer_name:
-        if re.fullmatch(r"[a-záéíóúñ ]{2,30}", msg.strip()):
-            candidate = clean_name(msg.strip())
-            if candidate:
-                customer_name = candidate
+            # Clean up the end of the name (remove trailing punctuation or common words)
+            name = re.split(r"[,.!?\n]| a las | a la | mañana | hoy | pasado mañana", name)[0]
+            if name and len(name.split()) > 1: # Require at least 2 words or a non-trivial name
+                return name.title().strip()
+    return None
 
-    # --- EXTRA name extractor (first word name logic FIXED) ---
-    if not customer_name:
-        first_word = user_msg.strip().split()[0]
-        if re.fullmatch(r"[a-záéíóúñ]{3,15}", first_word.lower()):
-            customer_name = first_word.title()
+def extract_age_cedula(msg: str, session: dict):
+    """Extracts age and cedula if they are reasonable numbers."""
+    
+    # AGE DETECTION (must be 1-2 digits, 1-20 range is a good heuristic for student exams)
+    if not session["age"]:
+        age_match = re.search(r"\b(\d{1,2})\s*(años|anos|año|ano)?\b", msg.lower())
+        if age_match:
+            age_num = int(age_match.group(1))
+            if 1 <= age_num <= 20:
+                session["age"] = age_num
 
-    party_size = ""
-    m = re.search(r"(\d+)\s*(estudiantes|alumnos|niños|personas)", user_msg.lower())
-    if m:
-        party_size = m.group(1)
+    # CEDULA DETECTION (must be 5-12 digits, often isolated)
+    if not session["cedula"]:
+        # Find 5-12 digits that are NOT part of a time (HH:MM or H:MM) or phone number (prefixed)
+        ced_match = re.search(r"(?<!:)(\b\d{5,12}\b)(?!:)", msg)
+        if ced_match:
+            session["cedula"] = ced_match.group(1)
 
-    intent = "info"
-    if "cita" in user_msg.lower() or "reserv" in user_msg.lower():
-        intent = "reserve"
+def extract_student_name(msg: str) -> str | None:
+    """Uses a cleaned message to find a likely student name."""
+    msg_lower = msg.lower()
+    
+    # Common stop/noise words to ignore when looking for a standalone name
+    noise_words = [
+        "quiero", "cita", "reservar", "agendar", "necesito", "la", "el", "una", "un", "hora", "fecha",
+        "dia", "día", "por", "favor", "gracias", "me", "referia", "refería", "perdon", "perdón", "mejor",
+        "si", "sí", "ok", "dale", "listo", "perfecto", "super", "claro", "de una", "bueno", "mañana",
+        "tarde", "noche", "am", "pm"
+    ]
+    
+    # 1. Pattern matching (e.g., 'es para mi hijo X')
+    name_patterns = [
+        r"(mi\s+(hijo|hija)\s+(es\s+)?|se\s+llama|es\s+para)\s+([a-záéíóúñ ]+)",
+    ]
+    for p in name_patterns:
+        m = re.search(p, msg_lower)
+        if m and len(m.groups()) >= 4:
+            raw_name = m.group(4).strip()
+            if raw_name:
+                # Clean name: remove trailing stop words or punctuation
+                cleaned = raw_name.split(",")[0].strip()
+                words = [w for w in cleaned.split() if w not in noise_words]
+                if 1 <= len(words) <= 3:
+                    return " ".join(words).title()
 
-    # --- If user provides full booking info ---
-    if school_name or customer_name or final_iso or detected_package:
-        intent = "reserve"
+    # 2. Heuristic check: If the message is only 1-3 capitalized words, it might be a name.
+    words = msg.strip().split()
+    if 1 <= len(words) <= 3 and all(word[0].isupper() for word in words):
+        if all(c.isalpha() or c.isspace() for c in msg.strip()):
+             return msg.strip()
 
-    return {
-        "intent": intent,
-        "customer_name": customer_name,
-        "school_name": school_name,
-        "datetime": final_iso,
-        "party_size": party_size,
-        "package": detected_package,
-    }
+    return None
+
+def detect_correction(msg: str) -> bool:
+    """Simple check if the user is explicitly correcting previous data."""
+    t = msg.lower().strip()
+    return any(w in t for w in [
+        "no es", "no era", "no perdón", "no perdon", "quise decir", 
+        "me equivoqué", "cambiar", "reagendar"
+    ])
+
+def apply_correction(session: dict):
+    """Resets key fields if a correction is detected to prompt for new values."""
+    session["student_name"] = None
+    session["school"] = None
+    session["package"] = None
+    session["date"] = None
+    session["time"] = None
+    session["age"] = None
+    session["cedula"] = None
+    session["booking_started"] = False # Revert to initial state to collect data cleanly
+
+def update_session_with_info(msg: str, session: dict):
+    """
+    Master function to extract and update all session parameters.
+    FIX: Refactored for clarity and robustness.
+    """
+    text = msg.lower().strip()
+    
+    # 1. Check for correction intent first
+    if detect_correction(msg):
+        apply_correction(session)
+        # Note: We still attempt to extract new info below, but we've cleared the old state.
+
+    # 2. Data extraction using refactored functions
+    new_name = extract_student_name(msg)
+    new_school = extract_school_name(msg)
+    new_package = detect_package(msg)
+    new_date, new_time = extract_datetime_info(msg)
+    extract_age_cedula(msg, session) # Updates session in place
+
+    # 3. Apply extracted data (only if field is currently empty OR a correction was just applied)
+    if new_name and (session["student_name"] is None or detect_correction(msg)):
+        session["student_name"] = new_name
+    
+    if new_school and (session["school"] is None or detect_correction(msg)):
+        session["school"] = new_school
+
+    if new_package and (session["package"] is None or detect_correction(msg)):
+        session["package"] = new_package
+
+    if new_date and new_time and (session["date"] is None or detect_correction(msg)):
+        session["date"] = new_date
+        session["time"] = new_time
+    
+    # Always set booking_started if any key piece of info is provided
+    if new_name or new_school or new_package or new_date:
+        session["booking_started"] = True
+
+    # 4. Save the updated session state
+    save_session(session)
 
 
-session_state = {}
+# --- 5. INTENT & CONTEXTUAL HANDLING ---
 
-def get_session(phone):
-    if phone not in session_state:
-        session_state[phone] = {
-            "phone": phone,
-            "student_name": None,
-            "school": None,
-            "package": None,
-            "date": None,
-            "time": None,
-            "party_size": None,
-            "booking_started": False,
-            "info_mode": False,
-            "first_booking_message": False,
-            "greeted": False,
-            "age": None,
-            "cedula": None,
-        }
-    return session_state[phone]
 INTENTS = {
     "greeting": {"patterns": [], "handler": "handle_greeting"},
     "package_info": {"patterns": [], "handler": "handle_package_info"},
@@ -301,28 +425,67 @@ INTENTS = {
     "confirmation": {"patterns": [], "handler": "handle_confirmation"},
 }
 
-INTENT_PRIORITY = [
-    "booking_request",
-    "modify",
-    "cancel",
-    "package_info",
-    "confirmation",
-    "greeting",
-]
+INTENTS["greeting"]["patterns"] = ["hola","buenas","buenos dias","buen dia","buenas tardes","buenas noches","disculpa","una pregunta","consulta","informacion","quisiera saber"]
+INTENTS["package_info"]["patterns"] = ["cuanto vale","cuánto vale","cuanto cuesta","precio","valor","paquete","kit escolar","psicologia","odontologia","el verde","el azul","el amarillo","45k","60k","75k","esencial","salud activa","bienestar total"]
+INTENTS["booking_request"]["patterns"] = ["quiero reservar","quiero una cita","quiero agendar","necesito una cita","quiero el examen","me pueden reservar","agendar cita","reservar examen","separar cita"]
+INTENTS["modify"]["patterns"] = ["cambiar cita","cambiar la cita","quiero cambiar","cambiar hora","cambiar fecha","mover cita","reagendar"]
+INTENTS["cancel"]["patterns"] = ["cancelar","cancelar cita","anular","quitar la cita","ya no quiero la cita"]
+INTENTS["confirmation"]["patterns"] = ["confirmo","sí confirmo","si confirmo","confirmar","confirmada","confirmado","si","sí","ok","dale","listo","perfecto","super","claro","de una","por supuesto","está bien","esta bien","si está bien","sí está bien"]
 
-def detect_intent(msg: str):
+def detect_explicit_intent(msg: str) -> str | None:
+    """Detects explicit intent based on keywords."""
     msg = msg.lower()
-    for intent in INTENT_PRIORITY:
-        data = INTENTS[intent]
-        for p in data["patterns"]:
+    # Prioritize disruptive or high-value intents
+    priority = ["cancel", "modify", "confirmation", "booking_request", "package_info", "greeting"]
+    for intent in priority:
+        for p in INTENTS[intent]["patterns"]:
             if p in msg:
+                # Disambiguate simple 'si/no' confirmations unless booking is in progress
+                if intent == "confirmation" and not get_session(msg).get("booking_started"):
+                    continue
                 return intent
     return None
+
+def build_missing_fields_message(session: dict) -> str | None:
+    """Generates a friendly message listing only the required missing fields."""
+    missing = []
+    if not session["student_name"]: missing.append("el *nombre* del estudiante")
+    if not session["school"]: missing.append("el *colegio*")
+    if not session["package"]: missing.append("el *paquete* (ej: Esencial, Activa, Total)")
+    if not session["date"] or not session["time"]: missing.append("la *fecha* y *hora* de la cita")
+    if not session["age"]: missing.append("la *edad* del estudiante")
+    if not session["cedula"]: missing.append("la *cédula* del estudiante")
+
+    if not missing:
+        return None
+
+    if len(missing) == 1:
+        return f"Listo, solo me falta {missing[0]}. ¿Me lo compartes porfa? 🙏"
+    
+    # Standard list construction
+    joined = ", ".join(missing[:-1]) + " y " + missing[-1]
+    return f"¡Perfecto! Para continuar, necesito estos datos: {joined}. ¿Me los colaboras? 🙏"
+
+def finish_booking_summary(session: dict) -> str:
+    """Generates the confirmation summary message before final database save."""
+    return (
+        f"Listo, ya tengo toda la información:\n\n"
+        f"👤 Estudiante: {session.get('student_name', 'N/A')}\n"
+        f"🎒 Colegio: {session.get('school', 'N/A')}\n"
+        f"📦 Paquete: {session.get('package', 'N/A')}\n"
+        f"📅 Fecha: {session.get('date', 'N/A')}\n"
+        f"⏰ Hora: {session.get('time', 'N/A')}\n"
+        f"🧒 Edad: {session.get('age', 'N/A')}\n"
+        f"🪪 Cédula: {session.get('cedula', 'N/A')}\n\n"
+        f"¿*Deseas confirmar la cita* con estos datos? (Responde *Sí* o *Confirmar*)"
+    )
+
+# --- 6. HANDLERS (State Machine Steps) ---
 
 def handle_greeting(msg, session):
     if not session["greeted"]:
         session["greeted"] = True
-        return "Hola, claro que sí. ¿En qué te puedo ayudar?"
+        return "¡Hola! Soy tu asistente de agendamiento 🤖. Claro que sí, ¿en qué te puedo ayudar hoy? 😊"
     return "Claro que sí, ¿en qué te puedo ayudar?"
 
 def handle_package_info(msg, session):
@@ -330,11 +493,10 @@ def handle_package_info(msg, session):
     pkg = detect_package(msg)
 
     prices = {
-        "Paquete Cuidado Esencial": "45.000",
-        "Paquete Salud Activa": "60.000",
-        "Paquete Bienestar Total": "75.000",
+        "Paquete Cuidado Esencial": "45.000 COP",
+        "Paquete Salud Activa": "60.000 COP",
+        "Paquete Bienestar Total": "75.000 COP",
     }
-
     details = {
         "Paquete Cuidado Esencial": "Medicina General, Optometría y Audiometría.",
         "Paquete Salud Activa": "Medicina General, Optometría, Audiometría y Psicología.",
@@ -349,145 +511,100 @@ def handle_package_info(msg, session):
             "¿Te gustaría agendar una cita?"
         )
 
+    # General package list if no specific package was detected
     return (
-        "Claro. Ofrecemos tres paquetes:\n\n"
-        "• *Cuidado Esencial* — $45.000\n"
-        "  Medicina General, Optometría, Audiometría\n\n"
-        "• *Salud Activa* — $60.000\n"
-        "  Medicina General, Optometría, Audiometría, Psicología\n\n"
-        "• *Bienestar Total* — $75.000\n"
-        "  Medicina General, Optometría, Audiometría, Psicología, Odontología\n\n"
-        "¿Cuál te interesa?"
+        "Claro. Ofrecemos tres paquetes de exámenes escolares:\n\n"
+        "• *Cuidado Esencial* (Verde) — $45.000 COP\n"
+        "  _Incluye: Medicina, Optometría, Audiometría_\n\n"
+        "• *Salud Activa* (Azul) — $60.000 COP\n"
+        "  _Incluye: Paquete Esencial + Psicología_\n\n"
+        "• *Bienestar Total* (Amarillo) — $75.000 COP\n"
+        "  _Incluye: Paquete Activa + Odontología_\n\n"
+        "¿Cuál te interesa o quieres agendar?"
     )
 
 def handle_booking_request(msg, session):
     session["booking_started"] = True
     session["info_mode"] = False
-
+    
+    # Try to extract info from the same message
     update_session_with_info(msg, session)
-    auto = auto_finalize_if_ready(session)
-    if auto:
-        return auto
 
-    if (
-        session["student_name"] and session["school"] and
-        session["package"] and session["date"] and session["time"] and
-        session["age"] and session["cedula"]
-    ):
-        return finish_booking(session)
+    missing_message = build_missing_fields_message(session)
+    if not missing_message:
+        # If all fields are present, go directly to summary
+        return finish_booking_summary(session)
 
-    return (
-        "Por supuesto. Para agendar la cita necesito los siguientes datos:\n\n"
-        "– Nombre del estudiante\n"
-        "– Colegio\n"
-        "– Paquete\n"
-        "– Fecha en que deseas la cita\n"
-        "– Hora\n\n"
-        "– Edad del estudiante\n"
-        "– Cédula del estudiante\n\n"
-        "¿Me los puedes compartir?"
-    )
+    # If info is missing, ask for it using the structured prompt
+    return missing_message
 
-def handle_modify(msg, session):
-    return "Claro, ¿cuál sería la nueva fecha y hora que deseas?"
-
-def handle_cancel(msg, session):
-    return "Perfecto, ¿confirmas que deseas cancelar la cita?"
 
 def handle_confirmation(msg, session):
-    update_session_with_info(msg, session)
-
-    required = [
-        session["student_name"],
-        session["school"],
-        session["package"],
-        session["date"],
-        session["time"],
-        session["age"],
-        session["cedula"],
-    ]
+    # This handler is only called when all checks pass in process_message
+    
+    # 1. Final check for completeness
+    required = [session.get(f) for f in ["student_name", "school", "package", "date", "time", "age", "cedula"]]
     if not all(required):
-        return "Perfecto, ¿me confirmas algo más?"
+        # Should not happen if flow is followed, but handles edge case
+        return "Disculpa, necesito toda la información antes de confirmar. ¿Me la puedes completar?"
 
-    try:
-        dt_text = f"{session['date']} {session['time']}"
-        dt = datetime.strptime(dt_text, "%Y-%m-%d %H:%M").replace(tzinfo=LOCAL_TZ)
-        iso = dt.isoformat()
-    except Exception as e:
-        return f"Hubo un error procesando la fecha/hora. ({e})"
+    # 2. Save reservation to the database
+    response_msg = save_reservation(session)
 
-    save_reservation({
-        "customer_name": session["student_name"],
-        "package": session["package"],
-        "school_name": session["school"],
-        "datetime": iso,
-        "party_size": 1,
-        "table_number": None,
-        "age": session["age"],
-        "cedula": session["cedula"],
-    })
+    # 3. Clean up the session only if reservation was successful (starts with '✅')
+    if response_msg.startswith("✅"):
+        # Reset to default session data, keeping only the phone number.
+        reset_session = {k: v for k, v in DEFAULT_SESSION.items() if k != "phone"}
+        reset_session["phone"] = session["phone"]
+        save_session(reset_session)
 
-    session["_ai_intent"] = None
-    phone = session["phone"]
-    session_state.pop(phone, None)
+    return response_msg
 
-    return (
-        f"¡Perfecto! La cita de {session['student_name']} quedó confirmada "
-        f"en el {session['school']}, paquete {session['package']}, "
-        f"el día {session['date']} a las {session['time']}."
-    )
+def handle_modify(msg, session):
+    # For a real system, you would check the database for existing reservations
+    return "Entendido. ¿Me indicas la *nueva fecha y hora* que deseas para la cita? Por ejemplo: _'el martes a las 10 am'_"
 
-def contextual_intent(msg: str):
+def handle_cancel(msg, session):
+    # For a real system, you would check the database and confirm the reservation ID
+    # After confirmation, you would delete it from the 'reservations' table.
+    return "Perfecto, ¿confirmas que deseas *cancelar* completamente la cita agendada? (Responde *Sí* si estás seguro)"
+
+def handle_contextual(msg: str, session: dict) -> str | None:
+    """Handles non-booking questions (hours, location, process)."""
     text = msg.lower().strip()
+    
     if any(x in text for x in ["atienden", "abren", "horario", "horarios", "sábados", "sabados"]):
-        return "general_hours"
-    if any(x in text for x in ["donde queda", "ubicados", "direccion", "dirección"]):
-        return "general_location"
-    if any(x in text for x in ["como funciona", "cómo funciona", "como es el proceso", "como es el examen"]):
-        return "general_process"
-    if any(x in text for x in ["puedes repetir", "puede repetir", "repiteme", "repite"]):
-        return "repeat_summary"
-    if any(x in text for x in ["que incluye", "qué incluye", "incluye", "que trae"]):
-        return "package_detail_request"
-    if any(x in text for x in ["espera", "un momento", "dame un segundo"]):
-        return "delay"
-    return None
-
-def contextual_handler(intent: str, session):
-    if intent == "general_hours":
         return "Nuestros horarios son de lunes a viernes de 7:00 AM a 5:00 PM y sábados de 7:00 AM a 1:00 PM 😊"
-    if intent == "general_location":
-        return "Estamos ubicados en Bogotá, en la calle 75 #20-36. Si necesitas compartir la ubicación te la envío."
-    if intent == "general_process":
+    
+    if any(x in text for x in ["donde queda", "ubicados", "direccion", "dirección"]):
+        return "Estamos ubicados en Bogotá, en la calle 75 #20-36. Te envío la ubicación exacta por mensaje. 📍"
+    
+    if any(x in text for x in ["como funciona", "cómo funciona", "proceso", "examen", "dura"]):
         return (
-            "Claro 😊 El examen escolar se hace en aproximadamente 30–45 minutos e incluye:\n"
+            "Claro 😊 El examen escolar se hace en *aproximadamente 30–45 minutos* e incluye:\n"
             "• Historia clínica y revisión general\n"
             "• Pruebas del paquete que elijas\n"
-            "• Entrega del certificado escolar\n\n"
+            "• Entrega inmediata del certificado escolar\n\n"
             "¿Te gustaría agendar una cita?"
         )
-    if intent == "repeat_summary":
+    
+    if any(x in text for x in ["puedes repetir", "puede repetir", "repiteme", "repite"]):
         missing = build_missing_fields_message(session)
-        return missing or finish_booking(session)
-    if intent == "package_detail_request":
-        pkg = session.get("package")
-        if not pkg:
-            return "Claro 😊 ¿De cuál paquete deseas saber más?"
-        return handle_package_info(pkg, session)
-    if intent == "delay":
-        return "Claro, te espero 😊"
+        if missing:
+            return missing
+        if session["booking_started"]:
+            return finish_booking_summary(session)
+        
+    if any(x in text for x in ["espera", "un momento", "dame un segundo", "ya te escribo"]):
+        return "Claro, aquí te espero 😊."
+        
+    if any(x in text for x in ["gracias", "muchas gracias", "bueno gracias"]):
+        return "Con gusto. ¡Que tengas un excelente día! 😊"
+        
     return None
 
-def auto_finalize_if_ready(session):
-    if (
-        session["student_name"] and session["school"] and
-        session["package"] and session["date"] and session["time"] and
-        session["age"] and session["cedula"]
-    ):
-        return finish_booking(session)
-    return None
-
-def natural_tone(text: str):
+def natural_tone(text: str) -> str:
+    """Adds emojis for a friendlier, Latin American tone."""
     replacements = {
         "Perfecto,": "Perfecto 😊,",
         "Listo,": "Listo 😊,",
@@ -495,432 +612,108 @@ def natural_tone(text: str):
         "Por supuesto.": "Por supuesto, ya te ayudo 😊.",
         "Entendido.": "Entendido 😊.",
         "De acuerdo.": "Listo 😊.",
-        "¿Me lo compartes?": "¿Me ayudas con eso porfa? 🙏",
-        "¿Me los compartes?": "¿Me colaboras con esos datos porfa? 🙏",
-        "¿Me lo confirmas?": "¿Me confirmas porfa? 🙏",
-        "Gracias": "Gracias 😊",
     }
     for k, v in replacements.items():
         text = text.replace(k, v)
 
-    if text.strip().endswith("?") and "😊" not in text:
+    # Add a closing emoji if the message ends in a question and isn't already emotional
+    if text.strip().endswith("?") and "😊" not in text and "🙏" not in text:
         text = text.rstrip("?") + " 😊?"
 
     return text
 
-def extract_student_name(msg):
-    msg = msg.strip().lower()
-    blocked_phrases = [
-        "si","sí","si por favor","sí por favor","por favor","ok","dale",
-        "claro","perfecto","bueno","listo","de una","super","ok listo",
-        "okk","okay","okey"
-    ]
-    if msg in blocked_phrases:
-        return None
-    if 1 <= len(msg.split()) <= 3:
-        if all(c.isalpha() or c.isspace() for c in msg):
-            return msg.title()
-    return None
+# --- 7. MAIN MESSAGE PROCESSING FLOW ---
 
-def extract_school(msg):
-    msg_clean = msg.lower()
-    patterns = [
-        r"del colegio ([a-zA-Záéíóúñ ]+)",
-        r"de colegio ([a-zA-Záéíóúñ ]+)",
-        r"del col ([a-zA-Záéíóúñ ]+)",
-        r"colegio ([a-zA-Záéíóúñ ]+)",
-        r"gimnasio ([a-zA-Záéíóúñ ]+)",
-        r"liceo ([a-zA-Záéíóúñ ]+)",
-        r"instituto ([a-zA-Záéíóúñ ]+)",
-    ]
-    for p in patterns:
-        m = re.search(p, msg_clean)
-        if m:
-            name = m.group(1).strip()
-            name = re.split(r"[,.!?\n]| a las | a la | mañana | hoy | pasado mañana", name)[0]
-            return name.title().strip()
-    return None
+def process_message(msg: str, session: dict) -> str:
+    """The central state machine logic."""
+    
+    # 1. Handle contextual/general questions (always priority)
+    contextual_response = handle_contextual(msg, session)
+    if contextual_response:
+        return natural_tone(contextual_response)
 
-def infer_time_period(raw_text: str, hour: int) -> int:
-    t = raw_text.lower()
-    if "am" in t or "a.m" in t:
-        return hour
-    if "pm" in t or "p.m" in t:
-        return hour + 12 if hour < 12 else hour
-    if any(x in t for x in ["de la mañana", "mañana "]):
-        return hour
-    if any(x in t for x in ["mediodia", "medio dia", "medio día"]):
-        return 12
-    if "de la tarde" in t:
-        return hour + 12 if 1 <= hour <= 7 else hour
-    if any(x in t for x in ["de la noche", "en la noche"]):
-        return hour + 12 if hour < 12 else hour
-    if hour <= 8:
-        return hour
-    if 9 <= hour <= 11:
-        return hour
-    if hour == 12:
-        return 12
-    if 1 <= hour <= 7:
-        return hour + 12
-    return hour
-
-def detect_correction(msg: str) -> dict:
-    t = msg.lower().strip()
-    corrections = {
-        "student_name": [
-            "no es","no era","no perdón","no perdon","no, perdón",
-            "me refería","quise decir","quise decirle","quise poner",
-            "no el nombre","no es ese nombre"
-        ],
-        "school": [
-            "no el colegio","no era el colegio","colegio no",
-            "quise decir el colegio","me refería al colegio"
-        ],
-        "package": [
-            "no el paquete","no era el paquete","me refería al paquete",
-            "quise decir el paquete","no ese paquete"
-        ],
-        "datetime": [
-            "no a las","no es a las","no es a la","quise decir a las",
-            "me refería a las","no esa hora","no a esa hora",
-            "no a esa fecha","me equivoqué de hora","no es mañana","no es hoy"
-        ],
-    }
-
-    result = {}
-    for field, words in corrections.items():
-        for w in words:
-            if w in t:
-                result[field] = True
-    return result
-
-def apply_correction(session, correction_flags):
-    if correction_flags.get("student_name"):
-        session["student_name"] = None
-    if correction_flags.get("school"):
-        session["school"] = None
-    if correction_flags.get("package"):
-        session["package"] = None
-    if correction_flags.get("datetime"):
-        session["date"] = None
-        session["time"] = None
-
-def apply_student_name_fix(session, msg):
-    text = msg.lower()
-
-    noise = [
-        "mañana", "pasado mañana", "a las", "a la", "hoy",
-        "pm", "am", "de la tarde", "de la mañana", "de la noche"
-    ]
-
-    name = session.get("student_name")
-    if not name:
-        return
-
-    cleaned = name.lower()
-
-    for w in noise:
-        cleaned = cleaned.replace(w, "")
-
-    cleaned = re.sub(r"\d+", "", cleaned)
-    cleaned = cleaned.strip()
-
-    if not re.fullmatch(r"[a-záéíóúñ ]{2,30}", cleaned):
-        return
-
-    session["student_name"] = cleaned.title()
-
-def update_session_with_info(msg, session):
-    text = msg.lower().strip()
-
-    correction_flags = detect_correction(msg)
-    if correction_flags:
-        apply_correction(session, correction_flags)
-
-    extracted = ai_extract(msg)
-    ai_intent = extracted.get("intent")
-    session["_ai_intent"] = ai_intent
-
-    new_name = extracted.get("customer_name")
-    new_school = extracted.get("school_name")
-    new_package = extracted.get("package")
-    new_datetime = extracted.get("datetime")
-    new_size = extracted.get("party_size")
-
-    if correction_flags:
-        if new_datetime:
-            try:
-                dt = datetime.fromisoformat(new_datetime).astimezone(LOCAL_TZ)
-                raw_hour = int(dt.strftime("%H"))
-                inferred_hour = infer_time_period(msg, raw_hour)
-                dt = dt.replace(hour=inferred_hour)
-                session["date"] = dt.strftime("%Y-%m-%d")
-                session["time"] = dt.strftime("%H:%M")
-            except:
-                pass
-        return
-
-    invalid_name_phrases = [
-        "quiero","cita","reserv","agendar","necesito","perdon",
-        "perdón","referia","refería","hora","fecha","mañana","tarde",
-        "noche","pm","am"
-    ]
-
-    if new_name:
-        if not any(w in new_name.lower() for w in invalid_name_phrases):
-            session["student_name"] = new_name
-
-    if new_school:
-        session["school"] = new_school
-
-    if new_package:
-        session["package"] = new_package
-
-    if new_datetime:
-        try:
-            dt = datetime.fromisoformat(new_datetime).astimezone(LOCAL_TZ)
-            session["date"] = dt.strftime("%Y-%m-%d")
-            session["time"] = dt.strftime("%H:%M")
-        except:
-            pass
-
-    if new_size:
-        session["party_size"] = new_size
-
-    # AGE DETECTION
-    age_match = re.search(r"\b(\d{1,2})\s*(años|anos|año|ano)?\b", msg.lower())
-    if age_match:
-        age_num = int(age_match.group(1))
-        if 1 <= age_num <= 20:
-            session["age"] = age_num
-
-    # CEDULA DETECTION
-    ced_match = re.search(r"\b(\d{5,12})\b", msg)
-    if ced_match:
-        session["cedula"] = ced_match.group(1)
-
-    apply_student_name_fix(session, msg)
-
-def build_missing_fields_message(session):
-    missing = []
-    if not session["student_name"]:
-        missing.append("el nombre del estudiante")
-    if not session["school"]:
-        missing.append("el colegio")
-    if not session["package"]:
-        missing.append("el paquete")
-    if not session["date"]:
-        missing.append("la fecha en que deseas la cita")
-    if not session["time"]:
-        missing.append("la hora")
-    if not session["age"]:
-        missing.append("la edad del estudiante")
-    if not session["cedula"]:
-        missing.append("la cédula del estudiante")
-
-    if len(missing) == 0:
-        return None
-    if len(missing) == 1:
-        return f"Listo, solo me falta {missing[0]}. ¿Me lo compartes?"
-    if len(missing) == 2:
-        return f"Perfecto, me falta {missing[0]} y {missing[1]}. ¿Me los compartes?"
-
-    joined = ", ".join(missing[:-1]) + " y " + missing[-1]
-    return f"Perfecto, me falta {joined}. ¿Me los compartes?"
-
-def finish_booking(session):
-    name = session["student_name"]
-    school = session["school"]
-    pkg = session["package"]
-    date = session["date"]
-    time = session["time"]
-    age = session["age"]
-    cedula = session["cedula"]
-
-    return (
-        f"Listo, ya tengo toda la información:\n\n"
-        f"👤 Estudiante: {name}\n"
-        f"🎒 Colegio: {school}\n"
-        f"📦 Paquete: {pkg}\n"
-        f"📅 Fecha: {date}\n"
-        f"⏰ Hora: {time}\n"
-        f"🧒 Edad: {age}\n"
-        f"🪪 Cédula: {cedula}\n\n"
-        f"¿Deseas confirmar la cita?"
-    )
-
-def is_confirmation_message(msg: str) -> bool:
-    text = msg.lower().strip()
-    for p in INTENTS["confirmation"]["patterns"]:
-        if p in text:
-            return True
-    return False
-
-def continue_booking_process(msg, session):
+    # 2. Extract and update all info from the incoming message
     update_session_with_info(msg, session)
-    missing_message = build_missing_fields_message(session)
-    if missing_message:
-        return missing_message
+    
+    # 3. Check for completion or next missing step (BOOKING FLOW PRIORITY)
+    if session["booking_started"]:
+        missing_message = build_missing_fields_message(session)
+        
+        # A. ALL FIELDS COMPLETE -> Go to FINAL SUMMARY
+        if not missing_message:
+            # If user explicitly confirms AND all fields are full, process the booking
+            if detect_explicit_intent(msg) == "confirmation":
+                return natural_tone(handle_confirmation(msg, session))
+            # Otherwise, show the final summary and ask for confirmation
+            return natural_tone(finish_booking_summary(session))
+        
+        # B. FIELDS MISSING -> Ask for the next missing piece
+        # This prevents asking generic booking intro questions when data is still needed
+        return natural_tone(missing_message)
 
-    if is_confirmation_message(msg):
-        required = [
-            session["student_name"],
-            session["school"],
-            session["package"],
-            session["date"],
-            session["time"],
-            session["age"],
-            session["cedula"],
-        ]
-        if all(required):
-            return handle_confirmation(msg, session)
+    # 4. Handle explicit non-booking intents
+    intent = detect_explicit_intent(msg)
 
-        return "Antes de confirmar necesito toda la información completa 😊"
+    if intent and intent in INTENTS and intent not in ["confirmation"]:
+        handler = globals()[INTENTS[intent]["handler"]]
+        resp = handler(msg, session)
+        return natural_tone(resp)
+    
+    # 5. Default Response (If not greeted, send greeting, otherwise ask what they need)
+    if not session["greeted"]:
+        return natural_tone(handle_greeting(msg, session))
 
-    return finish_booking(session)
+    # 6. Fallback (If the message was not clear enough for any action)
+    return "Disculpa, no entendí bien. ¿Me lo repites o me indicas si quieres *agendar una cita* o saber sobre los *paquetes*? 😊"
 
-def process_message(msg, session):
-    update_session_with_info(msg, session)
 
-    ctx = contextual_intent(msg)
-    if ctx:
-        ans = contextual_handler(ctx, session)
-        if ans:
-            return natural_tone(ans)
+# --- 8. FASTAPI ENDPOINTS ---
 
-    intent = detect_intent(msg)
-
-    if session.get("_ai_intent") == "reserve":
-        intent = "booking_request"
-
-    if intent == "confirmation" and session["info_mode"] and not session["booking_started"]:
-        intent = "booking_request"
-
-    if session["booking_started"] and is_confirmation_message(msg):
-        return natural_tone(handle_confirmation(msg, session))
-
-    auto = auto_finalize_if_ready(session)
-    if auto:
-        return natural_tone(auto)
-
-    if not intent:
-        return ""
-
-    handler_name = INTENTS[intent]["handler"]
-    handler = globals()[handler_name]
-    resp = handler(msg, session)
-
-    return natural_tone(resp)
-
-INTENTS["greeting"]["patterns"] = [
-    "hola","holaa","holaaa","buenas","buenos dias","buenos días",
-    "buen dia","buen día","buenas tardes","buenas noches","ola","holi",
-    "holis","hello","alo","aló","alo?","que mas","qué más","q mas",
-    "que tal","que hubo","qué hubo","k hubo","disculpa","una pregunta",
-    "consulta","hola una pregunta","buen dia una pregunta",
-    "buenos dias una consulta","quisiera saber","vi un poster",
-    "vi un anuncio","vi su aviso","vi la publicidad","tienen info",
-    "informacion","información","quisiera informacion",
-    "quisiera información"
-]
-
-INTENTS["package_info"]["patterns"] = [
-    "cuanto vale","cuánto vale","cuanto cuesta","cuánto cuesta",
-    "precio","precio del paquete","valor del paquete","cuanto es el de",
-    "cuánto es el de","paquete","kit escolar","el de psicologia",
-    "el de psicología","el de psico","trae psicologia","trae psicología",
-    "incluye psicologia","incluye psicología","el verde","verde",
-    "de color verde","el azul","azul","de color azul","el amarillo",
-    "amarillo","de color amarillo","45k","45 mil","45mil","60k",
-    "60 mil","60mil","75k","75 mil","75mil","esencial","salud activa",
-    "activa","bienestar total","bienestar","total","completo",
-    "que paquetes tienen","qué paquetes tienen","ofrecen paquetes",
-    "tienen paquetes","como funcionan los paquetes","examenes escolares",
-    "exámenes escolares","paquetes escolares"
-]
-
-INTENTS["booking_request"]["patterns"] = [
-    "quiero reservar","quiero una cita","quiero agendar",
-    "quiero sacar una cita","quiero sacar cita","quiero hacer una cita",
-    "quiero hacer cita","necesito una cita","necesito agendar",
-    "necesito reservar","necesito sacar cita","quiero reservar el paquete",
-    "quiero reservar el de","quiero agendar una cita para",
-    "quiero agendar cita para","quiero reservar para mi hijo",
-    "quiero reservar para mi hija","quiero el examen",
-    "quiero hacer el examen","quiero hacer el examen escolar",
-    "quiero hacer los exámenes","quiero hacer el examen del colegio",
-    "me pueden reservar","me puedes reservar","me pueden agendar",
-    "me puedes agendar","me ayudan a reservar","me ayudas a reservar",
-    "me ayudas a agendar","agendar cita","agendar una cita",
-    "reservar examen","reservar el examen","reservar examen escolar",
-    "reservar paquete","agendar paquete","quiero pedir la cita",
-    "quiero pedir cita","quiero separar cita","quiero separar el examen",
-    "quiero una cita para mi hijo","quiero una cita para mi hija",
-    "necesito cita para mi hijo","necesito cita para mi hija"
-]
-
-INTENTS["modify"]["patterns"] = [
-    "cambiar cita","cambiar la cita","quiero cambiar la cita",
-    "necesito cambiar la cita","puedo cambiar la cita","cambiar hora",
-    "cambiar la hora","quiero otra hora","me sirve otra hora",
-    "puedo mover la hora","cambiar fecha","cambiar la fecha",
-    "quiero otra fecha","mover fecha","puedo mover la fecha",
-    "quiero mover la cita","necesito mover la cita","quiero reagendar",
-    "quiero re agendar","quiero re-agendar","reagendar cita",
-    "mover cita","reagendarr","reagenda","re agendar cita","otra hora",
-    "otra fecha"
-]
-
-INTENTS["cancel"]["patterns"] = [
-    "cancelar","cancelar cita","cancelar la cita","quiero cancelar",
-    "quiero cancelar la cita","quiero cancelar la cita de mi hijo",
-    "quiero cancelar la cita de mi hija","anular","anular cita",
-    "anular la cita","inhabilitar cita","quitar la cita",
-    "me gustaría cancelar","necesito cancelar","me ayudas a cancelar",
-    "cancelarr","cancelala","cancela la","cancela eso",
-    "ya no quiero la cita"
-]
-
-INTENTS["confirmation"]["patterns"] = [
-    "confirmo","sí confirmo","si confirmo","confirmar","confirmada",
-    "confirmado","si","sí","ok","dale","listo","perfecto","super",
-    "claro","de una","por supuesto","si está bien","sí está bien",
-    "si esta bien","sí esta bien","está bien","esta bien","si claro",
-    "sí claro","si dale","sí dale","si por favor","sí por favor",
-    "si gracias","sí gracias","si es para mi hijo","si es para mi hija",
-    "si está correcto","sí está correcto","ok listo","okay","okk",
-    "okey","gracias si","si gracias","si señora","si señor","ah bueno",
-    "perfecto gracias"
-]
-
-from dateutil import parser
-
-from dateutil import parser
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    """Simple redirect to the dashboard for quick access."""
+    # Ensure there's a 'templates' directory and 'dashboard.html' in it
+    return templates.TemplateResponse("dashboard.html", {"request": request, "reservations": [], "weekly_count": 0, "total_reservations": 0, "message": "Cargando datos..."})
 
 @app.post("/whatsapp")
 async def whatsapp_reply(request: Request):
+    """Twilio Webhook for incoming WhatsApp messages."""
     form = await request.form()
     incoming_msg = form.get("Body", "").strip()
-    phone = form.get("From", "").replace("whatsapp:", "").strip()
+    phone = form.get("From", "").replace("whatsapp:", "").strip() # Use raw phone as the key
 
+    # 1. Retrieve the persistent session
     session = get_session(phone)
+    
+    # 2. Process the message using the state machine
     response_text = process_message(incoming_msg, session)
 
+    # 3. Send response back to Twilio
     if not response_text:
-        return Response(content=str(
-            MessagingResponse().message("Disculpa, no entendí bien. ¿Me lo repites por favor?")
-        ), media_type="application/xml")
+        # Should not happen often with a robust process_message, but safety fallback
+        response_text = "Disculpa, no entendí bien. ¿Me lo repites por favor?"
 
     twilio_resp = MessagingResponse()
     twilio_resp.message(response_text)
+
+    # Note: save_session is called within update_session_with_info and handle_confirmation
+    # This ensures the session is saved every time new data is extracted or the booking is finalized.
 
     return Response(content=str(twilio_resp), media_type="application/xml")
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    res = supabase.table("reservations").select("*").order("datetime", desc=True).execute()
-    rows = res.data or []
+    """Displays the list of reservations."""
+    if not supabase: 
+        return templates.TemplateResponse("dashboard.html", {"request": request, "reservations": [], "weekly_count": 0, "total_reservations": 0, "message": "ERROR: Database connection failed. Check SUPABASE_URL and SUPABASE_SERVICE_ROLE."})
+
+    try:
+        # Fetch all reservations ordered by date (most recent first)
+        res = supabase.table(RESERVATION_TABLE).select("*").order("datetime", desc=True).limit(50).execute()
+        rows = res.data or []
+    except Exception as e:
+        print(f"Error fetching dashboard data: {e}")
+        rows = []
 
     fixed = []
     weekly_count = 0
@@ -931,74 +724,57 @@ async def dashboard(request: Request):
         iso = r.get("datetime")
         row = r.copy()
         if iso:
-            dt = parser.isoparse(iso).astimezone(LOCAL_TZ)
+            # Use dateutil_parser for robust ISO string handling
+            dt = dateutil_parser.isoparse(iso).astimezone(LOCAL_TZ)
             row["date"] = dt.strftime("%Y-%m-%d")
             row["time"] = dt.strftime("%H:%M")
+            row["iso_datetime"] = dt.isoformat() # Helpful for sorting/display
+            
+            # Calculate weekly count
             if dt >= week_ago:
                 weekly_count += 1
         else:
-            row["date"] = "-"
-            row["time"] = "-"
+            row["date"], row["time"], row["iso_datetime"] = "-", "-", "-"
+            
         fixed.append(row)
 
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "reservations": fixed,
         "weekly_count": weekly_count,
+        "total_reservations": len(rows),
     })
 
+# The original update_reservation endpoint was incomplete, but included here for completeness
 @app.post("/updateReservation")
 async def update_reservation(update: dict):
+    if not supabase: 
+        return {"success": False, "message": "Database connection failed."}
+
     rid = update.get("reservation_id")
     if not rid:
-        return {"success": False}
+        return {"success": False, "message": "Missing reservation ID."}
 
-    fields = {
+    # Clean the dictionary to only contain fields to update
+    fields_to_update = {
         k: v for k, v in update.items()
-        if k != "reservation_id" and v not in ["", None, "-", "null"]
+        if k != "reservation_id" and v not in ["", None] and k in [
+            "customer_name", "contact_phone", "party_size", 
+            "notes", "status", "package", "school_name", "age", "cedula"
+        ]
     }
+    
+    # Handle datetime update if present (ensure timezone-awareness)
+    if 'datetime' in update:
+        try:
+            dt = dateutil_parser.isoparse(update['datetime']).astimezone(LOCAL_TZ)
+            fields_to_update['datetime'] = dt.isoformat()
+        except Exception:
+            return {"success": False, "message": "Invalid datetime format."}
 
-    if fields:
-        supabase.table("reservations").update(fields).eq("reservation_id", rid).execute()
-
-    return {"success": True}
-
-@app.post("/cancelReservation")
-async def cancel_reservation(update: dict):
-    supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", update["reservation_id"]).execute()
-    return {"success": True}
-
-@app.post("/archiveReservation")
-async def archive_reservation(update: dict):
-    supabase.table("reservations").update({"status": "archived"}).eq("reservation_id", update["reservation_id"]).execute()
-    return {"success": True}
-
-@app.post("/markArrived")
-async def mark_arrived(update: dict):
-    supabase.table("reservations").update({"status": "arrived"}).eq("reservation_id", update["reservation_id"]).execute()
-    return {"success": True}
-
-@app.post("/markNoShow")
-async def mark_no_show(update: dict):
-    supabase.table("reservations").update({"status": "no_show"}).eq("reservation_id", update["reservation_id"]).execute()
-    return {"success": True}
-
-@app.post("/createReservation")
-async def create_reservation(data: dict):
-    save_reservation({
-        "customer_name": data.get("customer_name", ""),
-        "customer_email": data.get("customer_email", ""),
-        "contact_phone": data.get("contact_phone", ""),
-        "datetime": data.get("datetime", ""),
-        "party_size": data.get("party_size", 1),
-        "school_name": data.get("school_name", ""),
-        "package": data.get("package", ""),
-        "age": data.get("age", None),
-        "cedula": data.get("cedula", None),
-        "table_number": None,
-    })
-    return {"success": True}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    try:
+        supabase.table(RESERVATION_TABLE).update(fields_to_update).eq("id", rid).execute()
+        return {"success": True, "message": f"Reservation {rid} updated successfully."}
+    except Exception as e:
+        print(f"Error updating reservation {rid}: {e}")
+        return {"success": False, "message": f"Database error: {e}"}
