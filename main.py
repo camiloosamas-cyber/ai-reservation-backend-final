@@ -394,20 +394,30 @@ INTENTS["package_info"]["patterns"] = ["cuanto vale","cuánto vale","cuanto cues
 INTENTS["booking_request"]["patterns"] = ["quiero reservar","quiero una cita","quiero agendar","necesito una cita","quiero el examen","me pueden reservar","agendar cita","reservar examen","separar cita"]
 INTENTS["modify"]["patterns"] = ["cambiar cita","cambiar la cita","quiero cambiar","cambiar hora","cambiar fecha","mover cita","reagendar"]
 INTENTS["cancel"]["patterns"] = ["cancelar","cancelar cita","anular","quitar la cita","ya no quiero la cita"]
-INTENTS["confirmation"]["patterns"] = ["confirmo","sí confirmo","si confirmo","confirmar","confirmada","confirmado","si","sí","ok","dale","listo","perfecto","super","claro","de una","por supuesto","está bien","esta bien","si está bien","sí está bien"]
+# Confirmation patterns must be exact matches to prevent pollution
+INTENTS["confirmation"]["patterns"] = ["confirmo","sí confirmo","si confirmo","confirmar","confirmada","confirmado","si","sí","ok","dale","listo","perfecto","super","claro","de una","por supuesto","está bien","esta bien","si está bien","sí está bien"] 
 
 def detect_explicit_intent(msg: str, session: dict) -> str | None:
-    """Detects explicit intent based on keywords."""
-    msg = msg.lower()
+    """
+    Detects explicit intent based on keywords, using strict matching for confirmation.
+    """
+    msg_lower = msg.lower()
+    msg_stripped = msg_lower.strip()
+    
     # Prioritize disruptive or high-value intents
     priority = ["cancel", "modify", "confirmation", "booking_request", "package_info", "greeting"]
     for intent in priority:
         for p in INTENTS[intent]["patterns"]:
-            if p in msg:
-                # Confirmation is only accepted if awaiting_confirmation is True
-                if intent == "confirmation" and not session.get("awaiting_confirmation"):
-                    continue
-                return intent
+            
+            if intent == "confirmation":
+                # CRITICAL FIX: Confirmation intent is only detected if the message is a PURE match.
+                if msg_stripped == p:
+                    return intent 
+
+            else:
+                # For all other intents, use the standard substring match
+                if p in msg_lower:
+                    return intent
     return None
 
 def build_missing_fields_message(session: dict) -> str | None:
@@ -459,11 +469,17 @@ def handle_greeting(msg, session):
     return "Claro que sí, ¿en qué te puedo ayudar?"
 
 def handle_package_info(msg, session):
+    # If the message contained data (e.g., package or name), extraction already captured it.
     session["info_mode"] = True
     # Reset confirmation flag if user asks for info mid-flow
     session["awaiting_confirmation"] = False
     
-    pkg = detect_package(msg)
+    # Check session for package, in case it was extracted from the message
+    pkg = session.get("package") 
+    
+    # If the package was not in the session, try detecting it from the raw message (for simple price inquiries)
+    if not pkg:
+        pkg = detect_package(msg)
 
     prices = {
         "Paquete Cuidado Esencial": "45.000 COP",
@@ -476,13 +492,22 @@ def handle_package_info(msg, session):
         "Paquete Bienestar Total": "Medicina General, Optometría, Audiometría, Psicología y Odontología.",
     }
 
-    if pkg:
-        return (
+    if pkg and pkg in prices:
+        # If a package was confirmed (either by session or detection)
+        response = (
             f"Claro 😊\n"
             f"*{pkg}* cuesta *${prices[pkg]}*.\n\n"
             f"📋 *Incluye:*\n{details[pkg]}\n\n"
-            f"¿Te gustaría agendar una cita?"
         )
+        
+        # If data was extracted (name, date, etc.), transition to booking
+        if session.get("student_name") or session.get("date"):
+            # Set booking_started=True and proceed with the booking flow after this response
+            session["booking_started"] = True
+            save_session(session)
+            return response + "Ya capturé los datos que me diste. ¿Deseas continuar con el agendamiento?"
+        
+        return response + "¿Te gustaría agendar una cita?"
 
     # General package list if no specific package was detected
     return (
@@ -497,12 +522,12 @@ def handle_package_info(msg, session):
     )
 
 def handle_booking_request(msg, session):
-    # booking_started is only set here, by explicit intent
+    # booking_started is set here to ensure the booking flow takes over
     session["booking_started"] = True
     session["info_mode"] = False
-    session["awaiting_confirmation"] = False # Ensure we are not awaiting confirmation yet
+    session["awaiting_confirmation"] = False 
     
-    # Extraction already happened if intent was detected (in process_message)
+    # Data extraction already happened at the start of process_message
 
     missing_message = build_missing_fields_message(session)
     if not missing_message:
@@ -542,7 +567,7 @@ def handle_modify(msg, session):
     if not session["booking_started"]:
         session["booking_started"] = True
     
-    # Extraction already happened if intent was detected (in process_message)
+    # Data extraction already happened at the start of process_message
     missing = build_missing_fields_message(session)
     
     if missing:
@@ -621,46 +646,35 @@ def natural_tone(text: str) -> str:
 
     return text
 
-# --- 7. MAIN MESSAGE PROCESSING FLOW (FIXED) ---
+# --- 7. MAIN MESSAGE PROCESSING FLOW (FINAL, SAFE, HIGH-CAPTURE) ---
 
 def process_message(msg: str, session: dict) -> str:
     """
-    The central state machine logic, with intent-gated data extraction.
+    The central state machine logic, with the final, robust extraction policy.
     """
     
     # 1. Detect Intent (NO SIDE EFFECTS)
     intent = detect_explicit_intent(msg, session)
     
-    # 2. GATED DATA EXTRACTION LOGIC (Applying the user's safety fix)
-    should_extract = False
+    # 2. HIGH-CAPTURE DATA EXTRACTION LOGIC
+    # Goal: ALWAYS extract data unless the message is *purely* a confirmation word.
+    msg_lower = msg.lower().strip()
     
-    # Case 1: Explicitly starting a booking or modifying
-    if intent in ["booking_request", "modify"]:
-        should_extract = True
-        
-    # Case 2: User is in the booking flow (booking_started=True)
-    if session.get("booking_started") and not should_extract:
-        # FIX 1: Removed "confirmation" from flow-breaking commands.
-        is_breaking_command = intent in ["cancel", "package_info", "greeting"] 
-        
-        # FIX 2: Removed "ok" and "listo" from generic phrases to allow data extraction.
-        msg_lower = msg.lower()
-        is_generic_phrase = any(x in msg_lower for x in [
-            "gracias", "espera", "un momento", "repiteme", "repetir",
-            "horario", "ubicacion", "proceso",
-            "cómo funciona", "como funciona",
-            "bueno", "chao", "bye", "escribe", "escribo"
-        ])
-        
-        if not is_breaking_command and not is_generic_phrase:
-            # If it's not a command and not a generic phrase, assume it's data
-            should_extract = True
+    confirmation_words = INTENTS["confirmation"]["patterns"]
+    is_pure_confirmation = msg_lower in confirmation_words
 
-    if should_extract:
-        # 3. Perform Extraction
+    if not is_pure_confirmation:
+        # 3. Perform Extraction (Captures data from mixed messages immediately)
         update_session_with_info(msg, session)
+        
+        # If this message was a mixed intent (e.g., booking + info), 
+        # the session now has the data. We must ensure the booking flow starts.
+        # Starting the flow if any of the three main data points exist (name, date, package)
+        if intent in ["booking_request", "modify"] or session.get("package") or session.get("student_name") or session.get("date"):
+            session["booking_started"] = True
+            save_session(session)
     
-    # 4. Handle Contextual/General Questions (CALLED HERE TO ALLOW SIDE-EFFECTS/RESPONSE)
+    # 4. Handle Contextual/General Questions (High Priority Response)
     contextual_response = handle_contextual(msg, session)
     if contextual_response:
         return natural_tone(contextual_response)
@@ -669,15 +683,16 @@ def process_message(msg: str, session: dict) -> str:
     if intent and intent in INTENTS:
         handler = globals()[INTENTS[intent]["handler"]]
         
-        # A. Handle Confirmation (Only if state flag is set)
+        # A. Handle Confirmation (Only if state flag is set AND it was a pure confirmation)
         if intent == "confirmation" and session.get("awaiting_confirmation"):
+            # is_pure_confirmation is already true here because of the detect_explicit_intent logic
             return natural_tone(handler(msg, session))
         
-        # B. Handle other high-level, non-confirmation intents
+        # B. Handle other high-level intents.
         if intent in ["cancel", "modify", "booking_request", "package_info", "greeting"]:
             return natural_tone(handler(msg, session))
         
-    # 6. Handle Booking Continuation Flow (If extraction didn't lead to a final response)
+    # 6. Handle Booking Continuation Flow (The core of the state machine)
     if session["booking_started"]:
         missing_message = build_missing_fields_message(session)
         
@@ -696,7 +711,7 @@ def process_message(msg: str, session: dict) -> str:
     return "Disculpa, no entendí bien. ¿Me lo repites o me indicas si quieres *agendar una cita* o saber sobre los *paquetes*? 😊"
 
 
-# --- 8. TWILIO WEBHOOK ENDPOINT (THE MISSING PIECE) ---
+# --- 8. TWILIO WEBHOOK ENDPOINT ---
 
 @app.post("/whatsapp", response_class=Response)
 async def whatsapp_webhook(
@@ -706,11 +721,9 @@ async def whatsapp_webhook(
 ):
     """
     Handles incoming POST requests from the Twilio WhatsApp webhook.
-    This is the critical entry point that connects Twilio to your bot logic.
     """
     
-    # Twilio sends the phone number in the format 'whatsapp:+1234567890'
-    # We clean it to just the digits for our database key.
+    # Clean phone number for database key
     phone = WaId.split(":")[-1].strip()
     user_message = Body.strip()
 
@@ -727,7 +740,7 @@ async def whatsapp_webhook(
     # 4. Return the TwiML response
     return Response(content=str(twiml), media_type="application/xml")
 
-# --- 9. HEALTH CHECK (Optional, but useful for deployment status) ---
+# --- 9. HEALTH CHECK ---
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
