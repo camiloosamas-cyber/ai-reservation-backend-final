@@ -213,37 +213,33 @@ def save_reservation(data: dict):
 
 # --- 4. DATA EXTRACTION & NLP ---
 
-PACKAGE_MAPPING = {
-    "cuidado esencial": "Paquete Cuidado Esencial",
-    "salud activa": "Paquete Salud Activa",
-    "bienestar total": "Paquete Bienestar Total",
-}
-
 def detect_package(msg: str) -> str | None:
     """
-    Robustly detects the package based on keywords or price.
+    VERY ROBUST package detector.
+    Matches color, keyword, price, or the phrase "paquete X".
     """
     msg = msg.lower().strip()
-    
-    # 1. Direct name match (using whole word boundaries \b)
-    for key, pkg_name in PACKAGE_MAPPING.items():
-        # Use regex to enforce full word match for key (e.g., prevents 'total' from matching 'totalmente')
-        if re.search(r"\b" + key.replace(' ', r'\s*') + r"\b", msg):
-            return pkg_name
-            
-    # CRITICAL FIX 2: Psico/Psicologo detection for Salud Activa
-    # Match any word containing "psico" (e.g., psicología, psicólogo, psicosocial)
-    if "psico" in msg:
-        return PACKAGE_MAPPING["salud activa"]
 
-    # 2. Price match (using whole word boundaries \b)
-    if any(re.search(p, msg) for p in [r'\b45k\b', r'\b45\s*mil\b', r'\b45\.?000\b', r'\bcuarenta\s*y\s*cinco\b']):
-        return PACKAGE_MAPPING["cuidado esencial"]
-    if any(re.search(p, msg) for p in [r'\b60k\b', r'\b60\s*mil\b', r'\b60\.?000\b', r'\bsesenta\b']):
-        return PACKAGE_MAPPING["salud activa"]
-    if any(re.search(p, msg) for p in [r'\b75k\b', r'\b75\s*mil\b', r'\b75\.?000\b', r'\bsetenta\s*y\s*cinco\b']):
-        return PACKAGE_MAPPING["bienestar total"]
-        
+    # DIRECT PHRASE MATCH
+    if "paquete esencial" in msg or "cuidado esencial" in msg or "esencial" in msg or "verde" in msg:
+        return "Paquete Cuidado Esencial"
+
+    if "paquete activa" in msg or "salud activa" in msg or "activa" in msg or "psico" in msg or "azul" in msg:
+        return "Paquete Salud Activa"
+
+    if "paquete total" in msg or "bienestar total" in msg or "total" in msg or "amarillo" in msg or "completo" in msg:
+        return "Paquete Bienestar Total"
+
+    # PRICE-BASED MATCH
+    if any(x in msg for x in ["45k", "45 mil", "45.000", "45000"]):
+        return "Paquete Cuidado Esencial"
+
+    if any(x in msg for x in ["60k", "60 mil", "60.000", "60000"]):
+        return "Paquete Salud Activa"
+
+    if any(x in msg for x in ["75k", "75 mil", "75.000", "75000"]):
+        return "Paquete Bienestar Total"
+
     return None
 
 def extract_datetime_info(msg: str) -> tuple[str, str]:
@@ -266,8 +262,12 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
     
     if dt_local:
         
-        # Check if time was explicitly mentioned (H:MM or HH:MM followed by AM/PM or words)
-        explicit_time_found = re.search(r'\d{1,2}(:\d{2})?\s*(am|pm|a\.m|p\.m|mañana|tarde|noche|hr|hrs|h)\b', msg.lower())
+        # FIX: Robust regex to capture explicit time, including formats like "8am" (no space).
+        # Catches: 8am, 8:00pm, 15h, 10 mañana
+        explicit_time_found = re.search(
+            r'\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|mañana|tarde|noche|hr|hrs|h)\b', 
+            msg.lower()
+        )
         
         # If a date was found
         dt_local = dt_local.astimezone(LOCAL_TZ)
@@ -278,7 +278,7 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
              # If only a past date was provided (e.g. "yesterday"), return empty date/time to re-prompt.
              return "", ""
 
-        # Only assign time if it was explicit OR if dateparser found a non-default hour (not 9 AM).
+        # Only assign time if it was explicit OR if dateparser found a non-default hour (not 9 AM, the dateparser default).
         if explicit_time_found or dt_local.hour != 9:
             time_str = dt_local.strftime("%H:%M")
         else:
