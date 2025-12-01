@@ -87,7 +87,7 @@ DEFAULT_SESSION = {
     "booking_started": False,
     "info_mode": False,
     "greeted": False,
-    "awaiting_confirmation": False, # FIX 7: New state flag
+    "awaiting_confirmation": False, # New state flag
 }
 
 def get_session(phone: str) -> dict:
@@ -102,7 +102,7 @@ def get_session(phone: str) -> dict:
         if response.data and response.data.get('data'):
             session_data = response.data['data']
             session_data['phone'] = phone # Ensure phone is always present
-            # Merge with default to ensure all keys are present for new flags (like awaiting_confirmation)
+            # Merge with default to ensure all keys are present for new flags
             return {**DEFAULT_SESSION, **session_data} 
         
         # New session
@@ -187,7 +187,7 @@ def save_reservation(data: dict):
 
         # SUCCESSFUL RESERVATION MESSAGE
         return (
-            "✅ *¡Reserva confirmada!*\n"
+            "✅ *¡Reservación confirmada!*\n"
             f"👤 Estudiante: {data['student_name']}\n"
             f"🎒 Colegio: {data.get('school', 'N/A')}\n"
             f"📦 Paquete: {data.get('package','N/A')}\n"
@@ -211,7 +211,6 @@ PACKAGE_MAPPING = {
 def detect_package(msg: str) -> str | None:
     """
     Robustly detects the package based on keywords or price.
-    FIX 3: Limited matching to full words using \b (word boundary).
     """
     msg = msg.lower().strip()
     
@@ -234,9 +233,6 @@ def detect_package(msg: str) -> str | None:
 def extract_datetime_info(msg: str) -> tuple[str, str]:
     """
     Uses dateparser to extract date and time.
-    FIX 4: If no time is found, time is returned as empty string ("").
-    
-    Note: Refined logic to check for explicit time mentioned or if the time is NOT the default 9 AM.
     """
     dt_local = dateparser.parse(
         msg,
@@ -266,8 +262,7 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
              # If only a past date was provided (e.g. "yesterday"), return empty date/time to re-prompt.
              return "", ""
 
-        # FIX 4 REFINEMENT: Only assign time if it was explicit OR if dateparser found a non-default hour.
-        # We assume 9 AM is the most common default hour when only a date is mentioned.
+        # Only assign time if it was explicit OR if dateparser found a non-default hour (not 9 AM).
         if explicit_time_found or dt_local.hour != 9:
             time_str = dt_local.strftime("%H:%M")
         else:
@@ -319,7 +314,6 @@ def extract_age_cedula(msg: str, session: dict):
 def extract_student_name(msg: str) -> str | None:
     """
     Finds a likely student name.
-    FIX 2: Removed unsafe uppercase-based name detection heuristic, kept pattern matching.
     """
     msg_lower = msg.lower()
     
@@ -355,7 +349,7 @@ def extract_student_name(msg: str) -> str | None:
 def update_session_with_info(msg: str, session: dict):
     """
     Master function to extract and update all session parameters.
-    FIX 5: Overwriting is always enabled if a new value is found. 
+    Overwriting is always enabled if a new value is found. 
     """
     
     # 1. Data extraction
@@ -365,8 +359,7 @@ def update_session_with_info(msg: str, session: dict):
     new_date, new_time = extract_datetime_info(msg)
     extract_age_cedula(msg, session) # Updates session in place
 
-    # 2. Apply extracted data: ALWAYS overwrite if a valid value is extracted (Fix 5)
-    # This automatically handles corrections, as the new, corrected value overwrites the old one.
+    # 2. Apply extracted data: ALWAYS overwrite if a valid value is extracted
     if new_name:
         session["student_name"] = new_name
     
@@ -411,7 +404,7 @@ def detect_explicit_intent(msg: str, session: dict) -> str | None:
     for intent in priority:
         for p in INTENTS[intent]["patterns"]:
             if p in msg:
-                # FIX 7: Confirmation is now only accepted if awaiting_confirmation is True
+                # Confirmation is only accepted if awaiting_confirmation is True
                 if intent == "confirmation" and not session.get("awaiting_confirmation"):
                     continue
                 return intent
@@ -441,7 +434,6 @@ def build_missing_fields_message(session: dict) -> str | None:
 def finish_booking_summary(session: dict) -> str:
     """
     Generates the confirmation summary message and sets the 'awaiting_confirmation' flag.
-    FIX 7: Sets session["awaiting_confirmation"] = True.
     """
     session["awaiting_confirmation"] = True
     save_session(session) # Save state before returning response
@@ -505,12 +497,12 @@ def handle_package_info(msg, session):
     )
 
 def handle_booking_request(msg, session):
-    # FIX 6: booking_started is only set here, by explicit intent
+    # booking_started is only set here, by explicit intent
     session["booking_started"] = True
     session["info_mode"] = False
     session["awaiting_confirmation"] = False # Ensure we are not awaiting confirmation yet
     
-    # Try to extract info from the same message (Already done in process_message step 1)
+    # Extraction already happened if intent was detected (in process_message)
 
     missing_message = build_missing_fields_message(session)
     if not missing_message:
@@ -522,7 +514,7 @@ def handle_booking_request(msg, session):
 
 
 def handle_confirmation(msg, session):
-    # FIX 7: This handler should only be called if awaiting_confirmation is True
+    # This handler should only be called if awaiting_confirmation is True
     
     # 1. Final check for completeness (redundant but safe)
     required = [session.get(f) for f in ["student_name", "school", "package", "date", "time", "age", "cedula"]]
@@ -549,9 +541,10 @@ def handle_modify(msg, session):
     # If not already booking, start the flow
     if not session["booking_started"]:
         session["booking_started"] = True
-    # If the user provided a date/time in the modify message, the update_session_with_info 
-    # (in process_message) already captured it. Now check what's missing.
+    
+    # Extraction already happened if intent was detected (in process_message)
     missing = build_missing_fields_message(session)
+    
     if missing:
         # If changing date/time was the goal, and it's still missing:
         if "fecha" in missing:
@@ -632,24 +625,47 @@ def natural_tone(text: str) -> str:
 
 def process_message(msg: str, session: dict) -> str:
     """
-    The central state machine logic.
-    FIX: Prioritized high-level intents (Confirmation, Modify, Cancel) over 
-    the general booking flow check (session["booking_started"]), resolving the deadlock.
+    The central state machine logic, with intent-gated data extraction.
     """
     
-    # 1. Extract and update all info from the incoming message (allows corrections to overwrite data)
-    update_session_with_info(msg, session)
+    # 1. Detect Intent (NO SIDE EFFECTS)
+    intent = detect_explicit_intent(msg, session)
     
-    # 2. Handle contextual/general questions (e.g., 'What are your hours?')
+    # 2. GATED DATA EXTRACTION LOGIC (Applying the user's safety fix)
+    should_extract = False
+    
+    # Case 1: Explicitly starting a booking or modifying
+    if intent in ["booking_request", "modify"]:
+        should_extract = True
+        
+    # Case 2: User is in the booking flow (booking_started=True)
+    if session.get("booking_started") and not should_extract:
+        # FIX 1: Removed "confirmation" from flow-breaking commands.
+        is_breaking_command = intent in ["cancel", "package_info", "greeting"] 
+        
+        # FIX 2: Removed "ok" and "listo" from generic phrases to allow data extraction.
+        msg_lower = msg.lower()
+        is_generic_phrase = any(x in msg_lower for x in [
+            "gracias", "espera", "un momento", "repiteme", "repetir",
+            "horario", "ubicacion", "proceso",
+            "cómo funciona", "como funciona",
+            "bueno", "chao", "bye", "escribe", "escribo"
+        ])
+        
+        if not is_breaking_command and not is_generic_phrase:
+            # If it's not a command and not a generic phrase, assume it's data
+            should_extract = True
+
+    if should_extract:
+        # 3. Perform Extraction
+        update_session_with_info(msg, session)
+    
+    # 4. Handle Contextual/General Questions (CALLED HERE TO ALLOW SIDE-EFFECTS/RESPONSE)
     contextual_response = handle_contextual(msg, session)
     if contextual_response:
         return natural_tone(contextual_response)
 
-    # 3. Detect Explicit Intent (Must use the updated session for confirmation check)
-    intent = detect_explicit_intent(msg, session)
-    
-    # 4. Handle high-level, disruptive intents (CONFIRMATION, CANCEL, MODIFY, BOOKING REQUEST, PACKAGE INFO)
-    # This must happen BEFORE the general 'booking_started' flow to prevent deadlock.
+    # 5. Handle High-Priority Intents (Confirmation, Cancel, Modify, Booking, Info, Greeting)
     if intent and intent in INTENTS:
         handler = globals()[INTENTS[intent]["handler"]]
         
@@ -659,27 +675,24 @@ def process_message(msg: str, session: dict) -> str:
         
         # B. Handle other high-level, non-confirmation intents
         if intent in ["cancel", "modify", "booking_request", "package_info", "greeting"]:
-            # NOTE: handle_booking_request resets flags and starts the flow.
             return natural_tone(handler(msg, session))
         
-    # 5. Handle Booking/Continuation Flow
+    # 6. Handle Booking Continuation Flow (If extraction didn't lead to a final response)
     if session["booking_started"]:
         missing_message = build_missing_fields_message(session)
         
         # A. ALL FIELDS COMPLETE -> Show Final Summary (sets awaiting_confirmation=True)
         if not missing_message:
-            # Re-prompts for confirmation if the user hasn't confirmed yet (awaiting_confirmation=True)
-            # or if awaiting_confirmation=False (e.g., they just finished filling all fields).
             return natural_tone(finish_booking_summary(session))
         
         # B. FIELDS MISSING -> Ask for the next missing piece
         return natural_tone(missing_message)
 
-    # 6. Default Response (Greeting or general prompt)
+    # 7. Default/Fallback
     if not session["greeted"]:
+        # If no explicit intent was found and the user hasn't been greeted, greet them.
         return natural_tone(handle_greeting(msg, session))
 
-    # 7. Fallback
     return "Disculpa, no entendí bien. ¿Me lo repites o me indicas si quieres *agendar una cita* o saber sobre los *paquetes*? 😊"
 
 
