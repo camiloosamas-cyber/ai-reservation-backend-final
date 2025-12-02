@@ -21,7 +21,7 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-app = FastAPI(title="AI Reservation System", version="1.0.3")
+app = FastAPI(title="AI Reservation System", version="1.0.5")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -236,9 +236,6 @@ def detect_package(msg: str) -> str | None:
 def extract_datetime_info(msg: str) -> tuple[str, str]:
     """
     Uses manual regex and dateparser to robustly extract date and time from complex messages.
-    
-    🔥 FIX: Implements immediate return upon successful manual date + regex time extraction 
-    to prevent fallbacks from overwriting valid results.
     """
     
     msg_lower = msg.lower()
@@ -321,7 +318,7 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
             if parsed_time:
                 time_str = parsed_time.strftime("%H:%M")
                 
-                # 🔥 CRITICAL FIX: If we have BOTH date and time -> RETURN NOW
+                # CRITICAL FIX: If we have BOTH date and time -> RETURN NOW
                 return date_str, time_str 
 
         # --- 5. FALLBACK TIME: Use dateparser's time if no explicit time was found ---
@@ -359,7 +356,7 @@ def extract_age_cedula(msg: str, session: dict):
     """Extracts age and cedula if they are reasonable numbers."""
     
     # AGE DETECTION (1-2 digits, 1-20 range)
-    if not session["age"]:
+    if not session.get("age"):
         age_match = re.search(r"\b(\d{1,2})\s*(años|anos|año|ano)?\b", msg.lower())
         if age_match:
             age_num = int(age_match.group(1))
@@ -367,7 +364,7 @@ def extract_age_cedula(msg: str, session: dict):
                 session["age"] = age_num
 
     # CEDULA DETECTION (5-12 digits)
-    if not session["cedula"]:
+    if not session.get("cedula"):
         ced_match = re.search(r"(?<!:)(\b\d{5,12}\b)(?!:)", msg)
         if ced_match:
             session["cedula"] = ced_match.group(1)
@@ -375,8 +372,6 @@ def extract_age_cedula(msg: str, session: dict):
 def extract_student_name(msg: str) -> str | None:
     """
     Extracts student name from natural Spanish messages.
-    
-    🔧 FIX: Stricter checking to avoid common prepositions as names (e.g., "De").
     """
     text = msg.lower()
 
@@ -392,7 +387,7 @@ def extract_student_name(msg: str) -> str | None:
             raw
         )[0].strip()
 
-        # 🔥 FIX 1: AVOID FALSE POSITIVES ("De", "La", "El", etc.)
+        # FIX: AVOID FALSE POSITIVES ("De", "La", "El", etc.)
         if raw in ["de", "del", "la", "el", "al", "en", "con"]:
             return None
         
@@ -403,7 +398,7 @@ def extract_student_name(msg: str) -> str | None:
 
     # 4. Fallback: Detect if the user sent only capitalized words (e.g., "Juan Perez")
     
-    # 🔥 FIX 2: ENHANCED NOISE WORDS LIST (includes more prepositions)
+    # FIX: ENHANCED NOISE WORDS LIST 
     noise_words = [
         "quiero","cita","reservar","agendar","necesito","la","el","una","un",
         "hora","fecha","dia","día","por","favor","gracias","me","referia",
@@ -475,13 +470,26 @@ INTENTS["package_info"]["patterns"] = [
 INTENTS["greeting"]["patterns"] = ["hola","buenas","buenos dias","buen dia","buenas tardes","buenas noches","disculpa","una pregunta","consulta","informacion","quisiera saber"]
 INTENTS["booking_request"]["patterns"] = ["quiero reservar","quiero una cita","quiero agendar","necesito una cita","quiero el examen","me pueden reservar","agendar cita","reservar examen","separar cita"]
 INTENTS["modify"]["patterns"] = ["cambiar cita","cambiar la cita","quiero cambiar","cambiar hora","cambiar fecha","mover cita","reagendar"]
-INTENTS["cancel"]["patterns"] = ["cancelar","cancelar cita","anular","quitar la cita","ya no quiero la cita"]
+
+# ✅ FIX #1 — Confirmación más natural
 INTENTS["confirmation"]["patterns"] = [
     "confirmo",
     "sí confirmo",
     "si confirmo",
-    "confirmar"
-] 
+    "confirmar",
+    "si",
+    "sí",
+    "ok",
+    "vale",
+    "dale",
+    "listo",
+    "correcto",
+    "está bien",
+    "esta bien",
+    "confirmado"
+]
+
+INTENTS["cancel"]["patterns"] = ["cancelar","cancelar cita","anular","quitar la cita","ya no quiero la cita"]
 
 def detect_explicit_intent(msg: str, session: dict) -> str | None:
     """
@@ -496,11 +504,11 @@ def detect_explicit_intent(msg: str, session: dict) -> str | None:
         for p in INTENTS[intent]["patterns"]:
             
             if intent == "confirmation":
-                # Confirmation intent is only detected if the message is a PURE match.
+                # Only accept if the message is a PURE match against the natural confirmation list
                 if msg_stripped == p:
-                    # Only return intent if awaiting confirmation is True (safe guard)
+                    # Permitir confirmaciones naturales (sólo si se está esperando confirmación)
                     if session.get("awaiting_confirmation"):
-                        return intent
+                        return "confirmation"
                     continue 
 
             else:
@@ -512,18 +520,18 @@ def detect_explicit_intent(msg: str, session: dict) -> str | None:
 def build_missing_fields_message(session: dict) -> str | None:
     """Generates a friendly message listing only the required missing fields."""
     missing = []
-    if not session["student_name"]: missing.append("el *nombre* del estudiante")
-    if not session["school"]: missing.append("el *colegio*")
-    if not session["package"]: missing.append("el *paquete* (ej: Esencial, Activa, Total)")
-    if not session["date"] or not session["time"]: missing.append("la *fecha* y *hora* de la cita")
-    if not session["age"]: missing.append("la *edad* del estudiante")
-    if not session["cedula"]: missing.append("la *cédula* del estudiante")
+    if not session.get("student_name"): missing.append("el *nombre* del estudiante")
+    if not session.get("school"): missing.append("el *colegio*")
+    if not session.get("package"): missing.append("el *paquete* (ej: Esencial, Activa, Total)")
+    if not session.get("date") or not session.get("time"): missing.append("la *fecha* y *hora* de la cita")
+    if not session.get("age"): missing.append("la *edad* del estudiante")
+    if not session.get("cedula"): missing.append("la *cédula* del estudiante")
 
     if not missing:
         return None
 
     if len(missing) == 1:
-        return f"Listo, solo me falta {missing[0]}. ¿Me lo compartes porfa? 🙏"
+        return f"Listo 😊, solo me falta {missing[0]}. ¿Me lo compartes porfa? 🙏"
     
     joined = ", ".join(missing[:-1]) + " y " + missing[-1]
     return f"¡Perfecto! Para continuar, necesito estos datos: {joined}. ¿Me los colaboras? 🙏"
@@ -649,7 +657,7 @@ def handle_contextual(msg: str, session: dict) -> str | None:
     """Handles non-booking questions (hours, location, process)."""
     text = msg.lower().strip()
     
-    if text not in INTENTS["confirmation"]["patterns"] and session["awaiting_confirmation"]:
+    if text not in INTENTS["confirmation"]["patterns"] and session.get("awaiting_confirmation"):
         session["awaiting_confirmation"] = False
         save_session(session)
     
@@ -669,7 +677,7 @@ def handle_contextual(msg: str, session: dict) -> str | None:
         )
         
     if any(x in text for x in ["puedes repetir", "puede repetir", "repiteme", "repite"]):
-        if session["booking_started"]:
+        if session.get("booking_started"):
             missing = build_missing_fields_message(session)
             if missing:
                 return missing
@@ -719,8 +727,14 @@ def process_message(msg: str, session: dict) -> str:
 
     if not is_pure_confirmation:
         # 3. Perform Extraction 
-        update_session_with_info(msg, session)
         
+        # --- Capture Old State for Modification Check (NEW FIX) ---
+        old_date = session.get("date")
+        old_time = session.get("time")
+
+        # Perform the actual data update (updates session dict in place and saves to DB)
+        update_session_with_info(msg, session)
+
         # 🔥 SUPER PRIORIDAD: Si ya tenemos todos los datos, ignorar intents
         required_fields = ["student_name", "school", "package", "date", "time", "age", "cedula"]
         if all(session.get(f) for f in required_fields):
@@ -731,8 +745,27 @@ def process_message(msg: str, session: dict) -> str:
         # Force booking_started=True if ANY relevant data was captured.
         if session.get("student_name") or session.get("school") or session.get("package") or session.get("date") or session.get("time"):
             session["booking_started"] = True
-            save_session(session)
-    
+            # NOTE: session is already saved in update_session_with_info.
+
+        # --- AUTO MODIFY DETECTION (MEJORADA) ---
+        # Check for modification only if a booking is already underway and we are not confirming.
+        if session.get("booking_started") and not session.get("awaiting_confirmation"):
+
+            modify = False
+
+            # Compare the new values (now in session) against the old state captured earlier.
+            if session.get("date") and session.get("date") != old_date:
+                modify = True
+
+            if session.get("time") and session.get("time") != old_time:
+                modify = True
+
+            # Si hubo cambio real → activar flujo de modificación
+            if modify:
+                # The session is already saved with the new data from update_session_with_info.
+                # We return the modify message and skip the rest of the intent logic.
+                return natural_tone("Perfecto 😊, actualicé la fecha y/o la hora. ¿Deseas confirmar la cita? (Responde *Confirmo*)")
+
     # 4. Handle Contextual/General Questions (High Priority Response)
     contextual_response = handle_contextual(msg, session)
     if contextual_response:
@@ -762,7 +795,8 @@ def process_message(msg: str, session: dict) -> str:
         return natural_tone(missing_message)
 
     # 7. Default/Fallback
-    if not session["greeted"]:
+    # ✅ FIX #3 — Evitar que el bot envíe saludo en mitad de la reserva
+    if not session["greeted"] and not session.get("booking_started"):
         return natural_tone(handle_greeting(msg, session))
 
     return "Disculpa, no entendí bien. ¿Me lo repites o me indicas si quieres *agendar una cita* o saber sobre los *paquetes*? 😊"
@@ -802,4 +836,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.5)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
