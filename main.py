@@ -21,7 +21,7 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-app = FastAPI(title="AI Reservation System", version="1.0.0")
+app = FastAPI(title="AI Reservation System", version="1.0.3")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -72,9 +72,8 @@ RESERVATION_TABLE = "reservations"
 SESSION_TABLE = "sessions"
 BUSINESS_ID = 2 # Fixed for this specific business instance
 
-# --- 2. DATABASE & SESSION MANAGEMENT (SCALABILITY FIX) ---
+# --- 2. DATABASE & SESSION MANAGEMENT ---
 
-# CRITICAL FIX: Session management is now externalized to Supabase
 DEFAULT_SESSION = {
     "phone": None,
     "student_name": None,
@@ -100,27 +99,21 @@ def get_session(phone: str) -> dict:
     try:
         response = supabase.table(SESSION_TABLE).select("data").eq("phone", phone).maybe_single().execute()
 
-        # SAFETY CHECKS — THIS FIXES THE ERROR from Supabase returning unexpected data
-        # 1. Check if response is None or lacks the 'data' attribute
         if not response or not hasattr(response, "data") or response.data is None:
             new_session = DEFAULT_SESSION.copy()
             new_session['phone'] = phone
             return new_session
 
-        # 2. Check if the row exists but the 'data' field itself is None
         if response.data.get("data") is None:
             new_session = DEFAULT_SESSION.copy()
             new_session['phone'] = phone
             return new_session
 
-        # 3. If correct data exists
         session_data = response.data["data"]
         session_data["phone"] = phone
-        # Merge with default to ensure all keys (like new flags) are present
         return {**DEFAULT_SESSION, **session_data}
 
     except Exception as e:
-        # Fallback in case of network/connection errors
         print(f"Error retrieving session for {phone}: {e}")
         new_session = DEFAULT_SESSION.copy()
         new_session["phone"] = phone
@@ -133,8 +126,6 @@ def save_session(session: dict):
     phone = session.get("phone")
     if not phone: return
 
-    # Store the entire session dictionary under the 'data' column
-    # We must exclude 'phone' from the 'data' object as it's the PK in the table
     data_to_store = {k: v for k, v in session.items() if k != 'phone'}
 
     try:
@@ -147,7 +138,7 @@ def save_session(session: dict):
     except Exception as e:
         print(f"Error saving session for {phone}: {e}")
 
-# --- 3. RESERVATION HELPERS (No changes needed here) ---
+# --- 3. RESERVATION HELPERS ---
 
 def assign_table(iso_local: str):
     """Assigns the first available table for a specific datetime."""
@@ -381,7 +372,6 @@ def extract_age_cedula(msg: str, session: dict):
         if ced_match:
             session["cedula"] = ced_match.group(1)
 
-
 def extract_student_name(msg: str) -> str | None:
     """
     Extracts student name from natural Spanish messages.
@@ -546,7 +536,7 @@ def finish_booking_summary(session: dict) -> str:
     save_session(session) # Save state before returning response
 
     return (
-        f"Listo, ya tengo toda la información:\n\n"
+        f"Listo 😊, ya tengo toda la información:\n\n"
         f"👤 Estudiante: {session.get('student_name', 'N/A')}\n"
         f"🎒 Colegio: {session.get('school', 'N/A')}\n"
         f"📦 Paquete: {session.get('package', 'N/A')}\n"
@@ -718,7 +708,7 @@ def process_message(msg: str, session: dict) -> str:
     The central state machine logic, with the final, robust extraction policy.
     """
     
-    # 1. Detect Intent (NO SIDE EFFECTS)
+    # 1. Detect Intent (NO SIDE EFFECTS) - Must be done early for handler logic
     intent = detect_explicit_intent(msg, session)
     
     # 2. HIGH-CAPTURE DATA EXTRACTION LOGIC
@@ -730,6 +720,13 @@ def process_message(msg: str, session: dict) -> str:
     if not is_pure_confirmation:
         # 3. Perform Extraction 
         update_session_with_info(msg, session)
+        
+        # 🔥 SUPER PRIORIDAD: Si ya tenemos todos los datos, ignorar intents
+        required_fields = ["student_name", "school", "package", "date", "time", "age", "cedula"]
+        if all(session.get(f) for f in required_fields):
+            session["booking_started"] = True
+            save_session(session)
+            return natural_tone(finish_booking_summary(session)) # SALTO DIRECTO
         
         # Force booking_started=True if ANY relevant data was captured.
         if session.get("student_name") or session.get("school") or session.get("package") or session.get("date") or session.get("time"):
@@ -757,7 +754,7 @@ def process_message(msg: str, session: dict) -> str:
     if session["booking_started"]:
         missing_message = build_missing_fields_message(session)
         
-        # A. ALL FIELDS COMPLETE -> Show Final Summary
+        # A. ALL FIELDS COMPLETE -> Show Final Summary (Fallback check)
         if not missing_message:
             return natural_tone(finish_booking_summary(session))
         
