@@ -21,7 +21,8 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-app = FastAPI(title="AI Reservation System", version="1.0.5")
+# ✅ VERSION 1.0.7 - Stable
+app = FastAPI(title="AI Reservation System", version="1.0.7")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -192,7 +193,7 @@ def save_reservation(data: dict):
             "✅ *¡Reservación confirmada!*\n"
             f"👤 Estudiante: {data['student_name']}\n"
             f"🎒 Colegio: {data.get('school', 'N/A')}\n"
-            f"📦 Paquete: {data.get('package','N/A')}\n"
+            f"📦 Paquete: {data.get('package', 'N/A')}\n"
             f"📅 Fecha/Hora: {dt_local.strftime('%Y-%m-%d %H:%M')} ({LOCAL_TZ.key.split('/')[-1]})"
         )
     except PostgrestAPIError as e:
@@ -256,12 +257,14 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
     if not date_str:
         dt_local = dateparser.parse(
             msg,
+            languages=["es"],
             settings={
                 "TIMEZONE": LOCAL_TZ.key,
                 "TO_TIMEZONE": LOCAL_TZ.key,
                 "RETURN_AS_TIMEZONE_AWARE": True,
                 "PREFER_DATES_FROM": "future",
                 "STRICT_PARSING": False,
+                "RELATIVE_BASE": datetime.now(LOCAL_TZ) 
             }
         )
         if dt_local:
@@ -308,10 +311,12 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
             # Convert to 24h
             parsed_time = dateparser.parse(
                 f"{date_str} {raw_time}", 
+                languages=["es"], # Critical for Spanish time parsing
                 settings={
                     "TIMEZONE": LOCAL_TZ.key,
                     "TO_TIMEZONE": LOCAL_TZ.key,
-                    "RETURN_AS_TIMEZONE_AWARE": True
+                    "RETURN_AS_TIMEZONE_AWARE": True,
+                    "RELATIVE_BASE": datetime.now(LOCAL_TZ) 
                 }
             )
             
@@ -333,19 +338,16 @@ def extract_school_name(msg: str) -> str | None:
     
     # Prioritize 'colegio X' over raw names
     patterns = [
-        r"(del\s+|de\s+|la\s+)?(colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+)",
+        r"(?:del\s+|de\s+|la\s+)?(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+)",
         r"(colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+)",
     ]
 
     for p in patterns:
         m = re.search(p, msg_clean)
         if m:
-            # Group 3 is usually the name part after the school type
-            if len(m.groups()) == 3:
-                name = m.group(3).strip()
-            else:
-                name = m.group(2).strip()
-
+            # Group 1 is the name part after the school type
+            name = m.group(1).strip()
+            
             # Split only by explicit punctuation or very clear separators (like date/time markers)
             name = re.split(r"[,.!?\n]| a las | a la | mañana | hoy | pasado mañana", name)[0]
             if name and len(name.split()) > 1:
@@ -415,10 +417,12 @@ def extract_student_name(msg: str) -> str | None:
 
     return None
 
-def update_session_with_info(msg: str, session: dict):
+def update_session_with_info(msg: str, session: dict) -> tuple[str, str]:
     """
     Master function to extract and update all session parameters.
     Overwriting is always enabled if a new value is found. 
+    
+    Returns the extracted date and time for use in the process_message flow control.
     """
     
     # 1. Data extraction
@@ -438,14 +442,17 @@ def update_session_with_info(msg: str, session: dict):
     if new_package:
         session["package"] = new_package
 
+    # ✅ FIX #1: Correctly overwrite date/time only if extracted value is not empty ("")
     if new_date:
         session["date"] = new_date
-        # Only overwrite time if a valid time was extracted OR if the date extraction forced time to be empty ("")
-        if new_time is not None: 
-            session["time"] = new_time
+    if new_time: 
+        session["time"] = new_time
+    # --- END FIX #1 ---
     
     # 3. Save the updated session state
     save_session(session)
+    
+    return new_date, new_time # <-- Return extracted values
 
 # --- 5. INTENT & CONTEXTUAL HANDLING ---
 
@@ -471,7 +478,6 @@ INTENTS["greeting"]["patterns"] = ["hola","buenas","buenos dias","buen dia","bue
 INTENTS["booking_request"]["patterns"] = ["quiero reservar","quiero una cita","quiero agendar","necesito una cita","quiero el examen","me pueden reservar","agendar cita","reservar examen","separar cita"]
 INTENTS["modify"]["patterns"] = ["cambiar cita","cambiar la cita","quiero cambiar","cambiar hora","cambiar fecha","mover cita","reagendar"]
 
-# ✅ FIX #1 — Confirmación más natural
 INTENTS["confirmation"]["patterns"] = [
     "confirmo",
     "sí confirmo",
@@ -635,6 +641,7 @@ def handle_confirmation(msg, session):
     return response_msg
 
 def handle_modify(msg, session):
+    # This handler is only reached via explicit intent. Auto-modify is handled in process_message.
     session["awaiting_confirmation"] = False
     if not session["booking_started"]:
         session["booking_started"] = True
@@ -665,7 +672,8 @@ def handle_contextual(msg: str, session: dict) -> str | None:
         return "Nuestros horarios son de lunes a viernes de 7:00 AM a 5:00 PM y sábados de 7:00 AM a 1:00 PM 😊"
     
     if any(x in text for x in ["donde queda", "ubicados", "direccion", "dirección"]):
-        return "Estamos ubicados en Bogotá, en la calle 75 #20-36. Te envío la ubicación exacta por mensaje. 📍"
+        # ✅ Confirmed Correct Address: Yopal, Calle 31 #29-61
+        return "Estamos ubicados en *Yopal*, en la *Calle 31 #29-61*. Te puedo enviar la ubicación exacta por mensaje si quieres. 📍"
     
     if any(x in text for x in ["como funciona", "cómo funciona", "proceso", "examen", "dura"]):
         return (
@@ -725,21 +733,24 @@ def process_message(msg: str, session: dict) -> str:
     confirmation_words = INTENTS["confirmation"]["patterns"]
     is_pure_confirmation = msg_lower in confirmation_words
 
+    # Only attempt extraction if it's NOT a pure confirmation
     if not is_pure_confirmation:
+        
         # 3. Perform Extraction 
         
-        # --- Capture Old State for Modification Check (NEW FIX) ---
+        # --- Capture Old State for Modification Check ---
         old_date = session.get("date")
         old_time = session.get("time")
 
         # Perform the actual data update (updates session dict in place and saves to DB)
-        update_session_with_info(msg, session)
+        # Captures new_date/new_time for the auto-modify check below
+        new_date, new_time = update_session_with_info(msg, session) 
 
         # 🔥 SUPER PRIORIDAD: Si ya tenemos todos los datos, ignorar intents
         required_fields = ["student_name", "school", "package", "date", "time", "age", "cedula"]
         if all(session.get(f) for f in required_fields):
             session["booking_started"] = True
-            save_session(session)
+            save_session(session) # Double save check
             return natural_tone(finish_booking_summary(session)) # SALTO DIRECTO
         
         # Force booking_started=True if ANY relevant data was captured.
@@ -748,8 +759,8 @@ def process_message(msg: str, session: dict) -> str:
             # NOTE: session is already saved in update_session_with_info.
 
         # --- AUTO MODIFY DETECTION (MEJORADA) ---
-        # Check for modification only if a booking is already underway and we are not confirming.
-        if session.get("booking_started") and not session.get("awaiting_confirmation"):
+        # ✅ FIX #2: Only trigger auto-modify if the user is in a booking state AND date/time was extracted from the message.
+        if session.get("booking_started") and not session.get("awaiting_confirmation") and (new_date or new_time):
 
             modify = False
 
@@ -795,7 +806,6 @@ def process_message(msg: str, session: dict) -> str:
         return natural_tone(missing_message)
 
     # 7. Default/Fallback
-    # ✅ FIX #3 — Evitar que el bot envíe saludo en mitad de la reserva
     if not session["greeted"] and not session.get("booking_started"):
         return natural_tone(handle_greeting(msg, session))
 
@@ -836,4 +846,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.5)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.7)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
