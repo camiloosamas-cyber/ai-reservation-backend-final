@@ -244,46 +244,101 @@ def detect_package(msg: str) -> str | None:
 
 def extract_datetime_info(msg: str) -> tuple[str, str]:
     """
-    Uses dateparser to extract date and time.
+    Uses manual regex and dateparser to robustly extract date and time from complex messages.
     """
-    dt_local = dateparser.parse(
-        msg,
-        settings={
-            "TIMEZONE": LOCAL_TZ.key,
-            "TO_TIMEZONE": LOCAL_TZ.key,
-            "RETURN_AS_TIMEZONE_AWARE": True,
-            "PREFER_DATES_FROM": "future",
-            "STRICT_PARSING": False,
-        }
-    )
-
+    
+    msg_lower = msg.lower()
+    today = datetime.now(LOCAL_TZ).date()
     date_str = ""
     time_str = ""
+    dt_local = None # Primary dateparser result for the full message
+
+    # --- 1. MANUAL DATE DETECTION (HIGH PRIORITY) ---
+    # This prevents dateparser from failing on date when the message is too rich in entities.
+    if "mañana" in msg_lower:
+        date_str = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+    elif "hoy" in msg_lower:
+        date_str = today.strftime("%Y-%m-%d")
+    elif "pasado mañana" in msg_lower:
+        date_str = (today + timedelta(days=2)).strftime("%Y-%m-%d")
     
-    if dt_local:
+    # --- 2. DATEPARSER FULL FALLBACK (For "el viernes", "10/12/2024", etc.) ---
+    if not date_str:
+        dt_local = dateparser.parse(
+            msg,
+            settings={
+                "TIMEZONE": LOCAL_TZ.key,
+                "TO_TIMEZONE": LOCAL_TZ.key,
+                "RETURN_AS_TIMEZONE_AWARE": True,
+                "PREFER_DATES_FROM": "future",
+                "STRICT_PARSING": False,
+            }
+        )
+        if dt_local:
+            dt_local = dt_local.astimezone(LOCAL_TZ)
+            date_str = dt_local.strftime("%Y-%m-%d")
+    
+    # --- 3. PAST DATE VALIDATION ---
+    if date_str:
+        try:
+            # Need to create a datetime object from the found date_str for comparison
+            parsed_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            if parsed_date < today:
+                return "", "" # Invalid past date
+        except ValueError:
+            pass # Should not happen if date_str is formatted correctly
+    
+    # Only proceed to time extraction if a valid date was found.
+    if date_str:
         
-        # 🔥 FINAL WORKING VERSION (REGEX CORREGIDO)
-        explicit_time_found = re.search(
+        # --- 4. ROBUST TIME EXTRACTION VIA REGEX & DATEPARSER (User's fix with IMMEDIATE RETURN) ---
+        explicit_time_match = re.search(
             r"(\b\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.)\b)"      # 8am, 8 am, 8a.m.
             r"|(\b\d{1,2}:\d{2}\s*(?:am|pm|a\.m\.|p\.m\.)?\b)"  # 8:00, 8:00am
             r"|(\ba\s+las\s+\d{1,2}(?::\d{2})?\b)"           # a las 8, a las 8:00
-            r"|(\b\d{1,2}\s*(mañana|tarde|noche)\b)",        # 8 mañana
+            r"|(\b\d{1,2}\s*(mañana|tarde|noche)\b)",        # 8 mañana, 8 de la tarde
             msg.lower()
         )
-        
-        # If a date was found
-        dt_local = dt_local.astimezone(LOCAL_TZ)
-        date_str = dt_local.strftime("%Y-%m-%d")
-        
-        # Check if the extracted date is in the past
-        if dt_local.date() < datetime.now(LOCAL_TZ).date():
-             # If only a past date was provided (e.g. "yesterday"), return empty date/time to re-prompt.
-             return "", ""
 
-        # ✅ FIX: Removed the buggy 09:00 AM fallback logic.
-        # We now trust dateparser if no explicit time was found.
-        time_str = dt_local.strftime("%H:%M")
+        if explicit_time_match:
+            raw_time = explicit_time_match.group(0)
+
+            # Normalize: remove "a las" and "a la"
+            raw_time = raw_time.replace("a las ", "").replace("a la ", "").strip()
+
+            # Add :00 if needed (e.g., "8am" -> "8:00am")
+            if ":" not in raw_time and any(x in raw_time.lower() for x in ["am","pm","a.m","p.m"]):
+                # This logic cleanly extracts the hour and appends :00 and the am/pm part
+                try:
+                    hour = re.findall(r"\d{1,2}", raw_time)[0]
+                    # Check for am/pm in the extracted raw_time
+                    ampm = re.search(r"(a\.?m\.?|p\.?m\.?)", raw_time.lower()).group(0)
+                    raw_time = f"{hour}:00{ampm}"
+                except (IndexError, AttributeError):
+                    pass # Fall back to the original raw_time if extraction fails
+
+            # Convert to 24h
+            parsed_time = dateparser.parse(
+                # Prepend the date we found to the time, to give dateparser context
+                f"{date_str} {raw_time}", 
+                settings={
+                    "TIMEZONE": LOCAL_TZ.key,
+                    "TO_TIMEZONE": LOCAL_TZ.key,
+                    "RETURN_AS_TIMEZONE_AWARE": True
+                }
+            )
             
+            if parsed_time:
+                time_str = parsed_time.strftime("%H:%M")
+                
+                # 🔥 CRITICAL FIX: If we have BOTH date and time -> RETURN NOW
+                return date_str, time_str 
+
+        # --- 5. FALLBACK TIME: Use dateparser's time if no explicit time was found ---
+        elif dt_local:
+             # If dateparser ran and found a time (even if it's the default 09:00), use it.
+             time_str = dt_local.strftime("%H:%M")
+             
     return date_str, time_str
 
 def extract_school_name(msg: str) -> str | None:
