@@ -280,15 +280,9 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
              # If only a past date was provided (e.g. "yesterday"), return empty date/time to re-prompt.
              return "", ""
 
-        # Always trust explicit times
-        if explicit_time_found:
-            time_str = dt_local.strftime("%H:%M")
-        else:
-            # If dateparser defaulted to 09:00 AND user didn't explicitly mention the number 9 -> ask again
-            if dt_local.hour == 9 and "9" not in msg.lower():
-                time_str = ""
-            else:
-                time_str = dt_local.strftime("%H:%M")
+        # ✅ FIX: Removed the buggy 09:00 AM fallback logic.
+        # We now trust dateparser if no explicit time was found.
+        time_str = dt_local.strftime("%H:%M")
             
     return date_str, time_str
 
