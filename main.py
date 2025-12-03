@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.8 - Stable
-app = FastAPI(title="AI Reservation System", version="1.0.8")
-print("🚀 AI Reservation System Loaded — Version 1.0.8 (Startup Confirmed)")
+# ✅ VERSION 1.0.10 - Stable
+app = FastAPI(title="AI Reservation System", version="1.0.10")
+print("🚀 AI Reservation System Loaded — Version 1.0.10 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -284,13 +284,13 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
     # Only proceed to time extraction if a valid date was found.
     if date_str:
         
-        # --- 4. ROBUST TIME EXTRACTION VIA REGEX & DATEPARSER ---
+        # --- 4. ROBUST TIME EXTRACTION VIA REGEX & DATEPARSER (FIX #4: ADDED [,\.]?) ---
         explicit_time_match = re.search(
-            r"(\b\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.)\b)"      # 8am, 8 am, 8a.m.
-            r"|(\b\d{1,2}:\d{2}\s*(?:am|pm|a\.m\.|p\.m\.)?\b)"  # 8:00, 8:00am
-            r"|(\ba\s+las\s+\d{1,2}(?::\d{2})?\b)"           # a las 8, a las 8:00
-            r"|(\b\d{1,2}\s*(mañana|tarde|noche)\b)",        # 8 mañana, 8 de la tarde
-            msg.lower()
+            r"(\b\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.)[,\.]?\b)"                      # 3pm, 3 pm, 3pm,
+            r"|(\b\d{1,2}:\d{2}\s*(?:am|pm|a\.m\.|p\.m\.)?[,\.]?\b)"             # 3:00, 3:00pm,
+            r"|(\ba\s+las\s+\d{1,2}(?::\d{2})?[,\.]?\b)"                         # a las 3, a las 3:00,
+            r"|(\b\d{1,2}\s*(mañana|tarde|noche)[,\.]?\b)",                      # 3 mañana,
+            msg_lower
         )
 
         if explicit_time_match:
@@ -298,6 +298,10 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
 
             # Normalize: remove "a las" and "a la"
             raw_time = raw_time.replace("a las ", "").replace("a la ", "").strip()
+            
+            # Remove trailing comma/dot
+            raw_time = raw_time.rstrip(',.')
+
 
             # Add :00 if needed (e.g., "8am" -> "8:00am")
             if ":" not in raw_time and any(x in raw_time.lower() for x in ["am","pm","a.m","p.m"]):
@@ -317,7 +321,8 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
                     "TIMEZONE": LOCAL_TZ.key,
                     "TO_TIMEZONE": LOCAL_TZ.key,
                     "RETURN_AS_TIMEZONE_AWARE": True,
-                    "RELATIVE_BASE": datetime.now(LOCAL_TZ) 
+                    "RELATIVE_BASE": datetime.now(LOCAL_TZ),
+                    "STRICT_PARSING": False # <-- FIX #5: CRITICAL FOR ROBUST TIME PARSING
                 }
             )
             
@@ -409,7 +414,7 @@ def extract_student_name(msg: str) -> str | None:
     noise_words = [
         "quiero","cita","reservar","agendar","necesito","la","el","una","un",
         "hora","fecha","dia","día","por","favor","gracias","me","referia",
-        "refería","perdon","perdón","mejor","si","sí","ok","dale","listo",
+        "refería","perdon","perdón","mejor","si","sí","ok","vale","dale","listo",
         "perfecto","super","claro","de","del","al","mi","es","se","llama",
         "hijo","hija","bueno","mañana","tarde","noche","am","pm","para",
         "del", "en", "con", "a", "los", "las", "y", "o"
@@ -868,4 +873,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.8)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.10)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
