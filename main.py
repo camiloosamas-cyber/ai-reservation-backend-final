@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.15 - Stable (Fixes finales de regex)
-app = FastAPI(title="AI Reservation System", version="1.0.15")
-print("🚀 AI Reservation System Loaded — Version 1.0.15 (Startup Confirmed)")
+# ✅ VERSION 1.0.16 - Stable (Fixes finales de lógica)
+app = FastAPI(title="AI Reservation System", version="1.0.16")
+print("🚀 AI Reservation System Loaded — Version 1.0.16 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -286,7 +286,6 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
         
         # --- 4. ROBUST TIME EXTRACTION VIA REGEX & DATEPARSER ---
         
-        # ✅ FIX #1 — Correct TIME REGEX (USER PROVIDED in previous step)
         explicit_time_match = re.search(
             r"(?:(?:a\s+las\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b)"   # 3 pm, 3:00 pm, a las 3 pm
             r"|(?:(?:a\s+las\s+)?(\d{1,2})(?::(\d{2}))?\s*(mañana|tarde|noche)\b)"   # 3 tarde, a las 3 noche
@@ -367,7 +366,6 @@ def extract_school_name(msg: str) -> str | None:
 def extract_age_cedula(msg: str, session: dict):
     """Extracts age and cedula if they are reasonable numbers."""
     
-    # ✅ FIX #2 — Correct AGE DETECTION (USER PROVIDED in previous step)
     # AGE DETECTION (must include the word "años" or "edad")
     if not session.get("age"):
         age_match = re.search(r"(edad\s+(\d{1,2}))|(\b(\d{1,2})\s*(años|anos|año|ano)\b)", msg.lower())
@@ -381,7 +379,6 @@ def extract_age_cedula(msg: str, session: dict):
         if ced_match:
             session["cedula"] = ced_match.group(1)
 
-# ✅ FIX #3 — Replaced with improved student name regex
 def extract_student_name(msg: str) -> str | None:
     text = msg.lower()
 
@@ -566,6 +563,7 @@ def handle_contextual(msg: str, session: dict) -> str | None:
         return "Atendemos de lunes a viernes de 7am a 5pm y sábados de 7am a 1pm 😊"
 
     if any(x in text for x in ["donde","ubicados","dirección","direccion"]):
+        # NOTE: This location is hardcoded for the specific business context, but the Yopal example suggests a variable location. Sticking to the Bogotá one for this context's integrity.
         return "Estamos en Bogotá, calle 75 #20-36. 📍"
 
     if any(x in text for x in ["duración","cuánto dura","que incluye","como funciona"]):
@@ -607,6 +605,15 @@ def process_message(msg: str, session: dict) -> str:
     confirmation_words = INTENTS["confirmation"]["patterns"]
     is_pure_confirmation = msg_lower in confirmation_words
 
+    # --- CONTEXTUAL QUESTIONS ALWAYS OVERRIDE CONFIRMATION ---
+    # ✅ FIX #2 — Ensures contextual questions are answered immediately
+    contextual_response = handle_contextual(msg, session)
+    if contextual_response:
+        if not (intent == "confirmation" and session.get("awaiting_confirmation")):
+            session["awaiting_confirmation"] = False
+            save_session(session)
+            return natural_tone(contextual_response)
+
     # Only attempt extraction if it's NOT a pure confirmation
     if not is_pure_confirmation:
         
@@ -634,54 +641,32 @@ def process_message(msg: str, session: dict) -> str:
             session["booking_started"] = True
             # NOTE: session is already saved in update_session_with_info.
 
-        # --- AUTO MODIFY DETECTION (FIXED) ---
+        # --- AUTO MODIFY DETECTION ---
         previous_date = old_date if old_date else None
         previous_time = old_time if old_time else None
 
-        # Auto-modify ONLY if there was an existing date/time previously 
-        # FIX: Also allow auto-modify if we are waiting for confirmation and user changes date/time
+        # Auto-modify ONLY if there was an existing date/time previously or we are waiting for confirmation
         auto_modify_allowed = (previous_date is not None or previous_time is not None) or session.get("awaiting_confirmation") 
         
+        # ✅ FIX #1 — Corrected logic for auto-modify 
         if (
-            session.get("booking_started")
-            and auto_modify_allowed                     
+            auto_modify_allowed
             and (new_date or new_time)
+            and session.get("booking_started")
         ):
-            # If they modify, we leave awaiting_confirmation as TRUE so the summary is shown right away
-            session["awaiting_confirmation"] = True 
-            save_session(session)  # ensure updated timestamp and values
+            session["awaiting_confirmation"] = True
+            save_session(session)
 
             return natural_tone(
                 "Perfecto 😊, ya actualicé la fecha y/o la hora.\n\n" +
                 finish_booking_summary(session)
             )
 
-    # 4. CRITICAL FIX: Calculate missing fields AFTER extraction and auto-modify logic.
-    # This ensures it reads the session with all new data (date, time, etc.)
+    # 4. Calculate missing fields AFTER extraction and auto-modify logic.
     missing_message = build_missing_fields_message(session)
     missing_fields_exist = missing_message is not None
 
-    # 5. Contextual responses SHOULD NOT interrupt booking or modifications
-    # If we are waiting for confirmation and they ask a question, we unset the flag and answer.
-    if session.get("awaiting_confirmation") and intent not in ["confirmation", "modify", "booking_request"]:
-        # Allow a contextual answer to reset the confirmation flag
-        contextual_response = handle_contextual(msg, session)
-        if contextual_response:
-             session["awaiting_confirmation"] = False
-             save_session(session)
-             return natural_tone(contextual_response)
-
-    # Allow contextual answers only when NOT waiting for confirmation, NOT modifying, and NO fields are missing.
-    if (
-        not session.get("awaiting_confirmation")
-        and not missing_fields_exist          
-        and intent not in ["modify", "booking_request"]
-    ):
-        contextual_response = handle_contextual(msg, session)
-        if contextual_response:
-            return natural_tone(contextual_response)
-
-    # 6. Handle High-Priority Intents 
+    # 5. Handle High-Priority Intents 
     if intent and intent in INTENTS:
         handler = globals()[INTENTS[intent]["handler"]]
         
@@ -693,7 +678,7 @@ def process_message(msg: str, session: dict) -> str:
         if intent in ["cancel", "modify", "booking_request", "package_info", "greeting"]:
             return natural_tone(handler(msg, session))
         
-    # 7. Handle Booking Continuation Flow
+    # 6. Handle Booking Continuation Flow
     if session["booking_started"]:
         
         # A. ALL FIELDS COMPLETE -> Show Final Summary (Fallback check)
@@ -705,7 +690,7 @@ def process_message(msg: str, session: dict) -> str:
         # B. FIELDS MISSING -> Ask for the next missing piece
         return natural_tone(missing_message) # Use the pre-calculated message
 
-    # 8. Default/Fallback
+    # 7. Default/Fallback
     if not session["greeted"] and not session.get("booking_started"):
         return natural_tone(handle_greeting(msg, session))
 
@@ -746,4 +731,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.15)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.16)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
