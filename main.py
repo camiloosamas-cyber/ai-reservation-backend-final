@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.34 - Stable (Fix de Regex Universal de Hora, sin \b final)
-app = FastAPI(title="AI Reservation System", version="1.0.34")
-print("🚀 AI Reservation System Loaded — Version 1.0.34 (Startup Confirmed)")
+# ✅ VERSION 1.0.35 - Stable (Fix de Normalización de Hora para dateparser)
+app = FastAPI(title="AI Reservation System", version="1.0.35")
+print("🚀 AI Reservation System Loaded — Version 1.0.35 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -286,7 +286,7 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
         
         # --- 4. ROBUST TIME EXTRACTION VIA REGEX & DATEPARSER (CRITICAL FIX) ---
         
-        # 🔥 V1.0.34 FIX: Final Universal Regex (robust to punctuation, no \b end)
+        # 🔥 V1.0.34 Regex: Universal Regex (robust to punctuation, no \b end)
         explicit_time_match = re.search(
             r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?|am|pm|mañana|tarde|noche)",
             msg_lower
@@ -300,6 +300,9 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
             minute = explicit_time_match.group(2) or "00"
             period = explicit_time_match.group(3)
 
+            # 🔥 V1.0.35 FIX: Normalize period by removing all dots for dateparser compatibility
+            period = period.replace(".", "")
+            
             # raw_time needs space for dateparser to handle '8am' vs '8 am' vs '8 mañana'
             raw_time = f"{hour}:{minute} {period}"
             
@@ -768,4 +771,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.34)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.35)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
