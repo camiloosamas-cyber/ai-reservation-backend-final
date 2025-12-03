@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.25 - Stable (Fix de Flujo de Prioridad Final)
-app = FastAPI(title="AI Reservation System", version="1.0.25")
-print("🚀 AI Reservation System Loaded — Version 1.0.25 (Startup Confirmed)")
+# ✅ VERSION 1.0.26 - Stable (Con Logs de Extracción)
+app = FastAPI(title="AI Reservation System", version="1.0.26")
+print("🚀 AI Reservation System Loaded — Version 1.0.26 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -396,10 +396,22 @@ def extract_student_name(msg: str) -> str | None:
     return None
 
 def update_session_with_info(msg: str, session: dict):
+    
+    # 🔴 LOGGING INICIO 🔴
+    print("🟡 RAW USER MESSAGE:", msg)
+    print("🔵 SESSION BEFORE UPDATE (Date/Time):", session.get('date'), session.get('time'))
+    
     new_name = extract_student_name(msg)
     new_school = extract_school_name(msg)
     new_package = detect_package(msg)
+    
+    # Extract date/time (where the issue is suspected)
     new_date, new_time = extract_datetime_info(msg)
+    
+    # 🟢 LOGGING EXTRACCION 🟢
+    print("🟢 EXTRACTED new_date:", new_date)
+    print("🟢 EXTRACTED new_time:", new_time)
+    
     extract_age_cedula(msg, session)
 
     if new_name:
@@ -414,6 +426,10 @@ def update_session_with_info(msg: str, session: dict):
         session["time"] = new_time
 
     save_session(session)
+    
+    # 🔴 LOGGING FINAL 🔴
+    print("🔴 SESSION AFTER UPDATE (Date/Time):", session.get('date'), session.get('time'))
+    
     return new_date, new_time
 
 # --- 5. INTENT & CONTEXTUAL HANDLING ---
@@ -724,4 +740,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.25)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.26)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
