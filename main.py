@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.7 - Stable
-app = FastAPI(title="AI Reservation System", version="1.0.7")
-print("🚀 AI Reservation System Loaded — Version 1.0.7 (Startup Confirmed)")
+# ✅ VERSION 1.0.8 - Stable
+app = FastAPI(title="AI Reservation System", version="1.0.8")
+print("🚀 AI Reservation System Loaded — Version 1.0.8 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -334,25 +334,29 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
     return date_str, time_str
 
 def extract_school_name(msg: str) -> str | None:
-    """Robustly extracts school name using multiple patterns."""
+    """
+    FIX #2: Reemplazada con una versión más robusta.
+    Robustly extracts school name using multiple patterns and cutoffs.
+    """
     msg_clean = msg.lower()
-    
-    # Prioritize 'colegio X' over raw names
+
+    # New robust patterns
     patterns = [
-        r"(?:del\s+|de\s+|la\s+)?(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+)",
-        r"(colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+)",
+        # Catches the school name up to the next delimiter (end, punctuation, number, time marker, or prepositions)
+        r"(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+?)(?=$|\.|,|\d|mañana|tarde|noche|a\s+las|\s+para|\s+el\s+)",
+        # Catches 'del colegio X'
+        r"(?:del\s+|de\s+)(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+)"
     ]
 
     for p in patterns:
         m = re.search(p, msg_clean)
         if m:
-            # Group 1 is the name part after the school type
             name = m.group(1).strip()
-            
-            # Split only by explicit punctuation or very clear separators (like date/time markers)
-            name = re.split(r"[,.!?\n]| a las | a la | mañana | hoy | pasado mañana", name)[0]
-            if name and len(name.split()) > 1:
-                return name.title().strip()
+            # Final clean cut at punctuation
+            name = re.split(r"[.,!?\n]", name)[0].strip()
+            # Ensure it captured at least one word
+            if len(name.split()) >= 1:
+                return name.title()
     return None
 
 def extract_age_cedula(msg: str, session: dict):
@@ -443,12 +447,11 @@ def update_session_with_info(msg: str, session: dict) -> tuple[str, str]:
     if new_package:
         session["package"] = new_package
 
-    # ✅ FIX #1: Correctly overwrite date/time only if extracted value is not empty ("")
+    # Correctly overwrite date/time only if extracted value is not empty ("")
     if new_date:
         session["date"] = new_date
     if new_time: 
         session["time"] = new_time
-    # --- END FIX #1 ---
     
     # 3. Save the updated session state
     save_session(session)
@@ -767,28 +770,34 @@ def process_message(msg: str, session: dict) -> str:
             session["booking_started"] = True
             # NOTE: session is already saved in update_session_with_info.
 
-        # --- AUTO MODIFY DETECTION (MEJORADA) ---
-        if session.get("booking_started") and not session.get("awaiting_confirmation") and (new_date or new_time):
+        # --- AUTO MODIFY DETECTION (FIXED) ---
+        previous_date = old_date if old_date else None
+        previous_time = old_time if old_time else None
 
-            modify = False
+        # Auto-modify ONLY if there was an existing date/time previously (FIX #1)
+        auto_modify_allowed = previous_date is not None or previous_time is not None
+        
+        if (
+            session.get("booking_started")
+            and not session.get("awaiting_confirmation")
+            and auto_modify_allowed                     # <-- NEW CONDITION
+            and (new_date or new_time)
+        ):
+            save_session(session)  # ensure updated timestamp and values
 
-            if session.get("date") and session.get("date") != old_date:
-                modify = True
-
-            if session.get("time") and session.get("time") != old_time:
-                modify = True
-
-            if modify:
-                save_session(session)  # ensure updated timestamp and values
-
-                return natural_tone(
-                    "Perfecto 😊, ya actualicé la fecha y/o la hora.\n\n" +
-                    finish_booking_summary(session)
-                )
+            return natural_tone(
+                "Perfecto 😊, ya actualicé la fecha y/o la hora.\n\n" +
+                finish_booking_summary(session)
+            )
 
     # 4. Contextual responses SHOULD NOT interrupt booking or modifications
-    # Allow contextual answers only when NOT waiting for confirmation and NOT modifying
-    if not session.get("awaiting_confirmation") and intent not in ["modify", "booking_request"]: # ⬅️ APLICACIÓN DEL FIX FINAL
+    # Allow contextual answers only when NOT waiting for confirmation, NOT modifying, and NO fields are missing. (FIX #3)
+    missing_fields_exist = build_missing_fields_message(session) is not None
+    if (
+        not session.get("awaiting_confirmation")
+        and not missing_fields_exist          # <-- NEW CONDITION
+        and intent not in ["modify", "booking_request"]
+    ):
         contextual_response = handle_contextual(msg, session)
         if contextual_response:
             return natural_tone(contextual_response)
@@ -859,4 +868,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.7)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.8)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
