@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.35 - Stable (Fix de Normalización de Hora para dateparser)
-app = FastAPI(title="AI Reservation System", version="1.0.35")
-print("🚀 AI Reservation System Loaded — Version 1.0.35 (Startup Confirmed)")
+# ✅ VERSION 1.0.37 - Stable (Fix de Detección de Modificación Implícita de Hora - Versión Limpia)
+app = FastAPI(title="AI Reservation System", version="1.0.37")
+print("🚀 AI Reservation System Loaded — Version 1.0.37 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -486,6 +486,18 @@ def detect_explicit_intent(msg: str, session: dict) -> str | None:
             if p in msg_lower:
                 return intent
 
+    # --- NEW: Auto-detect modify intent when message only contains a new time ---
+    # Matches a time format (e.g., "4", "4 pm", "4:30", "4:30 p.m.")
+    auto_time_change = re.search(
+        r"\b(\d{1,2})(?::\d{2})?\s*(am|pm|a\.?m\.?|p\.?m\.?)?\b",
+        msg_lower
+    )
+
+    if auto_time_change and session.get("date"):
+        # If a date already exists and the user provides a time-like pattern, treat as modify.
+        return "modify"
+
+
     return None
 
 def build_missing_fields_message(session: dict) -> str | None:
@@ -571,12 +583,11 @@ def handle_booking_request(msg, session):
 def handle_modify(msg, session):
     session["awaiting_confirmation"] = False
     session["booking_started"] = True
-    missing = build_missing_fields_message(session)
-
-    if missing:
-        # We rely on the missing fields logic in process_message to ask for the actual missing field (e.g., date/time)
-        return "Perfecto 😊, indícame la NUEVA fecha y hora."
-    return finish_booking_summary(session)
+    
+    # After the intent is detected, the process_message loop will call update_session_with_info
+    # which will extract the new date/time and update the session.
+    
+    return "Perfecto 😊, actualizando la información."
 
 def handle_cancel(msg, session):
     session["awaiting_confirmation"] = False
@@ -630,6 +641,7 @@ def process_message(msg: str, session: dict) -> str:
     """
     
     # 1. Detect Intent (NO SIDE EFFECTS) - Must be done early for handler logic
+    # This now includes the new auto-modify logic for simple time changes.
     intent = detect_explicit_intent(msg, session)
     
     # FIX CRÍTICO: Inicializar new_date y new_time para que la lógica contextual pueda usarlas.
@@ -662,13 +674,11 @@ def process_message(msg: str, session: dict) -> str:
 
         # --- AUTO MODIFY DETECTION (PRIORIDAD 1) ---
         
-        # Permitir la modificación SIEMPRE que se detecte un cambio de fecha/hora
-        auto_modify_allowed = True 
-        
-        # Si se permite la modificación Y se detectó una nueva fecha/hora
-        if auto_modify_allowed and (new_date or new_time):
+        # Check if the intent was modify (either explicit or implicitly detected by the new block)
+        if intent == "modify":
             
-            # If after applying the change ALL fields exist → show summary with UPDATED time/date
+            # After the data is extracted (above) and the intent is modify, 
+            # we check if ALL fields exist.
             if not build_missing_fields_message(session):
                 session["awaiting_confirmation"] = True
                 save_session(session)
@@ -681,7 +691,7 @@ def process_message(msg: str, session: dict) -> str:
                 )
                 return response
                 
-            # Si la modificación no completó todos los campos, la lógica de abajo pedirá lo faltante.
+            # If the modification didn't complete all fields, the logic of below will ask for the missing.
 
 
         # --- ONLY AFTER AUTO-MODIFY, THEN CHECK FULL COMPLETION (PRIORIDAD 2) ---
@@ -700,7 +710,7 @@ def process_message(msg: str, session: dict) -> str:
     # --- CONTEXTUAL QUESTIONS (Solo si NO es cambio de fecha/hora) ---
     # La condición ahora es segura porque new_date/new_time están definidas.
     contextual_response = handle_contextual(msg, session)
-    if contextual_response and not detect_explicit_intent(msg, session) == "modify" and not (new_date or new_time):
+    if contextual_response and not intent == "modify":
         session["awaiting_confirmation"] = False
         save_session(session)
         return natural_tone(contextual_response)
@@ -715,6 +725,14 @@ def process_message(msg: str, session: dict) -> str:
         
         # B. Handle other high-level intents.
         if intent in ["cancel", "modify", "booking_request", "package_info", "greeting"]:
+            # NOTE: For 'modify', the handler just returns a generic 'Perfecto...' message.
+            # The summary logic is handled in PRIORITY 1 above, but if fields are missing, 
+            # we allow the flow to continue to the missing fields check.
+            if intent == "modify" and not missing_fields_exist:
+                # The update happened, but it didn't complete all fields, so we return the missing message
+                return natural_tone(missing_message)
+            
+            # For non-modify intents, return the handler's response.
             return natural_tone(handler(msg, session))
         
     # 6. Handle Booking Continuation Flow
@@ -771,4 +789,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.35)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.37)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
