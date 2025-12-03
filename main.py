@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.16 - Stable (Fixes finales de lógica)
-app = FastAPI(title="AI Reservation System", version="1.0.16")
-print("🚀 AI Reservation System Loaded — Version 1.0.16 (Startup Confirmed)")
+# ✅ VERSION 1.0.18 - Stable (Regex de tiempo robusta aplicada)
+app = FastAPI(title="AI Reservation System", version="1.0.18")
+print("🚀 AI Reservation System Loaded — Version 1.0.18 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -284,35 +284,25 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
     # Only proceed to time extraction if a valid date was found.
     if date_str:
         
-        # --- 4. ROBUST TIME EXTRACTION VIA REGEX & DATEPARSER ---
+        # --- 4. ROBUST TIME EXTRACTION VIA REGEX & DATEPARSER (CRITICAL FIX) ---
         
+        # 🔥 FINAL CORRECT REGEX: One line, 3 groups, highly tolerant to noise/prefix
         explicit_time_match = re.search(
-            r"(?:(?:a\s+las\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b)"   # 3 pm, 3:00 pm, a las 3 pm
-            r"|(?:(?:a\s+las\s+)?(\d{1,2})(?::(\d{2}))?\s*(mañana|tarde|noche)\b)"   # 3 tarde, a las 3 noche
-        , msg_lower)
+            r"(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.|mañana|tarde|noche)",
+            msg_lower
+        )
 
 
         if explicit_time_match:
-            # We must reconstruct the raw_time string based on which group matched.
             
-            # Group structure:
-            # Group 1 (Hour AM/PM), Group 2 (Minute AM/PM), Group 3 (AM/PM marker)
-            # Group 4 (Hour Mañana/Tarde), Group 5 (Minute Mañana/Tarde), Group 6 (Mañana/Tarde marker)
+            # ⚠️ FINAL CORRECT GROUP LOGIC (Only uses groups 1, 2, 3)
+            hour = explicit_time_match.group(1)
+            minute = explicit_time_match.group(2) or "00"
+            period = explicit_time_match.group(3)
+
+            # raw_time needs space for dateparser to handle '8am' vs '8 am' vs '8 mañana'
+            raw_time = f"{hour}:{minute} {period}"
             
-            if explicit_time_match.group(1): # AM/PM Match
-                hour = explicit_time_match.group(1)
-                minute = explicit_time_match.group(2) or "00"
-                ampm = explicit_time_match.group(3)
-                raw_time = f"{hour}:{minute}{ampm}"
-            elif explicit_time_match.group(4): # Mañana/Tarde Match
-                hour = explicit_time_match.group(4)
-                minute = explicit_time_match.group(5) or "00"
-                period = explicit_time_match.group(6)
-                raw_time = f"{hour}:{minute} {period}" # dateparser needs space for period
-            else:
-                 return date_str, time_str # Should not happen with the new regex, but safety fallback
-
-
             # Convert to 24h
             parsed_time = dateparser.parse(
                 f"{date_str} {raw_time}", 
@@ -329,13 +319,14 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
             if parsed_time:
                 time_str = parsed_time.strftime("%H:%M")
                 
-                # CRITICAL FIX: If we have BOTH date and time -> RETURN NOW
+                # CRITICAL: If we have BOTH date and time -> RETURN NOW
                 return date_str, time_str 
 
         # --- 5. FALLBACK TIME: Use dateparser's time if no explicit time was found ---
         elif dt_local:
              time_str = dt_local.strftime("%H:%M")
              
+    # Returns (date, "") if only date was found (Fix for "Mejor el sábado")
     return date_str, time_str
 
 def extract_school_name(msg: str) -> str | None:
@@ -346,7 +337,7 @@ def extract_school_name(msg: str) -> str | None:
 
     # New robust patterns
     patterns = [
-        # ✅ FIX #4 — Fixed the regex grouping for end markers
+        # Fixed the regex grouping for end markers
         r"(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+?)(?=$|\.|,|\d|(mañana)|(tarde)|(noche)|(a\s+las)|(\s+para)|(\s+el\s+))",
         # Catches 'del colegio X'
         r"(?:del\s+|de\s+)(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+)"
@@ -383,7 +374,6 @@ def extract_student_name(msg: str) -> str | None:
     text = msg.lower()
 
     # Capture names in ALL common Spanish variations
-    # This pattern is robust to capture names after common phrases like "mi hija", "para mi hijo", etc.
     pattern = r"(?:mi\s+(?:hijo|hija)\s+(?:se\s+llama\s+)?|para\s+mi\s+(?:hijo|hija)\s+|es\s+para\s+(?:mi\s+)?(?:hijo|hija)\s+)([a-záéíóúñ ]+)"
 
     m = re.search(pattern, text)
@@ -541,6 +531,7 @@ def handle_modify(msg, session):
     missing = build_missing_fields_message(session)
 
     if missing:
+        # We rely on the missing fields logic in process_message to ask for the actual missing field (e.g., date/time)
         return "Perfecto 😊, indícame la NUEVA fecha y hora."
     return finish_booking_summary(session)
 
@@ -563,7 +554,6 @@ def handle_contextual(msg: str, session: dict) -> str | None:
         return "Atendemos de lunes a viernes de 7am a 5pm y sábados de 7am a 1pm 😊"
 
     if any(x in text for x in ["donde","ubicados","dirección","direccion"]):
-        # NOTE: This location is hardcoded for the specific business context, but the Yopal example suggests a variable location. Sticking to the Bogotá one for this context's integrity.
         return "Estamos en Bogotá, calle 75 #20-36. 📍"
 
     if any(x in text for x in ["duración","cuánto dura","que incluye","como funciona"]):
@@ -606,7 +596,6 @@ def process_message(msg: str, session: dict) -> str:
     is_pure_confirmation = msg_lower in confirmation_words
 
     # --- CONTEXTUAL QUESTIONS ALWAYS OVERRIDE CONFIRMATION ---
-    # ✅ FIX #2 — Ensures contextual questions are answered immediately
     contextual_response = handle_contextual(msg, session)
     if contextual_response:
         if not (intent == "confirmation" and session.get("awaiting_confirmation")):
@@ -632,7 +621,6 @@ def process_message(msg: str, session: dict) -> str:
         if all(session.get(f) for f in required_fields):
             session["booking_started"] = True
             session["awaiting_confirmation"] = True # Set flag before showing summary
-            # Session is already saved in update_session_with_info, but saving again here is harmless.
             save_session(session) 
             return natural_tone("Listo 😊, ya tengo toda la información:\n\n" + finish_booking_summary(session)) # SALTO DIRECTO
         
@@ -648,19 +636,26 @@ def process_message(msg: str, session: dict) -> str:
         # Auto-modify ONLY if there was an existing date/time previously or we are waiting for confirmation
         auto_modify_allowed = (previous_date is not None or previous_time is not None) or session.get("awaiting_confirmation") 
         
-        # ✅ FIX #1 — Corrected logic for auto-modify 
+        
         if (
             auto_modify_allowed
             and (new_date or new_time)
             and session.get("booking_started")
         ):
-            session["awaiting_confirmation"] = True
-            save_session(session)
+            
+            # If a change occurred, and the session is now complete, show summary.
+            # This handles cases like: change date + provide missing time, or change time when all was complete.
+            if not build_missing_fields_message(session):
+                session["awaiting_confirmation"] = True
+                save_session(session)
 
-            return natural_tone(
-                "Perfecto 😊, ya actualicé la fecha y/o la hora.\n\n" +
-                finish_booking_summary(session)
-            )
+                return natural_tone(
+                    "Perfecto 😊, ya actualicé la fecha y/o la hora.\n\n" +
+                    finish_booking_summary(session)
+                )
+
+            # If a change occurred, but fields are still missing (e.g., only date changed to "sábado", time is now missing)
+            # We fall through to the general flow (Step 6) to show the missing fields message.
 
     # 4. Calculate missing fields AFTER extraction and auto-modify logic.
     missing_message = build_missing_fields_message(session)
@@ -688,6 +683,7 @@ def process_message(msg: str, session: dict) -> str:
             return natural_tone("Listo 😊, ya tengo toda la información:\n\n" + finish_booking_summary(session))
         
         # B. FIELDS MISSING -> Ask for the next missing piece
+        # This correctly handles the "Mejor el sábado" case by asking for the time.
         return natural_tone(missing_message) # Use the pre-calculated message
 
     # 7. Default/Fallback
@@ -731,4 +727,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.16)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.18)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
