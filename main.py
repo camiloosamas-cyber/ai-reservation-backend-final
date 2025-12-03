@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.10 - Stable
-app = FastAPI(title="AI Reservation System", version="1.0.10")
-print("🚀 AI Reservation System Loaded — Version 1.0.10 (Startup Confirmed)")
+# ✅ VERSION 1.0.12 - Stable
+app = FastAPI(title="AI Reservation System", version="1.0.12")
+print("🚀 AI Reservation System Loaded — Version 1.0.12 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -284,7 +284,7 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
     # Only proceed to time extraction if a valid date was found.
     if date_str:
         
-        # --- 4. ROBUST TIME EXTRACTION VIA REGEX & DATEPARSER (FIX #4: ADDED [,\.]?) ---
+        # --- 4. ROBUST TIME EXTRACTION VIA REGEX & DATEPARSER ---
         explicit_time_match = re.search(
             r"(\b\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.)[,\.]?\b)"                      # 3pm, 3 pm, 3pm,
             r"|(\b\d{1,2}:\d{2}\s*(?:am|pm|a\.m\.|p\.m\.)?[,\.]?\b)"             # 3:00, 3:00pm,
@@ -322,7 +322,7 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
                     "TO_TIMEZONE": LOCAL_TZ.key,
                     "RETURN_AS_TIMEZONE_AWARE": True,
                     "RELATIVE_BASE": datetime.now(LOCAL_TZ),
-                    "STRICT_PARSING": False # <-- FIX #5: CRITICAL FOR ROBUST TIME PARSING
+                    "STRICT_PARSING": False # <-- CRITICAL FOR ROBUST TIME PARSING
                 }
             )
             
@@ -340,7 +340,6 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
 
 def extract_school_name(msg: str) -> str | None:
     """
-    FIX #2: Reemplazada con una versión más robusta.
     Robustly extracts school name using multiple patterns and cutoffs.
     """
     msg_clean = msg.lower()
@@ -458,7 +457,7 @@ def update_session_with_info(msg: str, session: dict) -> tuple[str, str]:
     if new_time: 
         session["time"] = new_time
     
-    # 3. Save the updated session state
+    # 3. Save the updated session state (CRITICAL: SAVING BEFORE MISSING CHECK)
     save_session(session)
     
     return new_date, new_time # <-- Return extracted values
@@ -759,7 +758,7 @@ def process_message(msg: str, session: dict) -> str:
         old_time = session.get("time")
 
         # Perform the actual data update (updates session dict in place and saves to DB)
-        # Captures new_date/new_time for the auto-modify check below
+        # CRITICAL: This call updates and SAVES the session with all extracted data.
         new_date, new_time = update_session_with_info(msg, session) 
 
         # 🔥 SUPER PRIORIDAD: Si ya tenemos todos los datos, ignorar intents
@@ -767,7 +766,8 @@ def process_message(msg: str, session: dict) -> str:
         if all(session.get(f) for f in required_fields):
             session["booking_started"] = True
             session["awaiting_confirmation"] = True # Set flag before showing summary
-            save_session(session) # Double save check
+            # Session is already saved in update_session_with_info, but saving again here is harmless.
+            save_session(session) 
             return natural_tone("Listo 😊, ya tengo toda la información:\n\n" + finish_booking_summary(session)) # SALTO DIRECTO
         
         # Force booking_started=True if ANY relevant data was captured.
@@ -779,13 +779,13 @@ def process_message(msg: str, session: dict) -> str:
         previous_date = old_date if old_date else None
         previous_time = old_time if old_time else None
 
-        # Auto-modify ONLY if there was an existing date/time previously (FIX #1)
+        # Auto-modify ONLY if there was an existing date/time previously 
         auto_modify_allowed = previous_date is not None or previous_time is not None
         
         if (
             session.get("booking_started")
             and not session.get("awaiting_confirmation")
-            and auto_modify_allowed                     # <-- NEW CONDITION
+            and auto_modify_allowed                     
             and (new_date or new_time)
         ):
             save_session(session)  # ensure updated timestamp and values
@@ -795,19 +795,23 @@ def process_message(msg: str, session: dict) -> str:
                 finish_booking_summary(session)
             )
 
-    # 4. Contextual responses SHOULD NOT interrupt booking or modifications
-    # Allow contextual answers only when NOT waiting for confirmation, NOT modifying, and NO fields are missing. (FIX #3)
-    missing_fields_exist = build_missing_fields_message(session) is not None
+    # 4. CRITICAL FIX: Calculate missing fields AFTER extraction and auto-modify logic.
+    # This ensures it reads the session with all new data (date, time, etc.)
+    missing_message = build_missing_fields_message(session)
+    missing_fields_exist = missing_message is not None
+
+    # 5. Contextual responses SHOULD NOT interrupt booking or modifications
+    # Allow contextual answers only when NOT waiting for confirmation, NOT modifying, and NO fields are missing.
     if (
         not session.get("awaiting_confirmation")
-        and not missing_fields_exist          # <-- NEW CONDITION
+        and not missing_fields_exist          
         and intent not in ["modify", "booking_request"]
     ):
         contextual_response = handle_contextual(msg, session)
         if contextual_response:
             return natural_tone(contextual_response)
 
-    # 5. Handle High-Priority Intents 
+    # 6. Handle High-Priority Intents 
     if intent and intent in INTENTS:
         handler = globals()[INTENTS[intent]["handler"]]
         
@@ -819,20 +823,19 @@ def process_message(msg: str, session: dict) -> str:
         if intent in ["cancel", "modify", "booking_request", "package_info", "greeting"]:
             return natural_tone(handler(msg, session))
         
-    # 6. Handle Booking Continuation Flow
+    # 7. Handle Booking Continuation Flow
     if session["booking_started"]:
-        missing_message = build_missing_fields_message(session)
         
         # A. ALL FIELDS COMPLETE -> Show Final Summary (Fallback check)
-        if not missing_message:
+        if not missing_fields_exist: # Use the pre-calculated flag
             session["awaiting_confirmation"] = True
             save_session(session)
             return natural_tone("Listo 😊, ya tengo toda la información:\n\n" + finish_booking_summary(session))
         
         # B. FIELDS MISSING -> Ask for the next missing piece
-        return natural_tone(missing_message)
+        return natural_tone(missing_message) # Use the pre-calculated message
 
-    # 7. Default/Fallback
+    # 8. Default/Fallback
     if not session["greeted"] and not session.get("booking_started"):
         return natural_tone(handle_greeting(msg, session))
 
@@ -873,4 +876,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.10)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.12)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
