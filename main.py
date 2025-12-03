@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.22 - Stable (Eliminación de Encabezado Duplicado)
-app = FastAPI(title="AI Reservation System", version="1.0.22")
-print("🚀 AI Reservation System Loaded — Version 1.0.22 (Startup Confirmed)")
+# ✅ VERSION 1.0.25 - Stable (Fix de Flujo de Prioridad Final)
+app = FastAPI(title="AI Reservation System", version="1.0.25")
+print("🚀 AI Reservation System Loaded — Version 1.0.25 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -612,39 +612,39 @@ def process_message(msg: str, session: dict) -> str:
         # Perform the actual data update (updates session dict in place and saves to DB)
         new_date, new_time = update_session_with_info(msg, session) 
 
-        # 🔥 SUPER PRIORIDAD: Si ya tenemos todos los datos, ignorar intents
-        required_fields = ["student_name", "school", "package", "date", "time", "age", "cedula"]
-        if all(session.get(f) for f in required_fields):
-            session["booking_started"] = True
-            session["awaiting_confirmation"] = True # Set flag before showing summary
-            save_session(session) 
-            # ⚠️ FIX: Eliminado el encabezado redundante.
-            return natural_tone(finish_booking_summary(session)) # SALTO DIRECTO
-        
         # Force booking_started=True if ANY relevant data was captured.
         if session.get("student_name") or session.get("school") or session.get("package") or session.get("date") or session.get("time"):
             session["booking_started"] = True
             # NOTE: session is already saved in update_session_with_info.
 
-        # --- AUTO MODIFY DETECTION ---
+        # --- AUTO MODIFY DETECTION (PRIORIDAD 1) ---
         
-        # auto_modify_allowed solo depende de booking_started
-        auto_modify_allowed = session["booking_started"] 
+        # FIX CRÍTICO: Permitir la modificación SIEMPRE que se detecte un cambio de fecha/hora
+        auto_modify_allowed = True 
         
         # Si se permite la modificación Y se detectó una nueva fecha/hora
         if auto_modify_allowed and (new_date or new_time):
             
-            # Si después del cambio ya están todos los datos → mostrar resumen
+            # If after applying the change ALL fields exist → show summary with UPDATED time/date
             if not build_missing_fields_message(session):
                 session["awaiting_confirmation"] = True
                 save_session(session)
-
                 return natural_tone(
                     "Perfecto 😊, ya actualicé la fecha y/o la hora.\n\n" +
                     finish_booking_summary(session)
                 )
 
             # Si la modificación no completó todos los campos, la lógica de abajo pedirá lo faltante.
+
+
+        # --- ONLY AFTER AUTO-MODIFY, THEN CHECK FULL COMPLETION (PRIORIDAD 2) ---
+        required_fields = ["student_name", "school", "package", "date", "time", "age", "cedula"]
+        if all(session.get(f) for f in required_fields):
+            session["booking_started"] = True
+            session["awaiting_confirmation"] = True
+            save_session(session)
+            return natural_tone(finish_booking_summary(session))
+
 
     # 4. Calculate missing fields AFTER extraction and auto-modify logic.
     missing_message = build_missing_fields_message(session)
@@ -677,7 +677,7 @@ def process_message(msg: str, session: dict) -> str:
         if not missing_fields_exist: # Use the pre-calculated flag
             session["awaiting_confirmation"] = True
             save_session(session)
-            # ⚠️ FIX: Eliminado el encabezado redundante.
+            # FIX: Eliminado el encabezado redundante.
             return natural_tone(finish_booking_summary(session))
         
         # B. FIELDS MISSING -> Ask for the next missing piece
@@ -724,4 +724,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.22)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.25)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
