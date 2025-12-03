@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.13 - Stable (Fixes aplicados por el usuario)
-app = FastAPI(title="AI Reservation System", version="1.0.13")
-print("🚀 AI Reservation System Loaded — Version 1.0.13 (Startup Confirmed)")
+# ✅ VERSION 1.0.15 - Stable (Fixes finales de regex)
+app = FastAPI(title="AI Reservation System", version="1.0.15")
+print("🚀 AI Reservation System Loaded — Version 1.0.15 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -286,7 +286,7 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
         
         # --- 4. ROBUST TIME EXTRACTION VIA REGEX & DATEPARSER ---
         
-        # ✅ FIX #1 — Correct TIME REGEX (USER PROVIDED)
+        # ✅ FIX #1 — Correct TIME REGEX (USER PROVIDED in previous step)
         explicit_time_match = re.search(
             r"(?:(?:a\s+las\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b)"   # 3 pm, 3:00 pm, a las 3 pm
             r"|(?:(?:a\s+las\s+)?(\d{1,2})(?::(\d{2}))?\s*(mañana|tarde|noche)\b)"   # 3 tarde, a las 3 noche
@@ -347,8 +347,8 @@ def extract_school_name(msg: str) -> str | None:
 
     # New robust patterns
     patterns = [
-        # Catches the school name up to the next delimiter (end, punctuation, number, time marker, or prepositions)
-        r"(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+?)(?=$|\.|,|\d|mañana|tarde|noche|a\s+las|\s+para|\s+el\s+)",
+        # ✅ FIX #4 — Fixed the regex grouping for end markers
+        r"(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+?)(?=$|\.|,|\d|(mañana)|(tarde)|(noche)|(a\s+las)|(\s+para)|(\s+el\s+))",
         # Catches 'del colegio X'
         r"(?:del\s+|de\s+)(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+)"
     ]
@@ -367,7 +367,7 @@ def extract_school_name(msg: str) -> str | None:
 def extract_age_cedula(msg: str, session: dict):
     """Extracts age and cedula if they are reasonable numbers."""
     
-    # ✅ FIX #2 — Correct AGE DETECTION (USER PROVIDED)
+    # ✅ FIX #2 — Correct AGE DETECTION (USER PROVIDED in previous step)
     # AGE DETECTION (must include the word "años" or "edad")
     if not session.get("age"):
         age_match = re.search(r"(edad\s+(\d{1,2}))|(\b(\d{1,2})\s*(años|anos|año|ano)\b)", msg.lower())
@@ -381,35 +381,215 @@ def extract_age_cedula(msg: str, session: dict):
         if ced_match:
             session["cedula"] = ced_match.group(1)
 
+# ✅ FIX #3 — Replaced with improved student name regex
 def extract_student_name(msg: str) -> str | None:
-# ... (Función extract_student_name omitida)
+    text = msg.lower()
 
-# ... (Función update_session_with_info y el resto del código omitido, ya que se indicó no modificar)
+    # Capture names in ALL common Spanish variations
+    # This pattern is robust to capture names after common phrases like "mi hija", "para mi hijo", etc.
+    pattern = r"(?:mi\s+(?:hijo|hija)\s+(?:se\s+llama\s+)?|para\s+mi\s+(?:hijo|hija)\s+|es\s+para\s+(?:mi\s+)?(?:hijo|hija)\s+)([a-záéíóúñ ]+)"
+
+    m = re.search(pattern, text)
+    if not m:
+        return None
+
+    raw = m.group(1).strip()
+
+    # Cut at words that imply the end of the name
+    raw = re.split(
+        r"(del\s+colegio|colegio|gimnasio|liceo|instituto|escuela|a\s+las|a\s+la|mañana|tarde|noche|\d{1,2}\s*(am|pm)|\d{1,2}:\d{2})",
+        raw
+    )[0].strip()
+
+    # Limit to 1–3 name parts
+    words = raw.split()
+    if 1 <= len(words) <= 3:
+        return " ".join(w.capitalize() for w in words)
+
+    return None
+
+def update_session_with_info(msg: str, session: dict):
+    new_name = extract_student_name(msg)
+    new_school = extract_school_name(msg)
+    new_package = detect_package(msg)
+    new_date, new_time = extract_datetime_info(msg)
+    extract_age_cedula(msg, session)
+
+    if new_name:
+        session["student_name"] = new_name
+    if new_school:
+        session["school"] = new_school
+    if new_package:
+        session["package"] = new_package
+    if new_date:
+        session["date"] = new_date
+    if new_time:
+        session["time"] = new_time
+
+    save_session(session)
+    return new_date, new_time
 
 # --- 5. INTENT & CONTEXTUAL HANDLING ---
 
 INTENTS = {
-# ... (INTENTS definition omitida)
+    "greeting": {"patterns": ["hola","buenas","buenos dias","buen dia","buenas tardes","buenas noches","disculpa","una pregunta","consulta","informacion","quisiera saber"], "handler": "handle_greeting"},
+    "package_info": {"patterns": ["cuanto vale","cuánto vale","cuanto cuesta","precio","valor","paquete","kit escolar","psicologia","psicología","psicologo","psicólogo","odontologia","odontología","el verde","el azul","el amarillo","45k","60k","75k","esencial","salud activa","bienestar total"], "handler": "handle_package_info"},
+    "booking_request": {"patterns": ["quiero reservar","quiero una cita","quiero agendar","necesito una cita","quiero el examen","me pueden reservar","agendar cita","reservar examen","separar cita"], "handler": "handle_booking_request"},
+    "modify": {"patterns": ["cambiar cita","cambiar la cita","quiero cambiar","cambiar hora","cambiar fecha","mover cita","reagendar"], "handler": "handle_modify"},
+    "cancel": {"patterns": ["cancelar","cancelar cita","anular","quitar la cita","ya no quiero la cita"], "handler": "handle_cancel"},
+    "confirmation": {"patterns": ["confirmo","sí confirmo","si confirmo","confirmar"], "handler": "handle_confirmation"}
+}
 
 def detect_explicit_intent(msg: str, session: dict) -> str | None:
-# ... (Función detect_explicit_intent omitida)
+    msg_lower = msg.lower()
+    msg_stripped = msg_lower.strip()
+
+    priority = ["cancel", "modify", "confirmation", "booking_request", "package_info", "greeting"]
+
+    for intent in priority:
+        for p in INTENTS[intent]["patterns"]:
+
+            if intent == "confirmation":
+                if msg_stripped == p and session.get("awaiting_confirmation"):
+                    return intent
+                continue
+
+            if p in msg_lower:
+                return intent
+
+    return None
 
 def build_missing_fields_message(session: dict) -> str | None:
-# ... (Función build_missing_fields_message omitida)
+    missing = []
+    if not session["student_name"]: missing.append("el *nombre* del estudiante")
+    if not session["school"]: missing.append("el *colegio*")
+    if not session["package"]: missing.append("el *paquete* (Esencial, Activa, Total)")
+    if not session["date"] or not session["time"]: missing.append("la *fecha y hora*")
+    if not session["age"]: missing.append("la *edad*")
+    if not session["cedula"]: missing.append("la *cédula*")
+
+    if not missing: return None
+
+    if len(missing) == 1:
+        return f"Listo, solo me falta {missing[0]}. ¿Me lo compartes porfa? 🙏"
+
+    joined = ", ".join(missing[:-1]) + " y " + missing[-1]
+    return f"Perfecto 😊, solo necesito: {joined}"
 
 def finish_booking_summary(session: dict) -> str:
-# ... (Función finish_booking_summary omitida)
+    session["awaiting_confirmation"] = True
+    save_session(session)
+
+    return (
+        f"Ya tengo toda la información:\n\n"
+        f"👤 Estudiante: {session['student_name']}\n"
+        f"🎒 Colegio: {session['school']}\n"
+        f"📦 Paquete: {session['package']}\n"
+        f"📅 Fecha: {session['date']}\n"
+        f"⏰ Hora: {session['time']}\n"
+        f"🧒 Edad: {session['age']}\n"
+        f"🪪 Cédula: {session['cedula']}\n\n"
+        f"¿Deseas confirmar esta cita? (Responde *Confirmo*)"
+    )
 
 # --- 6. HANDLERS (State Machine Steps) ---
 
 def handle_greeting(msg, session):
-# ... (Handlers omitidos)
+    if not session["greeted"]:
+        session["greeted"] = True
+        return "¡Hola! Claro que sí, ¿en qué te puedo ayudar hoy? 😊"
+    return "¿En qué te puedo ayudar? 😊"
+
+def handle_package_info(msg, session):
+    session["awaiting_confirmation"] = False
+    pkg = detect_package(msg) or session.get("package")
+
+    prices = {
+        "Paquete Cuidado Esencial": "45.000",
+        "Paquete Salud Activa": "60.000",
+        "Paquete Bienestar Total": "75.000",
+    }
+
+    details = {
+        "Paquete Cuidado Esencial": "Medicina General, Optometría, Audiometría",
+        "Paquete Salud Activa": "Esencial + Psicología",
+        "Paquete Bienestar Total": "Activa + Odontología",
+    }
+
+    if pkg and pkg in prices:
+        session["package"] = pkg
+        save_session(session)
+        return f"{pkg} cuesta {prices[pkg]} COP.\nIncluye: {details[pkg]}\n\n¿Deseas agendar?"
+
+    return (
+        "Ofrecemos tres paquetes:\n"
+        "• Esencial — 45.000\n"
+        "• Salud Activa — 60.000\n"
+        "• Bienestar Total — 75.000\n\n"
+        "¿Cuál te interesa?"
+    )
+
+def handle_booking_request(msg, session):
+    session["booking_started"] = True
+    session["awaiting_confirmation"] = False
+
+    missing = build_missing_fields_message(session)
+    if missing:
+        return missing
+    return finish_booking_summary(session)
+
+def handle_modify(msg, session):
+    session["awaiting_confirmation"] = False
+    session["booking_started"] = True
+    missing = build_missing_fields_message(session)
+
+    if missing:
+        return "Perfecto 😊, indícame la NUEVA fecha y hora."
+    return finish_booking_summary(session)
+
+def handle_cancel(msg, session):
+    session["awaiting_confirmation"] = False
+    return "¿Confirmas que deseas *cancelar* la cita? (Responde *Confirmo*)"
+
+def handle_confirmation(msg, session):
+    response = save_reservation(session)
+    reset = DEFAULT_SESSION.copy()
+    reset["phone"] = session["phone"]
+    reset["greeted"] = session["greeted"]
+    save_session(reset)
+    return response
 
 def handle_contextual(msg: str, session: dict) -> str | None:
-# ... (Función handle_contextual omitida)
+    text = msg.lower()
+
+    if any(x in text for x in ["horario","abren","cerrar"]):
+        return "Atendemos de lunes a viernes de 7am a 5pm y sábados de 7am a 1pm 😊"
+
+    if any(x in text for x in ["donde","ubicados","dirección","direccion"]):
+        return "Estamos en Bogotá, calle 75 #20-36. 📍"
+
+    if any(x in text for x in ["duración","cuánto dura","que incluye","como funciona"]):
+        return "El examen dura 30–45 minutos e incluye todas las pruebas del paquete. 😊"
+
+    return None
 
 def natural_tone(text: str) -> str:
-# ... (Función natural_tone omitida)
+    """Adds emojis for a friendlier, Latin American tone."""
+    replacements = {
+        "Perfecto,": "Perfecto 😊,",
+        "Listo,": "Listo 😊,",
+        "Claro,": "Claro que sí 😊,",
+        "Por supuesto.": "Por supuesto, ya te ayudo 😊.",
+        "Entendido.": "Entendido 😊.",
+        "De acuerdo.": "Listo 😊.",
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+
+    if text.strip().endswith("?") and "😊" not in text and "🙏" not in text:
+        text = text.rstrip("?") + " 😊?"
+
+    return text
 
 # --- 7. MAIN MESSAGE PROCESSING FLOW (FINAL, SAFE, HIGH-CAPTURE) ---
 
@@ -566,4 +746,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.13)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.15)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
