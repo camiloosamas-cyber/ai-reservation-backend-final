@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.20 - Stable (Fix final de flujo contextual)
-app = FastAPI(title="AI Reservation System", version="1.0.20")
-print("🚀 AI Reservation System Loaded — Version 1.0.20 (Startup Confirmed)")
+# ✅ VERSION 1.0.22 - Stable (Eliminación de Encabezado Duplicado)
+app = FastAPI(title="AI Reservation System", version="1.0.22")
+print("🚀 AI Reservation System Loaded — Version 1.0.22 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -467,6 +467,7 @@ def finish_booking_summary(session: dict) -> str:
     session["awaiting_confirmation"] = True
     save_session(session)
 
+    # La función retorna el encabezado para que solo se use una vez al llamar
     return (
         f"Ya tengo toda la información:\n\n"
         f"👤 Estudiante: {session['student_name']}\n"
@@ -589,6 +590,10 @@ def process_message(msg: str, session: dict) -> str:
     # 1. Detect Intent (NO SIDE EFFECTS) - Must be done early for handler logic
     intent = detect_explicit_intent(msg, session)
     
+    # FIX CRÍTICO: Inicializar new_date y new_time para que la lógica contextual pueda usarlas.
+    new_date = ""
+    new_time = ""
+    
     # 2. HIGH-CAPTURE DATA EXTRACTION LOGIC
     msg_lower = msg.lower().strip()
     
@@ -605,7 +610,6 @@ def process_message(msg: str, session: dict) -> str:
         old_time = session.get("time")
 
         # Perform the actual data update (updates session dict in place and saves to DB)
-        # CRITICAL: This call updates and SAVES the session with all extracted data.
         new_date, new_time = update_session_with_info(msg, session) 
 
         # 🔥 SUPER PRIORIDAD: Si ya tenemos todos los datos, ignorar intents
@@ -614,7 +618,8 @@ def process_message(msg: str, session: dict) -> str:
             session["booking_started"] = True
             session["awaiting_confirmation"] = True # Set flag before showing summary
             save_session(session) 
-            return natural_tone("Listo 😊, ya tengo toda la información:\n\n" + finish_booking_summary(session)) # SALTO DIRECTO
+            # ⚠️ FIX: Eliminado el encabezado redundante.
+            return natural_tone(finish_booking_summary(session)) # SALTO DIRECTO
         
         # Force booking_started=True if ANY relevant data was captured.
         if session.get("student_name") or session.get("school") or session.get("package") or session.get("date") or session.get("time"):
@@ -623,13 +628,13 @@ def process_message(msg: str, session: dict) -> str:
 
         # --- AUTO MODIFY DETECTION ---
         
-        # ⚠️ CAMBIO 1 (Implementado): auto_modify_allowed solo depende de booking_started
+        # auto_modify_allowed solo depende de booking_started
         auto_modify_allowed = session["booking_started"] 
         
-        # ⚠️ CAMBIO 2 (Implementado): Simplificación de la condición del if
+        # Si se permite la modificación Y se detectó una nueva fecha/hora
         if auto_modify_allowed and (new_date or new_time):
             
-            # ⚠️ CAMBIO 3 (Implementado): Si después del cambio ya están todos los datos → mostrar resumen
+            # Si después del cambio ya están todos los datos → mostrar resumen
             if not build_missing_fields_message(session):
                 session["awaiting_confirmation"] = True
                 save_session(session)
@@ -639,16 +644,14 @@ def process_message(msg: str, session: dict) -> str:
                     finish_booking_summary(session)
                 )
 
-            # If a change occurred, but fields are still missing (e.g., only date changed to "sábado", time is now missing)
-            # We fall through to the general flow (Step 6) to show the missing fields message.
+            # Si la modificación no completó todos los campos, la lógica de abajo pedirá lo faltante.
 
     # 4. Calculate missing fields AFTER extraction and auto-modify logic.
     missing_message = build_missing_fields_message(session)
     missing_fields_exist = missing_message is not None
 
     # --- CONTEXTUAL QUESTIONS (Solo si NO es cambio de fecha/hora) ---
-    # Este bloque ahora se ejecuta DESPUÉS de la extracción y lógica de auto-modify, 
-    # y solo si no hubo una intención explícita de modificar (modify) y no se extrajo fecha/hora nueva.
+    # La condición ahora es segura porque new_date/new_time están definidas.
     contextual_response = handle_contextual(msg, session)
     if contextual_response and not detect_explicit_intent(msg, session) == "modify" and not (new_date or new_time):
         session["awaiting_confirmation"] = False
@@ -674,10 +677,10 @@ def process_message(msg: str, session: dict) -> str:
         if not missing_fields_exist: # Use the pre-calculated flag
             session["awaiting_confirmation"] = True
             save_session(session)
-            return natural_tone("Listo 😊, ya tengo toda la información:\n\n" + finish_booking_summary(session))
+            # ⚠️ FIX: Eliminado el encabezado redundante.
+            return natural_tone(finish_booking_summary(session))
         
         # B. FIELDS MISSING -> Ask for the next missing piece
-        # This correctly handles the "Mejor el sábado" case by asking for the time.
         return natural_tone(missing_message) # Use the pre-calculated message
 
     # 7. Default/Fallback
@@ -721,4 +724,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.20)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.22)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
