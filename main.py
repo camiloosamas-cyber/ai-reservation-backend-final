@@ -23,7 +23,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # ✅ VERSION 1.0.7 - Stable
 app = FastAPI(title="AI Reservation System", version="1.0.7")
-print("🚀 AI Reservation System Loaded — Version 1.0.7 (Startup Confirmed)") # ⬅️ LÍNEA AÑADIDA
+print("🚀 AI Reservation System Loaded — Version 1.0.7 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -548,10 +548,10 @@ def finish_booking_summary(session: dict) -> str:
     Generates the confirmation summary message and sets the 'awaiting_confirmation' flag.
     """
     session["awaiting_confirmation"] = True
-    save_session(session) # Save state before returning response
+    # NOTE: save_session() is not called here, as it's often followed by another save or confirmation
+    # If called standalone, it's the caller's responsibility to save. 
 
     return (
-        f"Listo 😊, ya tengo toda la información:\n\n"
         f"👤 Estudiante: {session.get('student_name', 'N/A')}\n"
         f"🎒 Colegio: {session.get('school', 'N/A')}\n"
         f"📦 Paquete: {session.get('package', 'N/A')}\n"
@@ -620,7 +620,10 @@ def handle_booking_request(msg, session):
     
     missing_message = build_missing_fields_message(session)
     if not missing_message:
-        return finish_booking_summary(session)
+        # If no missing message, all fields are complete. Set awaiting_confirmation and return summary.
+        session["awaiting_confirmation"] = True
+        save_session(session)
+        return "Listo 😊, ya tengo toda la información:\n\n" + finish_booking_summary(session)
 
     return missing_message
 
@@ -654,7 +657,10 @@ def handle_modify(msg, session):
             return "Entendido. ¿Me indicas la *nueva fecha y hora* que deseas para la cita? Por ejemplo: _'el martes a las 10 am'_"
         return missing
 
-    return finish_booking_summary(session)
+    # If no missing message, all fields are complete. Set awaiting_confirmation and return summary.
+    session["awaiting_confirmation"] = True
+    save_session(session)
+    return "Listo 😊, ya tengo toda la información:\n\n" + finish_booking_summary(session)
 
 
 def handle_cancel(msg, session):
@@ -665,9 +671,7 @@ def handle_contextual(msg: str, session: dict) -> str | None:
     """Handles non-booking questions (hours, location, process)."""
     text = msg.lower().strip()
     
-    if text not in INTENTS["confirmation"]["patterns"] and session.get("awaiting_confirmation"):
-        session["awaiting_confirmation"] = False
-        save_session(session)
+    # Note: Logic to clear awaiting_confirmation is handled in process_message before calling this.
     
     if any(x in text for x in ["atienden", "abren", "horario", "horarios", "sábados", "sabados"]):
         return "Nuestros horarios son de lunes a viernes de 7:00 AM a 5:00 PM y sábados de 7:00 AM a 1:00 PM 😊"
@@ -690,7 +694,10 @@ def handle_contextual(msg: str, session: dict) -> str | None:
             missing = build_missing_fields_message(session)
             if missing:
                 return missing
-            return finish_booking_summary(session)
+            # If all fields present, return the full summary 
+            session["awaiting_confirmation"] = True
+            save_session(session)
+            return "Listo 😊, ya tengo toda la información:\n\n" + finish_booking_summary(session)
         
     if any(x in text for x in ["espera", "un momento", "dame un segundo", "ya te escribo"]):
         return "Claro, aquí te espero 😊."
@@ -751,8 +758,9 @@ def process_message(msg: str, session: dict) -> str:
         required_fields = ["student_name", "school", "package", "date", "time", "age", "cedula"]
         if all(session.get(f) for f in required_fields):
             session["booking_started"] = True
+            session["awaiting_confirmation"] = True # Set flag before showing summary
             save_session(session) # Double save check
-            return natural_tone(finish_booking_summary(session)) # SALTO DIRECTO
+            return natural_tone("Listo 😊, ya tengo toda la información:\n\n" + finish_booking_summary(session)) # SALTO DIRECTO
         
         # Force booking_started=True if ANY relevant data was captured.
         if session.get("student_name") or session.get("school") or session.get("package") or session.get("date") or session.get("time"):
@@ -760,28 +768,30 @@ def process_message(msg: str, session: dict) -> str:
             # NOTE: session is already saved in update_session_with_info.
 
         # --- AUTO MODIFY DETECTION (MEJORADA) ---
-        # ✅ FIX #2: Only trigger auto-modify if the user is in a booking state AND date/time was extracted from the message.
         if session.get("booking_started") and not session.get("awaiting_confirmation") and (new_date or new_time):
 
             modify = False
 
-            # Compare the new values (now in session) against the old state captured earlier.
             if session.get("date") and session.get("date") != old_date:
                 modify = True
 
             if session.get("time") and session.get("time") != old_time:
                 modify = True
 
-            # Si hubo cambio real → activar flujo de modificación
             if modify:
-                # The session is already saved with the new data from update_session_with_info.
-                # We return the modify message and skip the rest of the intent logic.
-                return natural_tone("Perfecto 😊, actualicé la fecha y/o la hora. ¿Deseas confirmar la cita? (Responde *Confirmo*)")
+                save_session(session)  # ensure updated timestamp and values
 
-    # 4. Handle Contextual/General Questions (High Priority Response)
-    contextual_response = handle_contextual(msg, session)
-    if contextual_response:
-        return natural_tone(contextual_response)
+                return natural_tone(
+                    "Perfecto 😊, ya actualicé la fecha y/o la hora.\n\n" +
+                    finish_booking_summary(session)
+                )
+
+    # 4. Contextual responses SHOULD NOT interrupt booking or modifications
+    # Allow contextual answers only when NOT waiting for confirmation and NOT modifying
+    if not session.get("awaiting_confirmation") and intent not in ["modify", "booking_request"]: # ⬅️ APLICACIÓN DEL FIX FINAL
+        contextual_response = handle_contextual(msg, session)
+        if contextual_response:
+            return natural_tone(contextual_response)
 
     # 5. Handle High-Priority Intents 
     if intent and intent in INTENTS:
@@ -801,7 +811,9 @@ def process_message(msg: str, session: dict) -> str:
         
         # A. ALL FIELDS COMPLETE -> Show Final Summary (Fallback check)
         if not missing_message:
-            return natural_tone(finish_booking_summary(session))
+            session["awaiting_confirmation"] = True
+            save_session(session)
+            return natural_tone("Listo 😊, ya tengo toda la información:\n\n" + finish_booking_summary(session))
         
         # B. FIELDS MISSING -> Ask for the next missing piece
         return natural_tone(missing_message)
