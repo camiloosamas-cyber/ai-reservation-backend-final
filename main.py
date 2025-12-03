@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.27 - Stable (Fix de Duplicación de Resumen)
-app = FastAPI(title="AI Reservation System", version="1.0.27")
-print("🚀 AI Reservation System Loaded — Version 1.0.27 (Startup Confirmed)")
+# ✅ VERSION 1.0.31 - Stable (Fix de Reconstrucción de Mensaje para Modificación de Hora)
+app = FastAPI(title="AI Reservation System", version="1.0.31")
+print("🚀 AI Reservation System Loaded — Version 1.0.31 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -396,22 +396,46 @@ def extract_student_name(msg: str) -> str | None:
     return None
 
 def update_session_with_info(msg: str, session: dict):
-    
-    # 🔴 LOGGING INICIO 🔴
-    print("🟡 RAW USER MESSAGE:", msg)
-    print("🔵 SESSION BEFORE UPDATE (Date/Time):", session.get('date'), session.get('time'))
-    
+
+    print("🟡 RAW MESSAGE:", msg)
+    print("🔵 SESSION BEFORE:", session.get('date'), session.get('time'))
+
     new_name = extract_student_name(msg)
     new_school = extract_school_name(msg)
     new_package = detect_package(msg)
-    
-    # Extract date/time (where the issue is suspected)
+
+    # --- Primera extracción ---
     new_date, new_time = extract_datetime_info(msg)
-    
-    # 🟢 LOGGING EXTRACCION 🟢
-    print("🟢 EXTRACTED new_date:", new_date)
-    print("🟢 EXTRACTED new_time:", new_time)
-    
+
+    # ---------------------------------------------------------------------
+    # 🔥 SOLUCIÓN REAL (v1.0.31): RECONSTRUCCIÓN DEL MENSAJE CUANDO HAY FECHA EXISTENTE
+    # ---------------------------------------------------------------------
+    # Si NO se detectó fecha perooo ya hay una fecha, entonces reconstruimos:
+    # "YYYY-MM-DD a las 4 pm"
+    if not new_date and session.get("date"):
+        synthetic_msg = f"{session['date']} {msg}"
+        print("🟣 RE-RUN WITH SYNTHETIC MSG:", synthetic_msg)
+        
+        # Volvemos a extraer. Ahora el extractor sí tiene contexto de fecha para extraer la hora.
+        new_date_re_run, new_time_re_run = extract_datetime_info(synthetic_msg)
+        
+        # Usamos los resultados del re-run
+        new_date = new_date_re_run
+        new_time = new_time_re_run
+        
+        # Como es synthetic_msg, la nueva fecha siempre será la misma que la de la sesión (o la que dateparser encontró),
+        # pero para garantizar la persistencia de la fecha en la sesión (si el mensaje solo cambió la hora),
+        # nos aseguramos de que no se pierda si el re-run fallara la fecha pero no la hora (caso improbable, pero seguro).
+        new_date = new_date or session["date"]
+
+
+    # 🔥 PERSISTENCIA FINAL COMO SEGUNDO SEGURO (Mantiene la hora si solo se cambió la fecha)
+    if new_date and not new_time and session.get("time"):
+        new_time = session["time"]
+
+    print("🟢 AFTER FIX new_date:", new_date)
+    print("🟢 AFTER FIX new_time:", new_time)
+
     extract_age_cedula(msg, session)
 
     if new_name:
@@ -426,10 +450,9 @@ def update_session_with_info(msg: str, session: dict):
         session["time"] = new_time
 
     save_session(session)
-    
-    # 🔴 LOGGING FINAL 🔴
-    print("🔴 SESSION AFTER UPDATE (Date/Time):", session.get('date'), session.get('time'))
-    
+
+    print("🔴 SESSION AFTER:", session.get('date'), session.get('time'))
+
     return new_date, new_time
 
 # --- 5. INTENT & CONTEXTUAL HANDLING ---
@@ -626,6 +649,7 @@ def process_message(msg: str, session: dict) -> str:
         old_time = session.get("time")
 
         # Perform the actual data update (updates session dict in place and saves to DB)
+        # ESTE BLOQUE AHORA CONTIENE EL FIX DE RE-RUN
         new_date, new_time = update_session_with_info(msg, session) 
 
         # Force booking_started=True if ANY relevant data was captured.
@@ -635,7 +659,7 @@ def process_message(msg: str, session: dict) -> str:
 
         # --- AUTO MODIFY DETECTION (PRIORIDAD 1) ---
         
-        # FIX CRÍTICO: Permitir la modificación SIEMPRE que se detecte un cambio de fecha/hora
+        # Permitir la modificación SIEMPRE que se detecte un cambio de fecha/hora
         auto_modify_allowed = True 
         
         # Si se permite la modificación Y se detectó una nueva fecha/hora
@@ -744,4 +768,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.27)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.31)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
