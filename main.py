@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.18 - Stable (Regex de tiempo robusta aplicada)
-app = FastAPI(title="AI Reservation System", version="1.0.18")
-print("🚀 AI Reservation System Loaded — Version 1.0.18 (Startup Confirmed)")
+# ✅ VERSION 1.0.20 - Stable (Fix final de flujo contextual)
+app = FastAPI(title="AI Reservation System", version="1.0.20")
+print("🚀 AI Reservation System Loaded — Version 1.0.20 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -595,14 +595,6 @@ def process_message(msg: str, session: dict) -> str:
     confirmation_words = INTENTS["confirmation"]["patterns"]
     is_pure_confirmation = msg_lower in confirmation_words
 
-    # --- CONTEXTUAL QUESTIONS ALWAYS OVERRIDE CONFIRMATION ---
-    contextual_response = handle_contextual(msg, session)
-    if contextual_response:
-        if not (intent == "confirmation" and session.get("awaiting_confirmation")):
-            session["awaiting_confirmation"] = False
-            save_session(session)
-            return natural_tone(contextual_response)
-
     # Only attempt extraction if it's NOT a pure confirmation
     if not is_pure_confirmation:
         
@@ -630,21 +622,14 @@ def process_message(msg: str, session: dict) -> str:
             # NOTE: session is already saved in update_session_with_info.
 
         # --- AUTO MODIFY DETECTION ---
-        previous_date = old_date if old_date else None
-        previous_time = old_time if old_time else None
-
-        # Auto-modify ONLY if there was an existing date/time previously or we are waiting for confirmation
-        auto_modify_allowed = (previous_date is not None or previous_time is not None) or session.get("awaiting_confirmation") 
         
+        # ⚠️ CAMBIO 1 (Implementado): auto_modify_allowed solo depende de booking_started
+        auto_modify_allowed = session["booking_started"] 
         
-        if (
-            auto_modify_allowed
-            and (new_date or new_time)
-            and session.get("booking_started")
-        ):
+        # ⚠️ CAMBIO 2 (Implementado): Simplificación de la condición del if
+        if auto_modify_allowed and (new_date or new_time):
             
-            # If a change occurred, and the session is now complete, show summary.
-            # This handles cases like: change date + provide missing time, or change time when all was complete.
+            # ⚠️ CAMBIO 3 (Implementado): Si después del cambio ya están todos los datos → mostrar resumen
             if not build_missing_fields_message(session):
                 session["awaiting_confirmation"] = True
                 save_session(session)
@@ -660,6 +645,15 @@ def process_message(msg: str, session: dict) -> str:
     # 4. Calculate missing fields AFTER extraction and auto-modify logic.
     missing_message = build_missing_fields_message(session)
     missing_fields_exist = missing_message is not None
+
+    # --- CONTEXTUAL QUESTIONS (Solo si NO es cambio de fecha/hora) ---
+    # Este bloque ahora se ejecuta DESPUÉS de la extracción y lógica de auto-modify, 
+    # y solo si no hubo una intención explícita de modificar (modify) y no se extrajo fecha/hora nueva.
+    contextual_response = handle_contextual(msg, session)
+    if contextual_response and not detect_explicit_intent(msg, session) == "modify" and not (new_date or new_time):
+        session["awaiting_confirmation"] = False
+        save_session(session)
+        return natural_tone(contextual_response)
 
     # 5. Handle High-Priority Intents 
     if intent and intent in INTENTS:
@@ -727,4 +721,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.18)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.20)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
