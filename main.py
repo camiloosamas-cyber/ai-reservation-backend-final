@@ -21,9 +21,9 @@ from dateutil import parser as dateutil_parser
 # Set up the environment (critical for external service access)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.26 - Stable (Con Logs de Extracción)
-app = FastAPI(title="AI Reservation System", version="1.0.26")
-print("🚀 AI Reservation System Loaded — Version 1.0.26 (Startup Confirmed)")
+# ✅ VERSION 1.0.27 - Stable (Fix de Duplicación de Resumen)
+app = FastAPI(title="AI Reservation System", version="1.0.27")
+print("🚀 AI Reservation System Loaded — Version 1.0.27 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -645,11 +645,15 @@ def process_message(msg: str, session: dict) -> str:
             if not build_missing_fields_message(session):
                 session["awaiting_confirmation"] = True
                 save_session(session)
-                return natural_tone(
-                    "Perfecto 😊, ya actualicé la fecha y/o la hora.\n\n" +
-                    finish_booking_summary(session)
+                
+                # 🔥 SOLUCIÓN FINAL (v1.0.27): Detener el flujo aquí para evitar el resumen duplicado
+                # Se construye la respuesta y se retorna directamente, sin natural_tone adicional.
+                response = (
+                    "Perfecto 😊, ya actualicé la fecha y/o la hora.\n\n"
+                    + finish_booking_summary(session)
                 )
-
+                return response
+                
             # Si la modificación no completó todos los campos, la lógica de abajo pedirá lo faltante.
 
 
@@ -740,4 +744,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.26)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.27)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
