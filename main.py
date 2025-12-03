@@ -23,6 +23,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # ✅ VERSION 1.0.7 - Stable
 app = FastAPI(title="AI Reservation System", version="1.0.7")
+print("🚀 AI Reservation System Loaded — Version 1.0.7 (Startup Confirmed)") # ⬅️ LÍNEA AÑADIDA
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -672,7 +673,7 @@ def handle_contextual(msg: str, session: dict) -> str | None:
         return "Nuestros horarios son de lunes a viernes de 7:00 AM a 5:00 PM y sábados de 7:00 AM a 1:00 PM 😊"
     
     if any(x in text for x in ["donde queda", "ubicados", "direccion", "dirección"]):
-        # ✅ Confirmed Correct Address: Yopal, Calle 31 #29-61
+        # ✅ Correct Address
         return "Estamos ubicados en *Yopal*, en la *Calle 31 #29-61*. Te puedo enviar la ubicación exacta por mensaje si quieres. 📍"
     
     if any(x in text for x in ["como funciona", "cómo funciona", "proceso", "examen", "dura"]):
