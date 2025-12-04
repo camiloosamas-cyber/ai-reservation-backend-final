@@ -24,8 +24,8 @@ from dateutil import parser as dateutil_parser
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # VERSION STAMP
-app = FastAPI(title="AI Reservation System", version="1.0.54")
-print("🚀 AI Reservation System Loaded — Version 1.0.54 (Full Normalization Consistency Fix)")
+app = FastAPI(title="AI Reservation System", version="1.0.56")
+print("🚀 AI Reservation System Loaded — Version 1.0.56 (Extractor Logic Fixes)")
 
 # Timezone
 try:
@@ -193,24 +193,32 @@ def extract_student_name(msg: str, current_name: str | None) -> str | None:
     if current_name and not any(k in text for k in ["cambiar nombre", "otro nombre"]):
         return current_name
     
-    # Ignore any message containing clear school/institution keywords
+    # FIX #2: Improve name extraction for "para mi hijo andres" and stop before extra text
+    # Pattern 1: "el nombre es X", "se llama X", "para mi hijo/hija X"
+    # Use word boundary at the end of the prefix to allow for flexible trailing text (like school)
+    prefix = r"(?:el\s+nombre\s+es|se\s+llama|para\s+mi\s+hijo|para\s+mi\s+hija)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+)*)\b"
+    m = re.search(prefix, text)
+    
+    raw = None
+    if m:
+        raw = m.group(1).strip()
+        # FIX #1: If this high-confidence pattern matched, return immediately,
+        # ignoring the school block below.
+        if raw:
+            parts = raw.split()
+            if 1 <= len(parts) <= 4 and all(w.isalpha() for w in parts):
+                return " ".join(w.capitalize() for w in parts)
+    
+
+    # Block name extraction if the message is clearly only about school/institution (only if Pattern 1 failed)
     school_keywords = ["colegio", "sede", "institución", "institucion", "school", "liceo", "gimnasio"]
     if any(k in text for k in school_keywords):
         return None 
 
-    raw = None
-
-    # Pattern 1: "el nombre es X", "se llama X", "para mi hijo/hija X"
-    prefix = r"(?:el\s+nombre\s+es|se\s+llama|para\s+mi\s+hijo|para\s+mi\s+hija)\s+([a-záéíóúñ ]+)"
-    m = re.search(prefix, text)
-    if m:
-        raw = m.group(1).strip()
-    else:
-        # Pattern 2: Try extracting 2–4 capitalized words (alpha-only)
-        # Use re.search to find the name anywhere in the message.
-        m2 = re.search(r"([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})", msg)
-        if m2:
-            raw = m2.group(1)
+    # Pattern 2: Try extracting 2–4 capitalized words (alpha-only)
+    m2 = re.search(r"([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})", msg)
+    if m2:
+        raw = m2.group(1)
             
     if not raw:
         return None
@@ -425,13 +433,10 @@ def update_session_with_info(msg: str, session: dict):
     if new_date:
         session["date"] = new_date
 
-    # Time validation (invalid → bot should ask again)
-    if new_time == "":
-        pass
-    elif new_time == "INVALID":
-        # Don't set the session time, let process_message handle the error response
-        pass
-    elif new_time:
+    # FIX #4: Only update session["time"] if a *valid* time was extracted. 
+    # This prevents the extractor finding an empty time (new_time="") from 
+    # overwriting a previous valid time in the session.
+    if new_time and new_time != "INVALID":
         session["time"] = new_time
 
     save_session(session)
@@ -504,13 +509,10 @@ INTENTS = {
 # ---------------------------------------------------------
 
 def detect_explicit_intent(msg: str, session: dict) -> str | None:
+    # NOTE: 'msg' passed here is now guaranteed to be clean from process_message.
+    # We only need to lowercase and strip.
     msg_lower = msg.lower().strip()
     
-    # ⚠️ FIX #2: Normalize for boundary issues in Spanish question marks (critical for matching)
-    msg_lower = msg_lower.replace("¿", "")
-    # Maintain consistency in the original message
-    msg = msg.replace("¿", "") 
-
     # Work on a copy — never mutate global INTENTS
     local_intents = json.loads(json.dumps(INTENTS))
 
@@ -542,6 +544,7 @@ def detect_explicit_intent(msg: str, session: dict) -> str | None:
 def build_missing_fields_message(session: dict) -> str | None:
     missing = []
 
+    # FIX #3: The extractor logic has been corrected, this check should now work as intended.
     if not session["student_name"]: missing.append("el *nombre* del estudiante")
     if not session["school"]: missing.append("el *colegio*")
     if not session["package"]: missing.append("el *paquete* (Esencial, Activa o Total)")
@@ -781,18 +784,20 @@ def natural_tone(text: str) -> str:
 
 
 def process_message(msg: str, session: dict) -> str:
-    # ⚠️ FIX #1: Normalize smart quotes in the original message
+    # -----------------------------------------------------
+    # 1. CENTRALIZED NORMALIZATION
+    # Ensures 'msg' is clean for all extractors and 'msg_lower' for matching.
+    # -----------------------------------------------------
+    # Normalize smart quotes to standard quotes
     msg = msg.replace("“", "\"").replace("”", "\"")
-    
-    msg_lower = msg.lower().strip()
-    msg_lower = msg_lower.replace("“", "\"").replace("”", "\"") # Re-clean msg_lower to be safe
-    
-    # ⚠️ FIX #1 (Cont.): Normalize inverted question mark for extractors
+    # Normalize inverted question mark
     msg = msg.replace("¿", "")
-    msg_lower = msg_lower.replace("¿", "")
+    
+    # Create the clean lowercase version
+    msg_lower = msg.lower().strip()
     
     # -----------------------------------------------------
-    # 1. AUTO-ENABLE BOOKING MODE WHEN USER PROVIDES INFO
+    # 2. AUTO-ENABLE BOOKING MODE WHEN USER PROVIDES INFO
     # -----------------------------------------------------
     info_keywords = ["se llama", "nombre", "colegio", "edad", "años", "cedula", "cédula", "documento"]
     if any(k in msg_lower for k in info_keywords):
@@ -802,9 +807,9 @@ def process_message(msg: str, session: dict) -> str:
         session["booking_started"] = True
 
     # -----------------------------------------------------
-    # 2. DETECT INTENT (GUARDED)
+    # 3. DETECT INTENT (GUARDED)
     # -----------------------------------------------------
-    # Pass the now-normalized msg to the intent detector
+    # Pass the clean 'msg' to the intent detector
     intent = detect_explicit_intent(msg, session) 
 
     # If user explicitly requested a booking, lock booking mode immediately
@@ -816,13 +821,13 @@ def process_message(msg: str, session: dict) -> str:
     old_time = session.get("time")
 
     # -----------------------------------------------------
-    # 3. PERFORM NLP EXTRACTION (unless it's a pure confirmation)
+    # 4. PERFORM NLP EXTRACTION (unless it's a pure confirmation)
     # -----------------------------------------------------
     confirmation_words = INTENTS["confirmation"]["patterns"]
     is_pure_confirmation = msg_lower in confirmation_words and session.get("awaiting_confirmation")
 
     if not is_pure_confirmation:
-        # Extractor functions now safely receive normalized 'msg'
+        # Extractor functions safely receive the normalized 'msg'
         new_date, new_time = update_session_with_info(msg, session)
     else:
         new_date, new_time = "", ""
@@ -832,13 +837,13 @@ def process_message(msg: str, session: dict) -> str:
         return natural_tone("La hora no es válida 😊. ¿Me confirmas la hora porfa?")
 
     # -----------------------------------------------------
-    # 4. MISSING FIELDS CHECK
+    # 5. MISSING FIELDS CHECK
     # -----------------------------------------------------
     required = ["student_name", "school", "package", "date", "time", "age", "cedula"]
     all_fields_complete = all(session.get(f) for f in required)
 
     # -----------------------------------------------------
-    # 5. AUTO-MODIFY BEHAVIOR
+    # 6. AUTO-MODIFY BEHAVIOR
     # -----------------------------------------------------
     auto_modify_allowed = (
         session.get("booking_started") and
@@ -855,7 +860,7 @@ def process_message(msg: str, session: dict) -> str:
         return natural_tone("Perfecto 😊, ya actualicé la información.\n\n" + finish_booking_summary(session))
 
     # -----------------------------------------------------
-    # 6. HANDLE INTENT RESPONSE
+    # 7. HANDLE INTENT RESPONSE
     # -----------------------------------------------------
     if intent and intent in INTENTS:
         handler = globals()[INTENTS[intent]["handler"]]
@@ -873,7 +878,7 @@ def process_message(msg: str, session: dict) -> str:
             return natural_tone(handler(msg, session))
 
     # -----------------------------------------------------
-    # 7. BOOKING FLOW CONTINUATION
+    # 8. BOOKING FLOW CONTINUATION
     # -----------------------------------------------------
     if session["booking_started"]:
         missing = build_missing_fields_message(session)
@@ -889,14 +894,14 @@ def process_message(msg: str, session: dict) -> str:
             return natural_tone(missing)
 
     # -----------------------------------------------------
-    # 8. CONTEXTUAL FALLBACK
+    # 9. CONTEXTUAL FALLBACK
     # -----------------------------------------------------
     contextual = handle_contextual(msg, session)
     if contextual:
         return natural_tone(contextual)
 
     # -----------------------------------------------------
-    # 9. DEFAULT RESPONSE
+    # 10. DEFAULT RESPONSE
     # -----------------------------------------------------
     if not session["greeted"] and not session.get("booking_started") and intent is None:
         return natural_tone(handle_greeting(msg, session))
@@ -935,7 +940,7 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return (
-        "<h1>AI Reservation System (IPS v1.0.54 - Full Normalization Consistency Fix)</h1>"
+        "<h1>AI Reservation System (IPS v1.0.56 - Extractor Logic Fixes)</h1>"
         f"<p>Timezone: {LOCAL_TZ.key}</p>"
         f"<p>Supabase: {'Connected' if supabase else 'Disconnected'}</p>"
     )
