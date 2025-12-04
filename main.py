@@ -24,8 +24,8 @@ from dateutil import parser as dateutil_parser
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # VERSION STAMP
-app = FastAPI(title="AI Reservation System", version="1.0.46")
-print("🚀 AI Reservation System Loaded — Version 1.0.46 (Input Validation Fixes)")
+app = FastAPI(title="AI Reservation System", version="1.0.47")
+print("🚀 AI Reservation System Loaded — Version 1.0.47 (Intent Matching Fixes)")
 
 # Timezone
 try:
@@ -207,7 +207,7 @@ def extract_student_name(msg: str, current_name: str | None) -> str | None:
         raw = m.group(1).strip()
     else:
         # Pattern 2: Try extracting 2–4 capitalized words (alpha-only)
-        # RECOMMENDED FIX: Changed re.match to re.search to find name anywhere in the message.
+        # Use re.search to find the name anywhere in the message.
         m2 = re.search(r"([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})", msg)
         if m2:
             raw = m2.group(1)
@@ -283,6 +283,7 @@ def extract_age_cedula(msg: str, session: dict):
 def extract_datetime_info(msg: str) -> tuple[str, str]:
     """
     Extracts date and time.
+    Returns (date_str, "INVALID") if time is found but invalid.
     """
     text = msg.lower()
     today = datetime.now(LOCAL_TZ).date()
@@ -347,13 +348,11 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
             minute = int(explicit.group(5) or 0)
             marker = None 
         else:
-            # If the regex matched but didn't fit groups 1 or 4, treat as invalid
-            # This is primarily a safety net
+            # Safety net: regex matched but didn't fit expected groups
             return date_str, "INVALID" 
 
         # INVALID TIMES 
         if hour > 23 or minute > 59:
-            # REQUIRED FIX: Return "INVALID" instead of "" for clear error handling
             return date_str, "INVALID" 
 
         # Convert am/pm
@@ -375,7 +374,6 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
 
         # Time window restriction → 7am (7) to 5pm (17)
         if not (7 <= hour <= 17):
-            # REQUIRED FIX: Return "INVALID" instead of "" for clear error handling
             return date_str, "INVALID"
 
         time_str = f"{hour:02d}:{minute:02d}"
@@ -389,7 +387,7 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
         return date_str, "09:00"
 
     if "en la noche" in text:
-        # Outside window, but clear intent. We'll let the user decide.
+        # Outside window, but clear intent.
         return date_str, "19:00" 
 
     # If dateparser detected a time by itself (last resort)
@@ -447,7 +445,7 @@ INTENTS = {
         "patterns": [
             "hola", "buenos dias", "buenas", "buenas tardes",
             "buenas noches", "disculpe", "una pregunta",
-            "informacion", "consulta"
+            "informacion", "consulta", 
         ],
         "handler": "handle_greeting"
     },
@@ -455,7 +453,7 @@ INTENTS = {
     "package_info": {
         "patterns": [
             "cuanto vale", "cuánto vale", "precio", "valor",
-            "psico", "psicologia", "psicología", "odontologia",
+            "psico", "psicología", "psicologia", "odontologia",
             "odontología", "paquete", "kit escolar", "esencial",
             "activa", "total", "bienestar", "el verde",
             "el azul", "el amarillo", "45k", "60k", "75k"
@@ -525,7 +523,8 @@ def detect_explicit_intent(msg: str, session: dict) -> str | None:
                     return intent
                 continue
 
-            if p in msg_lower:
+            # FIX 2: Replace substring matching with whole-word matching using regex boundary \b
+            if re.search(rf"\b{re.escape(p)}\b", msg_lower):
                 return intent
 
     return None
@@ -809,7 +808,7 @@ def process_message(msg: str, session: dict) -> str:
     else:
         new_date, new_time = "", ""
 
-    # REQUIRED FIX: Intercept "INVALID" time status
+    # Intercept "INVALID" time status
     if new_time == "INVALID":
         return natural_tone("La hora no es válida 😊. ¿Me confirmas la hora porfa?")
 
@@ -917,7 +916,7 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return (
-        "<h1>AI Reservation System (IPS v1.0.46 - Input Validation Fixes)</h1>"
+        "<h1>AI Reservation System (IPS v1.0.47 - Intent Matching Fixes)</h1>"
         f"<p>Timezone: {LOCAL_TZ.key}</p>"
         f"<p>Supabase: {'Connected' if supabase else 'Disconnected'}</p>"
     )
