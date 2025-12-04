@@ -24,8 +24,8 @@ from dateutil import parser as dateutil_parser
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # VERSION STAMP
-app = FastAPI(title="AI Reservation System", version="1.0.47")
-print("🚀 AI Reservation System Loaded — Version 1.0.47 (Intent Matching Fixes)")
+app = FastAPI(title="AI Reservation System", version="1.0.43")
+print("🚀 AI Reservation System Loaded — Version 1.0.43 (IPS Edition)")
 
 # Timezone
 try:
@@ -182,47 +182,27 @@ def detect_package(msg: str) -> str | None:
 # STUDENT NAME EXTRACTION
 # ---------------------------------------------------------
 
-def extract_student_name(msg: str, current_name: str | None) -> str | None:
-    """
-    Extracts student name, preventing overwrite if a name exists,
-    and ignoring school-related phrases.
-    """
+def extract_student_name(msg: str) -> str | None:
     text = msg.lower()
 
-    # Do not overwrite name unless explicit intent to change is clear
-    if current_name and not any(k in text for k in ["cambiar nombre", "otro nombre"]):
-        return current_name
-    
-    # Ignore any message containing clear school/institution keywords
-    school_keywords = ["colegio", "sede", "institución", "institucion", "school", "liceo", "gimnasio"]
-    if any(k in text for k in school_keywords):
-        return None 
-
-    raw = None
-
-    # Pattern 1: "el nombre es X", "se llama X", "para mi hijo/hija X"
+    # Pattern 1: "el nombre es X", "se llama X"
     prefix = r"(?:el\s+nombre\s+es|se\s+llama|para\s+mi\s+hijo|para\s+mi\s+hija)\s+([a-záéíóúñ ]+)"
     m = re.search(prefix, text)
     if m:
         raw = m.group(1).strip()
     else:
-        # Pattern 2: Try extracting 2–4 capitalized words (alpha-only)
-        # Use re.search to find the name anywhere in the message.
-        m2 = re.search(r"([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})", msg)
-        if m2:
-            raw = m2.group(1)
-            
-    if not raw:
-        return None
+        # Pattern 2: Try extracting 2–4 capitalized words
+        m2 = re.match(r"([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})", msg)
+        if not m2:
+            return None
+        raw = m2.group(1)
 
-    # Cut off trailing info (cedula, time, date) - simplified from original
-    raw = re.split(r"(cedula|cédula|edad|años|a las|\d{1,2}:\d{2})", raw)[0].strip()
+    # Cut off trailing info (school, time, date, cedula)
+    raw = re.split(r"(colegio|cedula|cédula|edad|años|a las|\d{1,2}:\d{2})", raw)[0].strip()
 
     # Clean and format
     parts = raw.split()
-    
-    # Validation: 1 to 4 words, alpha-only (no digits, no non-name junk)
-    if 1 <= len(parts) <= 4 and all(w.isalpha() for w in parts):
+    if 1 <= len(parts) <= 4:
         return " ".join(w.capitalize() for w in parts)
 
     return None
@@ -237,7 +217,7 @@ def extract_school_name(msg: str) -> str | None:
 
     patterns = [
         r"(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9 ]+)",
-        r"(?:del\s+colegio|del\s+gimnasio|del\s+liceo|de\s+la\s+escuela)\s+([a-záéíóúñ0-9 ]+)"
+        r"(?:del\s+colegio|del\s+gimnasio|del\s+liceo)\s+([a-záéíóúñ0-9 ]+)"
     ]
 
     for p in patterns:
@@ -262,15 +242,12 @@ def extract_age_cedula(msg: str, session: dict):
     if not session.get("age"):
         m = re.search(r"(?:edad\s+(\d{1,2}))|(\d{1,2})\s*(años|anos)", text)
         if m:
-            age_val = m.group(1) or m.group(2)
-            if age_val:
-                age = int(age_val)
-                if 5 <= age <= 25:  # Reasonable school age
-                    session["age"] = age
+            age = int(m.group(1) or m.group(2))
+            if 5 <= age <= 25:  # Reasonable school age
+                session["age"] = age
 
     # CEDULA
     if not session.get("cedula"):
-        # Pattern: exactly 5-12 digits, often isolated by word boundaries
         m2 = re.search(r"\b\d{5,12}\b", msg)
         if m2:
             session["cedula"] = m2.group(0)
@@ -282,8 +259,10 @@ def extract_age_cedula(msg: str, session: dict):
 
 def extract_datetime_info(msg: str) -> tuple[str, str]:
     """
-    Extracts date and time.
-    Returns (date_str, "INVALID") if time is found but invalid.
+    Extracts date and time with special rules for:
+    - mañana, hoy, pasado mañana
+    - vague times (mañana en la tarde → 15:00)
+    - strict invalid-time rejection
     """
     text = msg.lower()
     today = datetime.now(LOCAL_TZ).date()
@@ -299,82 +278,60 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
     elif "hoy" in text:
         date_str = today.strftime("%Y-%m-%d")
 
-    # Fallback: dateparser for “el viernes”, “10/12”, "domingo"
-    dt = dateparser.parse(
-        msg,
-        languages=["es"],
-        settings={
-            "RETURN_AS_TIMEZONE_AWARE": True,
-            "TIMEZONE": LOCAL_TZ.key,
-            "TO_TIMEZONE": LOCAL_TZ.key,
-            "PREFER_DATES_FROM": "future"
-        }
-    )
-    
-    if dt:
-        date_str_parsed = dt.strftime("%Y-%m-%d")
-        if not date_str or date_str_parsed != today.strftime("%Y-%m-%d"):
-            date_str = date_str_parsed
+    # Fallback: dateparser for “el viernes”, “10/12”
+    if not date_str:
+        dt = dateparser.parse(
+            msg,
+            languages=["es"],
+            settings={
+                "RETURN_AS_TIMEZONE_AWARE": True,
+                "TIMEZONE": LOCAL_TZ.key,
+                "TO_TIMEZONE": LOCAL_TZ.key,
+                "PREFER_DATES_FROM": "future"
+            }
+        )
+        if dt:
+            date_str = dt.strftime("%Y-%m-%d")
 
     # Reject past dates
     if date_str:
         try:
             d = datetime.strptime(date_str, "%Y-%m-%d").date()
             if d < today:
-                date_str = "" 
+                return "", ""
         except:
-            date_str = ""
             pass
 
+    # If we STILL don't have a date → nothing else to do
     if not date_str:
-        return "", "" # No date found
+        return "", ""
 
     # ---------- TIME DETECTION ----------
-    # Anchor the regex to detect time context only ("a las" or "am/pm")
+    # Match explicit times: "a las 3", "3pm", "3:30", "11 am"
     explicit = re.search(
-        r"(?:a\s+las\s+)?(\d{1,2})(?:[.:](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b"
-        r"|a\s+las\s+(\d{1,2})(?:[.:](\d{2}))?\b",
+        r"(?:a\s+las\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?",
         text
     )
 
     if explicit:
-        # Determine which capture groups (1-3 or 4-5) matched
-        if explicit.group(1): # Matches "a las 11am" or "11:30 pm"
-            hour = int(explicit.group(1))
-            minute = int(explicit.group(2) or 0) 
-            marker = explicit.group(3)
-        elif explicit.group(4): # Matches "a las 11"
-            hour = int(explicit.group(4))
-            minute = int(explicit.group(5) or 0)
-            marker = None 
-        else:
-            # Safety net: regex matched but didn't fit expected groups
-            return date_str, "INVALID" 
+        hour = int(explicit.group(1))
+        minute = int(explicit.group(2) or 0)
 
-        # INVALID TIMES 
+        # INVALID TIMES (Option C → ask again)
         if hour > 23 or minute > 59:
-            return date_str, "INVALID" 
+            return date_str, ""  # Return invalid time
 
         # Convert am/pm
+        marker = explicit.group(3)
         if marker:
-            marker = marker.lower()
             if "pm" in marker and hour != 12:
                 hour += 12
             if "am" in marker and hour == 12:
                 hour = 0
-            
-        # Heuristic for hours without am/pm (e.g. "a las 3")
-        elif explicit.group(4):
-            if 1 <= hour <= 6: 
-                 hour += 12 # Assume 3 means 3 PM (15:00)
-            elif hour == 12: 
-                hour = 12 
-            elif 7 <= hour <= 11:
-                pass 
 
-        # Time window restriction → 7am (7) to 5pm (17)
+        # Time window restriction → 7am to 5pm
         if not (7 <= hour <= 17):
-            return date_str, "INVALID"
+            return date_str, ""
 
         time_str = f"{hour:02d}:{minute:02d}"
         return date_str, time_str
@@ -387,16 +344,16 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
         return date_str, "09:00"
 
     if "en la noche" in text:
-        # Outside window, but clear intent.
-        return date_str, "19:00" 
+        return date_str, "19:00"
 
-    # If dateparser detected a time by itself (last resort)
-    if dt and dt.date().strftime("%Y-%m-%d") == date_str:
-        t = dt.time()
+    # If dateparser detected a time by itself:
+    dt2 = dateparser.parse(msg)
+    if dt2:
+        t = dt2.time()
         if 7 <= t.hour <= 17:
             return date_str, t.strftime("%H:%M")
 
-    return date_str, ""  # Missing but valid date found
+    return date_str, ""  # Missing or invalid time
 
 
 # ---------------------------------------------------------
@@ -404,9 +361,7 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
 # ---------------------------------------------------------
 
 def update_session_with_info(msg: str, session: dict):
-    
-    new_name = extract_student_name(msg, session.get("student_name"))
-    
+    new_name = extract_student_name(msg)
     new_school = extract_school_name(msg)
     new_package = detect_package(msg)
     new_date, new_time = extract_datetime_info(msg)
@@ -427,9 +382,7 @@ def update_session_with_info(msg: str, session: dict):
 
     # Time validation (invalid → bot should ask again)
     if new_time == "":
-        pass
-    elif new_time == "INVALID":
-        # Don't set the session time, let process_message handle the error response
+        # DO NOT set time → trigger missing-fields logic later
         pass
     elif new_time:
         session["time"] = new_time
@@ -445,7 +398,7 @@ INTENTS = {
         "patterns": [
             "hola", "buenos dias", "buenas", "buenas tardes",
             "buenas noches", "disculpe", "una pregunta",
-            "informacion", "consulta", 
+            "informacion", "consulta"
         ],
         "handler": "handle_greeting"
     },
@@ -453,7 +406,7 @@ INTENTS = {
     "package_info": {
         "patterns": [
             "cuanto vale", "cuánto vale", "precio", "valor",
-            "psico", "psicología", "psicologia", "odontologia",
+            "psico", "psicologia", "psicología", "odontologia",
             "odontología", "paquete", "kit escolar", "esencial",
             "activa", "total", "bienestar", "el verde",
             "el azul", "el amarillo", "45k", "60k", "75k"
@@ -506,7 +459,7 @@ def detect_explicit_intent(msg: str, session: dict) -> str | None:
     # Work on a copy — never mutate global INTENTS
     local_intents = json.loads(json.dumps(INTENTS))
 
-    # If booking already started → disable greeting + package_info
+    # FIX: If booking already started → disable greeting + package_info
     if session.get("booking_started"):
         local_intents["greeting"]["patterns"] = []
 
@@ -523,8 +476,7 @@ def detect_explicit_intent(msg: str, session: dict) -> str | None:
                     return intent
                 continue
 
-            # FIX 2: Replace substring matching with whole-word matching using regex boundary \b
-            if re.search(rf"\b{re.escape(p)}\b", msg_lower):
+            if p in msg_lower:
                 return intent
 
     return None
@@ -559,34 +511,21 @@ def build_missing_fields_message(session: dict) -> str | None:
 # ---------------------------------------------------------
 
 def finish_booking_summary(session: dict) -> str:
-    
     session["awaiting_confirmation"] = True
     save_session(session)
 
-    # Explicitly map all fields for clean output, using "N/A" for missing data
-    student_name = session.get('student_name', 'N/A')
-    school = session.get('school', 'N/A')
-    package = session.get('package', 'N/A')
-    date = session.get('date', 'N/A')
-    time = session.get('time', 'N/A')
-    age = session.get('age', 'N/A')
-    cedula = session.get('cedula', 'N/A')
+    ced = f"🪪 Cédula: {session['cedula']}\n" if session.get("cedula") else ""
 
-    # Format Age and Cedula lines only if present
-    age_line = f"🧒 Edad: {age}\n" if age != 'N/A' else ""
-    ced_line = f"🪪 Cédula: {cedula}\n" if cedula != 'N/A' else ""
-    
-    # Removed the trailing newline from the summary body
     return (
         "Ya tengo toda la información:\n\n"
-        f"👤 Estudiante: {student_name}\n"
-        f"🎒 Colegio: {school}\n"
-        f"📦 Paquete: {package}\n"
-        f"📅 Fecha: {date}\n"
-        f"⏰ Hora: {time}\n"
-        f"{age_line}"
-        f"{ced_line}"
-        "\n¿Deseas confirmar esta cita? (Responde *Confirmo*)"
+        f"👤 Estudiante: {session['student_name']}\n"
+        f"🎒 Colegio: {session['school']}\n"
+        f"📦 Paquete: {session['package']}\n"
+        f"📅 Fecha: {session['date']}\n"
+        f"⏰ Hora: {session['time']}\n"
+        f"🧒 Edad: {session['age']}\n"
+        f"{ced}\n"
+        "¿Deseas confirmar esta cita? (Responde *Confirmo*)"
     )
 
 
@@ -808,10 +747,6 @@ def process_message(msg: str, session: dict) -> str:
     else:
         new_date, new_time = "", ""
 
-    # Intercept "INVALID" time status
-    if new_time == "INVALID":
-        return natural_tone("La hora no es válida 😊. ¿Me confirmas la hora porfa?")
-
     # -----------------------------------------------------
     # 4. MISSING FIELDS CHECK
     # -----------------------------------------------------
@@ -879,7 +814,7 @@ def process_message(msg: str, session: dict) -> str:
     # -----------------------------------------------------
     # 9. DEFAULT RESPONSE
     # -----------------------------------------------------
-    if not session["greeted"] and not session.get("booking_started") and intent is None:
+    if not session["greeted"] and not session.get("booking_started"):
         return natural_tone(handle_greeting(msg, session))
 
     return natural_tone(
@@ -916,7 +851,7 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return (
-        "<h1>AI Reservation System (IPS v1.0.47 - Intent Matching Fixes)</h1>"
+        "<h1>AI Reservation System (IPS v1.0.43)</h1>"
         f"<p>Timezone: {LOCAL_TZ.key}</p>"
         f"<p>Supabase: {'Connected' if supabase else 'Disconnected'}</p>"
     )
