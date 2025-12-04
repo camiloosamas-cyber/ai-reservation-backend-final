@@ -19,12 +19,11 @@ from dateutil import parser as dateutil_parser
 # --- 1. CONFIGURATION & INITIALIZATION ---
 
 # Set up the environment (critical for external service access)
-# 🔥 FIX 1: Corrected os.chdir function call
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.40 - Stable (Critical Bug Fixes: os.path.dirname, Regex minute group, Modify trigger)
-app = FastAPI(title="AI Reservation System", version="1.0.40")
-print("🚀 AI Reservation System Loaded — Version 1.0.40 (Startup Confirmed)")
+# ✅ VERSION 1.0.15 - Stable (Fixes finales de regex)
+app = FastAPI(title="AI Reservation System", version="1.0.15")
+print("🚀 AI Reservation System Loaded — Version 1.0.15 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -285,28 +284,36 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
     # Only proceed to time extraction if a valid date was found.
     if date_str:
         
-        # --- 4. ROBUST TIME EXTRACTION VIA REGEX & DATEPARSER (CRITICAL FIX) ---
+        # --- 4. ROBUST TIME EXTRACTION VIA REGEX & DATEPARSER ---
         
-        # 🔥 V1.0.34 Regex: Universal Regex (robust to punctuation, no \b end)
+        # ✅ FIX #1 — Correct TIME REGEX (USER PROVIDED in previous step)
         explicit_time_match = re.search(
-            r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?|am|pm|mañana|tarde|noche)",
-            msg_lower
-        )
+            r"(?:(?:a\s+las\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b)"   # 3 pm, 3:00 pm, a las 3 pm
+            r"|(?:(?:a\s+las\s+)?(\d{1,2})(?::(\d{2}))?\s*(mañana|tarde|noche)\b)"   # 3 tarde, a las 3 noche
+        , msg_lower)
 
 
         if explicit_time_match:
+            # We must reconstruct the raw_time string based on which group matched.
             
-            # ⚠️ FINAL CORRECT GROUP LOGIC (Only uses groups 1, 2, 3)
-            hour = explicit_time_match.group(1)
-            minute = explicit_time_match.group(2) or "00"
-            period = explicit_time_match.group(3)
+            # Group structure:
+            # Group 1 (Hour AM/PM), Group 2 (Minute AM/PM), Group 3 (AM/PM marker)
+            # Group 4 (Hour Mañana/Tarde), Group 5 (Minute Mañana/Tarde), Group 6 (Mañana/Tarde marker)
+            
+            if explicit_time_match.group(1): # AM/PM Match
+                hour = explicit_time_match.group(1)
+                minute = explicit_time_match.group(2) or "00"
+                ampm = explicit_time_match.group(3)
+                raw_time = f"{hour}:{minute}{ampm}"
+            elif explicit_time_match.group(4): # Mañana/Tarde Match
+                hour = explicit_time_match.group(4)
+                minute = explicit_time_match.group(5) or "00"
+                period = explicit_time_match.group(6)
+                raw_time = f"{hour}:{minute} {period}" # dateparser needs space for period
+            else:
+                 return date_str, time_str # Should not happen with the new regex, but safety fallback
 
-            # 🔥 V1.0.35 FIX: Normalize period by removing all dots for dateparser compatibility
-            period = period.replace(".", "")
-            
-            # raw_time needs space for dateparser to handle '8am' vs '8 am' vs '8 mañana'
-            raw_time = f"{hour}:{minute} {period}"
-            
+
             # Convert to 24h
             parsed_time = dateparser.parse(
                 f"{date_str} {raw_time}", 
@@ -323,14 +330,13 @@ def extract_datetime_info(msg: str) -> tuple[str, str]:
             if parsed_time:
                 time_str = parsed_time.strftime("%H:%M")
                 
-                # CRITICAL: If we have BOTH date and time -> RETURN NOW
+                # CRITICAL FIX: If we have BOTH date and time -> RETURN NOW
                 return date_str, time_str 
 
         # --- 5. FALLBACK TIME: Use dateparser's time if no explicit time was found ---
         elif dt_local:
              time_str = dt_local.strftime("%H:%M")
              
-    # Returns (date, "") if only date was found (Fix for "Mejor el sábado")
     return date_str, time_str
 
 def extract_school_name(msg: str) -> str | None:
@@ -341,7 +347,7 @@ def extract_school_name(msg: str) -> str | None:
 
     # New robust patterns
     patterns = [
-        # Fixed the regex grouping for end markers
+        # ✅ FIX #4 — Fixed the regex grouping for end markers
         r"(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+?)(?=$|\.|,|\d|(mañana)|(tarde)|(noche)|(a\s+las)|(\s+para)|(\s+el\s+))",
         # Catches 'del colegio X'
         r"(?:del\s+|de\s+)(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-záéíóúñ0-9\s]+)"
@@ -361,6 +367,7 @@ def extract_school_name(msg: str) -> str | None:
 def extract_age_cedula(msg: str, session: dict):
     """Extracts age and cedula if they are reasonable numbers."""
     
+    # ✅ FIX #2 — Correct AGE DETECTION (USER PROVIDED in previous step)
     # AGE DETECTION (must include the word "años" or "edad")
     if not session.get("age"):
         age_match = re.search(r"(edad\s+(\d{1,2}))|(\b(\d{1,2})\s*(años|anos|año|ano)\b)", msg.lower())
@@ -374,10 +381,12 @@ def extract_age_cedula(msg: str, session: dict):
         if ced_match:
             session["cedula"] = ced_match.group(1)
 
+# ✅ FIX #3 — Replaced with improved student name regex
 def extract_student_name(msg: str) -> str | None:
     text = msg.lower()
 
     # Capture names in ALL common Spanish variations
+    # This pattern is robust to capture names after common phrases like "mi hija", "para mi hijo", etc.
     pattern = r"(?:mi\s+(?:hijo|hija)\s+(?:se\s+llama\s+)?|para\s+mi\s+(?:hijo|hija)\s+|es\s+para\s+(?:mi\s+)?(?:hijo|hija)\s+)([a-záéíóúñ ]+)"
 
     m = re.search(pattern, text)
@@ -400,46 +409,10 @@ def extract_student_name(msg: str) -> str | None:
     return None
 
 def update_session_with_info(msg: str, session: dict):
-
-    print("🟡 RAW MESSAGE:", msg)
-    print("🔵 SESSION BEFORE:", session.get('date'), session.get('time'))
-
     new_name = extract_student_name(msg)
     new_school = extract_school_name(msg)
     new_package = detect_package(msg)
-
-    # --- Primera extracción ---
     new_date, new_time = extract_datetime_info(msg)
-
-    # ---------------------------------------------------------------------
-    # 🔥 SOLUCIÓN REAL (v1.0.31): RECONSTRUCCIÓN DEL MENSAJE CUANDO HAY FECHA EXISTENTE
-    # ---------------------------------------------------------------------
-    # Si NO se detectó fecha perooo ya hay una fecha, entonces reconstruimos:
-    # "YYYY-MM-DD a las 4 pm"
-    if not new_date and session.get("date"):
-        synthetic_msg = f"{session['date']} {msg}"
-        print("🟣 RE-RUN WITH SYNTHETIC MSG:", synthetic_msg)
-        
-        # Volvemos a extraer. Ahora el extractor sí tiene contexto de fecha para extraer la hora.
-        new_date_re_run, new_time_re_run = extract_datetime_info(synthetic_msg)
-        
-        # Usamos los resultados del re-run
-        new_date = new_date_re_run
-        new_time = new_time_re_run
-        
-        # Como es synthetic_msg, la nueva fecha siempre será la misma que la de la sesión (o la que dateparser encontró),
-        # pero para garantizar la persistencia de la fecha en la sesión (si el mensaje solo cambió la hora),
-        # nos aseguramos de que no se pierda si el re-run fallara la fecha pero no la hora (caso improbable, pero seguro).
-        new_date = new_date or session["date"]
-
-
-    # 🔥 PERSISTENCIA FINAL COMO SEGUNDO SEGURO (Mantiene la hora si solo se cambió la fecha)
-    if new_date and not new_time and session.get("time"):
-        new_time = session["time"]
-
-    print("🟢 AFTER FIX new_date:", new_date)
-    print("🟢 AFTER FIX new_time:", new_time)
-
     extract_age_cedula(msg, session)
 
     if new_name:
@@ -454,9 +427,6 @@ def update_session_with_info(msg: str, session: dict):
         session["time"] = new_time
 
     save_session(session)
-
-    print("🔴 SESSION AFTER:", session.get('date'), session.get('time'))
-
     return new_date, new_time
 
 # --- 5. INTENT & CONTEXTUAL HANDLING ---
@@ -470,46 +440,24 @@ INTENTS = {
     "confirmation": {"patterns": ["confirmo","sí confirmo","si confirmo","confirmar"], "handler": "handle_confirmation"}
 }
 
-# --- 🔥 detect_explicit_intent (v1.0.40 - FIX 2: Regex minute group) ---
 def detect_explicit_intent(msg: str, session: dict) -> str | None:
-    msg_lower = msg.lower().strip()
+    msg_lower = msg.lower()
+    msg_stripped = msg_lower.strip()
 
-    # 1. Pure confirmations (Usando patrones existentes + los simplificados)
-    confirmation_patterns = INTENTS["confirmation"]["patterns"] + ["sí", "si", "dale", "ok", "listo"]
-    if msg_lower in confirmation_patterns:
-        # Solo dispara si la sesión lo espera
-        if session.get("awaiting_confirmation"):
-            return "confirmation"
+    priority = ["cancel", "modify", "confirmation", "booking_request", "package_info", "greeting"]
 
-    # 2. Cancellation intent (Usando patrones existentes)
-    if any(x in msg_lower for x in INTENTS["cancel"]["patterns"]):
-        return "cancel"
+    for intent in priority:
+        for p in INTENTS[intent]["patterns"]:
 
-    # 3. Modify date or time
-    # 🔥 FIX 2: Added capture group for minutes: (?::(\d{2}))?
-    auto_time_change = re.search(
-        r"(?:a\s+las\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.?m\.?|p\.?m\.?)?",
-        msg_lower
-    )
+            if intent == "confirmation":
+                if msg_stripped == p and session.get("awaiting_confirmation"):
+                    return intent
+                continue
 
-    if auto_time_change and session.get("date"):
-        return "modify"
-
-    # 4. Booking request (Usando patrones existentes)
-    if any(x in msg_lower for x in INTENTS["booking_request"]["patterns"]):
-        return "booking_request"
-
-    # 5. Package info (Usando patrones existentes)
-    if any(x in msg_lower for x in INTENTS["package_info"]["patterns"]):
-        return "package_info"
-
-    # 6. Greetings (Usando patrones existentes)
-    if any(x in msg_lower for x in INTENTS["greeting"]["patterns"]):
-        return "greeting"
+            if p in msg_lower:
+                return intent
 
     return None
-# -----------------------------------------------------------------------------------
-
 
 def build_missing_fields_message(session: dict) -> str | None:
     missing = []
@@ -532,7 +480,6 @@ def finish_booking_summary(session: dict) -> str:
     session["awaiting_confirmation"] = True
     save_session(session)
 
-    # La función retorna el encabezado para que solo se use una vez al llamar
     return (
         f"Ya tengo toda la información:\n\n"
         f"👤 Estudiante: {session['student_name']}\n"
@@ -594,11 +541,11 @@ def handle_booking_request(msg, session):
 def handle_modify(msg, session):
     session["awaiting_confirmation"] = False
     session["booking_started"] = True
-    
-    # After the intent is detected, the process_message loop will call update_session_with_info
-    # which will extract the new date/time and update the session.
-    
-    return "Perfecto 😊, actualizando la información."
+    missing = build_missing_fields_message(session)
+
+    if missing:
+        return "Perfecto 😊, indícame la NUEVA fecha y hora."
+    return finish_booking_summary(session)
 
 def handle_cancel(msg, session):
     session["awaiting_confirmation"] = False
@@ -654,10 +601,6 @@ def process_message(msg: str, session: dict) -> str:
     # 1. Detect Intent (NO SIDE EFFECTS) - Must be done early for handler logic
     intent = detect_explicit_intent(msg, session)
     
-    # FIX CRÍTICO: Inicializar new_date y new_time para que la lógica contextual pueda usarlas.
-    new_date = ""
-    new_time = ""
-    
     # 2. HIGH-CAPTURE DATA EXTRACTION LOGIC
     msg_lower = msg.lower().strip()
     
@@ -674,59 +617,71 @@ def process_message(msg: str, session: dict) -> str:
         old_time = session.get("time")
 
         # Perform the actual data update (updates session dict in place and saves to DB)
-        # ESTE BLOQUE AHORA CONTIENE EL FIX DE RE-RUN
+        # CRITICAL: This call updates and SAVES the session with all extracted data.
         new_date, new_time = update_session_with_info(msg, session) 
 
+        # 🔥 SUPER PRIORIDAD: Si ya tenemos todos los datos, ignorar intents
+        required_fields = ["student_name", "school", "package", "date", "time", "age", "cedula"]
+        if all(session.get(f) for f in required_fields):
+            session["booking_started"] = True
+            session["awaiting_confirmation"] = True # Set flag before showing summary
+            # Session is already saved in update_session_with_info, but saving again here is harmless.
+            save_session(session) 
+            return natural_tone("Listo 😊, ya tengo toda la información:\n\n" + finish_booking_summary(session)) # SALTO DIRECTO
+        
         # Force booking_started=True if ANY relevant data was captured.
         if session.get("student_name") or session.get("school") or session.get("package") or session.get("date") or session.get("time"):
             session["booking_started"] = True
             # NOTE: session is already saved in update_session_with_info.
 
-        # --- AUTO MODIFY DETECTION (PRIORIDAD 1) ---
+        # --- AUTO MODIFY DETECTION (FIXED) ---
+        previous_date = old_date if old_date else None
+        previous_time = old_time if old_time else None
+
+        # Auto-modify ONLY if there was an existing date/time previously 
+        # FIX: Also allow auto-modify if we are waiting for confirmation and user changes date/time
+        auto_modify_allowed = (previous_date is not None or previous_time is not None) or session.get("awaiting_confirmation") 
         
-        # Check if the intent was modify (either explicit or implicitly detected by the new block)
-        # 🔥 FIX 3: Added check for new_date or new_time to avoid false modify triggers.
-        if intent == "modify" and (new_date or new_time):
-            
-            # After the data is extracted (above) and the intent is modify, 
-            # we check if ALL fields exist.
-            if not build_missing_fields_message(session):
-                session["awaiting_confirmation"] = True
-                save_session(session)
-                
-                # 🔥 SOLUCIÓN FINAL: Detener el flujo aquí para evitar el resumen duplicado
-                # Se construye la respuesta y se retorna directamente, sin natural_tone adicional.
-                response = (
-                    "Perfecto 😊, ya actualicé la fecha y/o la hora.\n\n"
-                    + finish_booking_summary(session)
-                )
-                return response
-                
-            # If the modification didn't complete all fields, the logic of below will ask for the missing.
+        if (
+            session.get("booking_started")
+            and auto_modify_allowed                     
+            and (new_date or new_time)
+        ):
+            # If they modify, we leave awaiting_confirmation as TRUE so the summary is shown right away
+            session["awaiting_confirmation"] = True 
+            save_session(session)  # ensure updated timestamp and values
 
+            return natural_tone(
+                "Perfecto 😊, ya actualicé la fecha y/o la hora.\n\n" +
+                finish_booking_summary(session)
+            )
 
-        # --- ONLY AFTER AUTO-MODIFY, THEN CHECK FULL COMPLETION (PRIORIDAD 2) ---
-        required_fields = ["student_name", "school", "package", "date", "time", "age", "cedula"]
-        if all(session.get(f) for f in required_fields):
-            session["booking_started"] = True
-            session["awaiting_confirmation"] = True
-            save_session(session)
-            return natural_tone(finish_booking_summary(session))
-
-
-    # 4. Calculate missing fields AFTER extraction and auto-modify logic.
+    # 4. CRITICAL FIX: Calculate missing fields AFTER extraction and auto-modify logic.
+    # This ensures it reads the session with all new data (date, time, etc.)
     missing_message = build_missing_fields_message(session)
     missing_fields_exist = missing_message is not None
 
-    # --- CONTEXTUAL QUESTIONS (Solo si NO es cambio de fecha/hora) ---
-    # La condición ahora es segura porque new_date/new_time están definidas.
-    contextual_response = handle_contextual(msg, session)
-    if contextual_response and not intent == "modify":
-        session["awaiting_confirmation"] = False
-        save_session(session)
-        return natural_tone(contextual_response)
+    # 5. Contextual responses SHOULD NOT interrupt booking or modifications
+    # If we are waiting for confirmation and they ask a question, we unset the flag and answer.
+    if session.get("awaiting_confirmation") and intent not in ["confirmation", "modify", "booking_request"]:
+        # Allow a contextual answer to reset the confirmation flag
+        contextual_response = handle_contextual(msg, session)
+        if contextual_response:
+             session["awaiting_confirmation"] = False
+             save_session(session)
+             return natural_tone(contextual_response)
 
-    # 5. Handle High-Priority Intents 
+    # Allow contextual answers only when NOT waiting for confirmation, NOT modifying, and NO fields are missing.
+    if (
+        not session.get("awaiting_confirmation")
+        and not missing_fields_exist          
+        and intent not in ["modify", "booking_request"]
+    ):
+        contextual_response = handle_contextual(msg, session)
+        if contextual_response:
+            return natural_tone(contextual_response)
+
+    # 6. Handle High-Priority Intents 
     if intent and intent in INTENTS:
         handler = globals()[INTENTS[intent]["handler"]]
         
@@ -736,31 +691,21 @@ def process_message(msg: str, session: dict) -> str:
         
         # B. Handle other high-level intents.
         if intent in ["cancel", "modify", "booking_request", "package_info", "greeting"]:
-            # NOTE: For 'modify', the handler just returns a generic 'Perfecto...' message.
-            # The summary logic is handled in PRIORITY 1 above, but if fields are missing, 
-            # we allow the flow to continue to the missing fields check.
-            
-            # If the intent was detected, but no change was made, or fields are missing, proceed to asking for missing info.
-            if intent == "modify" and missing_fields_exist:
-                return natural_tone(missing_message)
-            
-            # For non-modify intents, return the handler's response.
             return natural_tone(handler(msg, session))
         
-    # 6. Handle Booking Continuation Flow
+    # 7. Handle Booking Continuation Flow
     if session["booking_started"]:
         
         # A. ALL FIELDS COMPLETE -> Show Final Summary (Fallback check)
         if not missing_fields_exist: # Use the pre-calculated flag
             session["awaiting_confirmation"] = True
             save_session(session)
-            # FIX: Eliminado el encabezado redundante.
-            return natural_tone(finish_booking_summary(session))
+            return natural_tone("Listo 😊, ya tengo toda la información:\n\n" + finish_booking_summary(session))
         
         # B. FIELDS MISSING -> Ask for the next missing piece
         return natural_tone(missing_message) # Use the pre-calculated message
 
-    # 7. Default/Fallback
+    # 8. Default/Fallback
     if not session["greeted"] and not session.get("booking_started"):
         return natural_tone(handle_greeting(msg, session))
 
@@ -801,4 +746,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.40)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.15)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
