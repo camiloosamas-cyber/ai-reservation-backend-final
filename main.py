@@ -510,9 +510,6 @@ def detect_explicit_intent(msg: str, session: dict) -> str | None:
     if session.get("booking_started"):
         local_intents["greeting"]["patterns"] = []
 
-        # Allow package_info only if user asks price mid-booking
-        if not any(k in msg_lower for k in ["precio", "cuanto", "cuánto"]):
-            local_intents["package_info"]["patterns"] = []
 
     priority = ["cancel", "confirmation", "modify", "booking_request", "package_info", "greeting"]
 
