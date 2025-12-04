@@ -24,8 +24,8 @@ from dateutil import parser as dateutil_parser
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # VERSION STAMP
-app = FastAPI(title="AI Reservation System", version="1.0.50")
-print("🚀 AI Reservation System Loaded — Version 1.0.50 (Greeting Ambiguity Fix)")
+app = FastAPI(title="AI Reservation System", version="1.0.52")
+print("🚀 AI Reservation System Loaded — Version 1.0.52 (Quote Normalization Scope Fix)")
 
 # Timezone
 try:
@@ -445,18 +445,21 @@ INTENTS = {
         "patterns": [
             "hola", "buenos dias", "buenas", "buenas tardes",
             "buenas noches", "disculpe", "una pregunta",
-            "informacion", "consulta" # Removed "si" here
+            "informacion", "consulta"
         ],
         "handler": "handle_greeting"
     },
 
+    # Replaced package_info patterns with the exact updated list
     "package_info": {
         "patterns": [
             "cuanto vale", "cuánto vale", "precio", "valor",
             "psico", "psicología", "psicologia", "odontologia",
             "odontología", "paquete", "kit escolar", "esencial",
             "activa", "total", "bienestar", "el verde",
-            "el azul", "el amarillo", "45k", "60k", "75k"
+            "el azul", "el amarillo", "45k", "60k", "75k",
+            "que paquetes ofrecen", "¿qué paquetes ofrecen", 
+            "paquetes ofrecen", "paquetes"
         ],
         "handler": "handle_package_info"
     },
@@ -502,6 +505,8 @@ INTENTS = {
 
 def detect_explicit_intent(msg: str, session: dict) -> str | None:
     msg_lower = msg.lower().strip()
+    # Normalize smart quotes HERE (critical)
+    msg_lower = msg_lower.replace("”", "").replace("“", "")
 
     # Work on a copy — never mutate global INTENTS
     local_intents = json.loads(json.dumps(INTENTS))
@@ -775,6 +780,8 @@ def natural_tone(text: str) -> str:
 def process_message(msg: str, session: dict) -> str:
     msg_lower = msg.lower().strip()
 
+    # NOTE: Quote normalization now happens inside detect_explicit_intent()
+
     # -----------------------------------------------------
     # 1. AUTO-ENABLE BOOKING MODE WHEN USER PROVIDES INFO
     # -----------------------------------------------------
@@ -917,7 +924,7 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return (
-        "<h1>AI Reservation System (IPS v1.0.50 - Greeting Ambiguity Fix)</h1>"
+        "<h1>AI Reservation System (IPS v1.0.52 - Quote Normalization Scope Fix)</h1>"
         f"<p>Timezone: {LOCAL_TZ.key}</p>"
         f"<p>Supabase: {'Connected' if supabase else 'Disconnected'}</p>"
     )
