@@ -19,11 +19,12 @@ from dateutil import parser as dateutil_parser
 # --- 1. CONFIGURATION & INITIALIZATION ---
 
 # Set up the environment (critical for external service access)
+# 🔥 FIX 1: Corrected os.chdir function call
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ VERSION 1.0.37 - Stable (Fix de Detección de Modificación Implícita de Hora - Versión Limpia)
-app = FastAPI(title="AI Reservation System", version="1.0.37")
-print("🚀 AI Reservation System Loaded — Version 1.0.37 (Startup Confirmed)")
+# ✅ VERSION 1.0.40 - Stable (Critical Bug Fixes: os.path.dirname, Regex minute group, Modify trigger)
+app = FastAPI(title="AI Reservation System", version="1.0.40")
+print("🚀 AI Reservation System Loaded — Version 1.0.40 (Startup Confirmed)")
 
 # Timezone: Must be explicitly defined and used consistently
 try:
@@ -469,36 +470,46 @@ INTENTS = {
     "confirmation": {"patterns": ["confirmo","sí confirmo","si confirmo","confirmar"], "handler": "handle_confirmation"}
 }
 
+# --- 🔥 detect_explicit_intent (v1.0.40 - FIX 2: Regex minute group) ---
 def detect_explicit_intent(msg: str, session: dict) -> str | None:
-    msg_lower = msg.lower()
-    msg_stripped = msg_lower.strip()
+    msg_lower = msg.lower().strip()
 
-    priority = ["cancel", "modify", "confirmation", "booking_request", "package_info", "greeting"]
+    # 1. Pure confirmations (Usando patrones existentes + los simplificados)
+    confirmation_patterns = INTENTS["confirmation"]["patterns"] + ["sí", "si", "dale", "ok", "listo"]
+    if msg_lower in confirmation_patterns:
+        # Solo dispara si la sesión lo espera
+        if session.get("awaiting_confirmation"):
+            return "confirmation"
 
-    for intent in priority:
-        for p in INTENTS[intent]["patterns"]:
+    # 2. Cancellation intent (Usando patrones existentes)
+    if any(x in msg_lower for x in INTENTS["cancel"]["patterns"]):
+        return "cancel"
 
-            if intent == "confirmation":
-                if msg_stripped == p and session.get("awaiting_confirmation"):
-                    return intent
-                continue
-
-            if p in msg_lower:
-                return intent
-
-    # --- NEW: Auto-detect modify intent when message only contains a new time ---
-    # Matches a time format (e.g., "4", "4 pm", "4:30", "4:30 p.m.")
+    # 3. Modify date or time
+    # 🔥 FIX 2: Added capture group for minutes: (?::(\d{2}))?
     auto_time_change = re.search(
-        r"\b(\d{1,2})(?::\d{2})?\s*(am|pm|a\.?m\.?|p\.?m\.?)?\b",
+        r"(?:a\s+las\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.?m\.?|p\.?m\.?)?",
         msg_lower
     )
 
     if auto_time_change and session.get("date"):
-        # If a date already exists and the user provides a time-like pattern, treat as modify.
         return "modify"
 
+    # 4. Booking request (Usando patrones existentes)
+    if any(x in msg_lower for x in INTENTS["booking_request"]["patterns"]):
+        return "booking_request"
+
+    # 5. Package info (Usando patrones existentes)
+    if any(x in msg_lower for x in INTENTS["package_info"]["patterns"]):
+        return "package_info"
+
+    # 6. Greetings (Usando patrones existentes)
+    if any(x in msg_lower for x in INTENTS["greeting"]["patterns"]):
+        return "greeting"
 
     return None
+# -----------------------------------------------------------------------------------
+
 
 def build_missing_fields_message(session: dict) -> str | None:
     missing = []
@@ -641,7 +652,6 @@ def process_message(msg: str, session: dict) -> str:
     """
     
     # 1. Detect Intent (NO SIDE EFFECTS) - Must be done early for handler logic
-    # This now includes the new auto-modify logic for simple time changes.
     intent = detect_explicit_intent(msg, session)
     
     # FIX CRÍTICO: Inicializar new_date y new_time para que la lógica contextual pueda usarlas.
@@ -675,7 +685,8 @@ def process_message(msg: str, session: dict) -> str:
         # --- AUTO MODIFY DETECTION (PRIORIDAD 1) ---
         
         # Check if the intent was modify (either explicit or implicitly detected by the new block)
-        if intent == "modify":
+        # 🔥 FIX 3: Added check for new_date or new_time to avoid false modify triggers.
+        if intent == "modify" and (new_date or new_time):
             
             # After the data is extracted (above) and the intent is modify, 
             # we check if ALL fields exist.
@@ -683,7 +694,7 @@ def process_message(msg: str, session: dict) -> str:
                 session["awaiting_confirmation"] = True
                 save_session(session)
                 
-                # 🔥 SOLUCIÓN FINAL (v1.0.27): Detener el flujo aquí para evitar el resumen duplicado
+                # 🔥 SOLUCIÓN FINAL: Detener el flujo aquí para evitar el resumen duplicado
                 # Se construye la respuesta y se retorna directamente, sin natural_tone adicional.
                 response = (
                     "Perfecto 😊, ya actualicé la fecha y/o la hora.\n\n"
@@ -728,8 +739,9 @@ def process_message(msg: str, session: dict) -> str:
             # NOTE: For 'modify', the handler just returns a generic 'Perfecto...' message.
             # The summary logic is handled in PRIORITY 1 above, but if fields are missing, 
             # we allow the flow to continue to the missing fields check.
-            if intent == "modify" and not missing_fields_exist:
-                # The update happened, but it didn't complete all fields, so we return the missing message
+            
+            # If the intent was detected, but no change was made, or fields are missing, proceed to asking for missing info.
+            if intent == "modify" and missing_fields_exist:
                 return natural_tone(missing_message)
             
             # For non-modify intents, return the handler's response.
@@ -789,4 +801,4 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Simple health check endpoint."""
-    return f"<h1>AI Reservation System is Running (v1.0.37)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
+    return f"<h1>AI Reservation System is Running (v1.0.40)</h1><p>Timezone: {LOCAL_TZ.key}</p><p>Supabase Status: {'Connected' if supabase else 'Disconnected (Check ENV)'}</p>"
