@@ -24,8 +24,8 @@ from dateutil import parser as dateutil_parser
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # VERSION STAMP
-app = FastAPI(title="AI Reservation System", version="1.0.52")
-print("🚀 AI Reservation System Loaded — Version 1.0.52 (Quote Normalization Scope Fix)")
+app = FastAPI(title="AI Reservation System", version="1.0.54")
+print("🚀 AI Reservation System Loaded — Version 1.0.54 (Full Normalization Consistency Fix)")
 
 # Timezone
 try:
@@ -450,7 +450,7 @@ INTENTS = {
         "handler": "handle_greeting"
     },
 
-    # Replaced package_info patterns with the exact updated list
+    # Package info patterns
     "package_info": {
         "patterns": [
             "cuanto vale", "cuánto vale", "precio", "valor",
@@ -505,8 +505,11 @@ INTENTS = {
 
 def detect_explicit_intent(msg: str, session: dict) -> str | None:
     msg_lower = msg.lower().strip()
-    # Normalize smart quotes HERE (critical)
-    msg_lower = msg_lower.replace("”", "").replace("“", "")
+    
+    # ⚠️ FIX #2: Normalize for boundary issues in Spanish question marks (critical for matching)
+    msg_lower = msg_lower.replace("¿", "")
+    # Maintain consistency in the original message
+    msg = msg.replace("¿", "") 
 
     # Work on a copy — never mutate global INTENTS
     local_intents = json.loads(json.dumps(INTENTS))
@@ -778,10 +781,16 @@ def natural_tone(text: str) -> str:
 
 
 def process_message(msg: str, session: dict) -> str:
+    # ⚠️ FIX #1: Normalize smart quotes in the original message
+    msg = msg.replace("“", "\"").replace("”", "\"")
+    
     msg_lower = msg.lower().strip()
-
-    # NOTE: Quote normalization now happens inside detect_explicit_intent()
-
+    msg_lower = msg_lower.replace("“", "\"").replace("”", "\"") # Re-clean msg_lower to be safe
+    
+    # ⚠️ FIX #1 (Cont.): Normalize inverted question mark for extractors
+    msg = msg.replace("¿", "")
+    msg_lower = msg_lower.replace("¿", "")
+    
     # -----------------------------------------------------
     # 1. AUTO-ENABLE BOOKING MODE WHEN USER PROVIDES INFO
     # -----------------------------------------------------
@@ -795,7 +804,8 @@ def process_message(msg: str, session: dict) -> str:
     # -----------------------------------------------------
     # 2. DETECT INTENT (GUARDED)
     # -----------------------------------------------------
-    intent = detect_explicit_intent(msg, session)
+    # Pass the now-normalized msg to the intent detector
+    intent = detect_explicit_intent(msg, session) 
 
     # If user explicitly requested a booking, lock booking mode immediately
     if intent == "booking_request":
@@ -812,6 +822,7 @@ def process_message(msg: str, session: dict) -> str:
     is_pure_confirmation = msg_lower in confirmation_words and session.get("awaiting_confirmation")
 
     if not is_pure_confirmation:
+        # Extractor functions now safely receive normalized 'msg'
         new_date, new_time = update_session_with_info(msg, session)
     else:
         new_date, new_time = "", ""
@@ -924,7 +935,7 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return (
-        "<h1>AI Reservation System (IPS v1.0.52 - Quote Normalization Scope Fix)</h1>"
+        "<h1>AI Reservation System (IPS v1.0.54 - Full Normalization Consistency Fix)</h1>"
         f"<p>Timezone: {LOCAL_TZ.key}</p>"
         f"<p>Supabase: {'Connected' if supabase else 'Disconnected'}</p>"
     )
