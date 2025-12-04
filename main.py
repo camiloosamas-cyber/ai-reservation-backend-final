@@ -848,7 +848,8 @@ def process_message(msg: str, session: dict) -> str:
         if intent == "cancel":
             return natural_tone(handler(msg, session))
 
-        if intent in ["modify", "booking_request", "package_info"]:<br>            return natural_tone(handler(msg, session))
+        if intent in ["modify", "booking_request", "package_info"]:
+            return natural_tone(handler(msg, session))
 
         if intent == "greeting" and not session.get("booking_started"):
             return natural_tone(handler(msg, session))
