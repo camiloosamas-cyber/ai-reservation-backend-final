@@ -24,8 +24,8 @@ from dateutil import parser as dateutil_parser
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # VERSION STAMP
-app = FastAPI(title="AI Reservation System", version="1.0.48")
-print("🚀 AI Reservation System Loaded — Version 1.0.48 (Booking State Timing Fix)")
+app = FastAPI(title="AI Reservation System", version="1.0.50")
+print("🚀 AI Reservation System Loaded — Version 1.0.50 (Greeting Ambiguity Fix)")
 
 # Timezone
 try:
@@ -445,7 +445,7 @@ INTENTS = {
         "patterns": [
             "hola", "buenos dias", "buenas", "buenas tardes",
             "buenas noches", "disculpe", "una pregunta",
-            "informacion", "consulta", 
+            "informacion", "consulta" # Removed "si" here
         ],
         "handler": "handle_greeting"
     },
@@ -506,11 +506,11 @@ def detect_explicit_intent(msg: str, session: dict) -> str | None:
     # Work on a copy — never mutate global INTENTS
     local_intents = json.loads(json.dumps(INTENTS))
 
-    # If booking already started → disable greeting + package_info
     if session.get("booking_started"):
+        # Inside booking, ignore greeting intent
         local_intents["greeting"]["patterns"] = []
-
-
+        # BUT allow package_info always (user may ask prices mid-flow)
+        
     priority = ["cancel", "confirmation", "modify", "booking_request", "package_info", "greeting"]
 
     for intent in priority:
@@ -646,7 +646,7 @@ def handle_package_info(msg, session):
 
 # BOOKING REQUEST
 def handle_booking_request(msg, session):
-    # NOTE: session["booking_started"] is now set at the start of process_message
+    # NOTE: session["booking_started"] is set at the start of process_message if detected
     session["awaiting_confirmation"] = False
 
     missing = build_missing_fields_message(session)
@@ -790,7 +790,7 @@ def process_message(msg: str, session: dict) -> str:
     # -----------------------------------------------------
     intent = detect_explicit_intent(msg, session)
 
-    # FIX: If user explicitly requested a booking, lock booking mode immediately
+    # If user explicitly requested a booking, lock booking mode immediately
     if intent == "booking_request":
         session["booking_started"] = True
 
@@ -917,7 +917,7 @@ async def whatsapp_webhook(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return (
-        "<h1>AI Reservation System (IPS v1.0.48 - Booking State Timing Fix)</h1>"
+        "<h1>AI Reservation System (IPS v1.0.50 - Greeting Ambiguity Fix)</h1>"
         f"<p>Timezone: {LOCAL_TZ.key}</p>"
         f"<p>Supabase: {'Connected' if supabase else 'Disconnected'}</p>"
     )
