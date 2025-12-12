@@ -24,7 +24,7 @@ if SUPABASE_URL and SUPABASE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI(title="Oriental IPS WhatsApp Bot", version="1.0.0")
-app.add_middleware(CORSOMiddleware,
+app.add_middleware(CORSMiddleware,
     allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
 app.mount("/static", StaticFiles(directory="static"), name="static")
