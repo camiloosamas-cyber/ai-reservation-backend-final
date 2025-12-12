@@ -1,13 +1,25 @@
-import os, re, json
-from datetime import datetime, timedelta
+# ============================================================
+# ORIENTAL IPS WHATSAPP BOT - main.py (v2.1.1)
+# COMPLETELY RULE-BASED, HUMAN-TONE, 100% DETERMINISTIC
+# ============================================================
+
+import os
+import re
+from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from twilio.twiml.messaging_response import MessagingResponse
+
 import dateparser
 from supabase import create_client, Client as SupabaseClient
+
+# ============================================================
+# CONFIGURACIÓN INICIAL
+# ============================================================
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 TEST_MODE = os.getenv("TEST_MODE") == "1"
@@ -19,314 +31,510 @@ except ZoneInfoNotFoundError:
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
 supabase: SupabaseClient = None
 if SUPABASE_URL and SUPABASE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI(title="Oriental IPS WhatsApp Bot", version="1.0.0")
-app.add_middleware(CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+app = FastAPI(title="Oriental IPS WhatsApp Bot", version="2.1.1")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# ============================================================
+# SESIONES EN MEMORIA
+# ============================================================
+
 SESSIONS = {}
-REQUIRED_FIELDS = ["student_name","school","age","cedula","package","date","time"]
 
-PACKAGE_INFO = {
-    "esencial":{"price":"45.000","label":"cuidado esencial",
-        "full":"Paquete Cuidado Esencial — 45.000 COP\nIncluye Medicina General, Optometría y Audiometría."},
-    "activa":{"price":"60.000","label":"salud activa",
-        "full":"Paquete Salud Activa — 60.000 COP\nIncluye Medicina General, Optometría, Audiometría y Psicología."},
-    "bienestar":{"price":"75.000","label":"bienestar total",
-        "full":"Paquete Bienestar Total — 75.000 COP\nIncluye Medicina General, Optometría, Audiometría, Psicología y Odontología."}
-}
-
-FAQ = {
-    "ubicados":"Estamos ubicados en Calle 31 #29–61, Yopal.",
-    "pago":"Aceptamos Nequi y efectivo.",
-    "dur":"El examen dura entre 30 y 45 minutos.",
-    "llevar":"Debes traer el documento del estudiante.",
-    "domingo":"Sí, atendemos todos los días de 6am a 8pm."
-}
-
-RELEVANT = [
-    "cita","reserv","paquete","precio","precios","colegio","estudiante","examen",
-    "fecha","hora","ubic","pago","nequi","dur","llevar","domingo","esencial",
-    "activa","bienestar","total","psico","optometr","audio","medicina","odont"
+REQUIRED_FIELDS = [
+    "student_name",
+    "school",
+    "age",
+    "cedula",
+    "package",
+    "date",
+    "time",
 ]
 
-def log(msg):
-    print(f"[LOG] {msg}")
+PACKAGE_DATA = {
+    "esencial": {
+        "price": "45.000",
+        "label": "cuidado esencial",
+        "full":
+            "🧾 Paquete Cuidado Esencial cuesta 45.000 COP.\n"
+            "Incluye: Medicina General, Optometría y Audiometría."
+    },
+    "activa": {
+        "price": "60.000",
+        "label": "salud activa",
+        "full":
+            "🧾 Paquete Salud Activa cuesta 60.000 COP.\n"
+            "Incluye: Esencial + Psicología."
+    },
+    "bienestar": {
+        "price": "75.000",
+        "label": "bienestar total",
+        "full":
+            "🧾 Paquete Bienestar Total cuesta 75.000 COP.\n"
+            "Incluye: Salud Activa + Odontología."
+    },
+}
 
-def twiml(msg):
-    if TEST_MODE: return Response(content=msg, media_type="text/plain")
-    r = MessagingResponse(); r.message(msg)
+FAQ_RESPONSES = {
+    "ubicados": "Estamos ubicados en Calle 31 #29–61, Yopal.",
+    "pago": "Aceptamos Nequi y efectivo.",
+    "duracion": "El examen dura entre 30 y 45 minutos.",
+    "llevar": "Debes traer el documento del estudiante.",
+    "domingo": "Sí, atendemos todos los días de 6am a 8pm.",
+}
+
+# ============================================================
+# UTILIDADES
+# ============================================================
+
+def twiml(message: str):
+    if TEST_MODE:
+        return Response(content=message, media_type="text/plain")
+    r = MessagingResponse()
+    r.message(message)
     return Response(content=str(r), media_type="application/xml")
 
-def get_session(phone):
+
+def get_session(phone: str):
     if phone not in SESSIONS:
-        SESSIONS[phone]={"booking_started":False,"student_name":None,"school":None,
-            "age":None,"cedula":None,"package":None,"date":None,"time":None}
+        SESSIONS[phone] = {
+            "booking_started": False,
+            "student_name": None,
+            "school": None,
+            "age": None,
+            "cedula": None,
+            "package": None,
+            "date": None,
+            "time": None,
+            "emoji_used": False,
+            "sent_full_prompt": False,
+            "sent_summary": False,
+        }
     return SESSIONS[phone]
 
-def reset_session(phone):
-    SESSIONS[phone]={"booking_started":False,"student_name":None,"school":None,
-        "age":None,"cedula":None,"package":None,"date":None,"time":None}
 
-def is_relevant(text):
-    t=text.lower()
-    return any(k in t for k in RELEVANT)
+def reset_session(phone: str):
+    SESSIONS[phone] = {
+        "booking_started": False,
+        "student_name": None,
+        "school": None,
+        "age": None,
+        "cedula": None,
+        "package": None,
+        "date": None,
+        "time": None,
+        "emoji_used": False,
+        "sent_full_prompt": False,
+        "sent_summary": False,
+    }
 
-def extract_package(t):
-    t=t.lower()
-    if any(x in t for x in["esencial","verde","45k","45000","kit escolar"]):return"esencial"
-    if any(x in t for x in["activa","salud activa","azul","psico","60000"]):return"activa"
-    if any(x in t for x in["bienestar","total","75k","completo","odont"]):return"bienestar"
-    return None
+# ============================================================
+# DETECCIÓN DE RELEVANCIA
+# ============================================================
 
-SCHOOL_PATTERNS=[
-    r"colegio ([a-zA-Záéíóúñ0-9\s]+)",
-    r"instituto ([a-zA-Záéíóúñ0-9\s]+)",
-    r"gimnasio ([a-zA-Záéíóúñ0-9\s]+)"
+RELEVANT_KEYWORDS = [
+    "cita", "reserv", "paquete", "precio", "precios",
+    "colegio", "estudiante", "examenes", "exámenes",
+    "fecha", "hora", "ubicados", "pago", "nequi",
+    "duración", "llevar", "domingo",
+    "esencial", "activa", "bienestar",
+    "psico", "odont", "optometr", "audio", "medicina",
 ]
 
-def extract_school(t):
-    s=t.lower()
-    for p in SCHOOL_PATTERNS:
-        m=re.search(p,s)
-        if m:return m.group(1).strip().title()
+def is_relevant(msg: str):
+    m = msg.lower()
+    return any(k in m for k in RELEVANT_KEYWORDS)
+# ============================================================
+# EXTRACCIÓN DE DATOS
+# ============================================================
+
+def extract_package(msg: str):
+    m = msg.lower()
+    if any(k in m for k in ["esencial", "verde", "45k", "45000", "kit escolar"]):
+        return "esencial"
+    if any(k in m for k in ["activa", "salud activa", "azul", "psico", "60000"]):
+        return "activa"
+    if any(k in m for k in ["bienestar", "total", "75k", "completo", "odont"]):
+        return "bienestar"
     return None
 
-def extract_student_name(t):
-    s=t.lower().strip()
-    if s.startswith("hola")or s.startswith("buenos")or s.startswith("buenas"):
+
+def extract_school(msg: str):
+    t = msg.lower()
+
+    patterns = [
+        r"del colegio\s+([a-zA-Záéíóúñ0-9\s]+)",
+        r"colegio\s+([a-zA-Záéíóúñ0-9\s]+)",
+        r"gimnasio\s+([a-zA-Záéíóúñ0-9\s]+)",
+        r"instituto\s+([a-zA-Záéíóúñ0-9\s]+)",
+    ]
+
+    for pat in patterns:
+        m = re.search(pat, t)
+        if m:
+            return m.group(1).strip().title()
+
+    return None
+
+
+def extract_student_name(msg: str):
+    t = msg.lower()
+
+    if t.startswith("hola") or t.startswith("buenos") or t.startswith("buenas"):
         return None
-    m=re.search(r"(se llama|el nombre es)\s+([a-zA-Záéíóúñ\s]+)",s)
-    if m:return m.group(2).strip().title()
+
+    patterns = [
+        r"se llama\s+([a-zA-Záéíóúñ\s]+)",
+        r"el nombre es\s+([a-zA-Záéíóúñ\s]+)",
+        r"para (mi|el|la)\s+(hijo|hija|niño|niña|estudiante)\s+([a-zA-Záéíóúñ\s]+)",
+        r"mi\s+(hijo|hija|niño|niña)\s+([a-zA-Záéíóúñ\s]+)",
+        r"para\s+([a-zA-Záéíóúñ\s]+)\s+del colegio",
+    ]
+
+    for pat in patterns:
+        m = re.search(pat, t)
+        if m:
+            # last group always name
+            return m.groups()[-1].strip().title()
+
     return None
 
-def extract_age(t):
-    m=re.search(r"(\d{1,2})\s*años",t.lower()); 
-    if m:return m.group(1)
-    m=re.search(r"edad\s*(\d{1,2})",t.lower())
-    if m:return m.group(1)
+
+def extract_age(msg: str):
+    t = msg.lower()
+    m = re.search(r"(\d{1,2})\s*años", t)
+    if m:
+        return m.group(1)
+    m = re.search(r"edad\s*(\d{1,2})", t)
+    if m:
+        return m.group(1)
     return None
 
-def extract_cedula(t):
-    m=re.search(r"\b(\d{5,12})\b",t)
-    return m.group(1)if m else None
 
-def extract_date(text):
-    d=dateparser.parse(text,settings={"TIMEZONE":"America/Bogota","TO_TIMEZONE":"America/Bogota"})
-    if not d:return None
-    d=d.astimezone(LOCAL_TZ)
-    today=datetime.now(LOCAL_TZ).replace(hour=0,minute=0,second=0,microsecond=0)
-    if d<today:return None
+def extract_cedula(msg: str):
+    m = re.search(r"\b(\d{5,12})\b", msg)
+    return m.group(1) if m else None
+
+
+def extract_date(msg: str):
+    d = dateparser.parse(msg, settings={
+        "TIMEZONE": "America/Bogota",
+        "TO_TIMEZONE": "America/Bogota",
+    })
+    if not d:
+        return None
+    d = d.astimezone(LOCAL_TZ)
+
+    today = datetime.now(LOCAL_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    if d < today:
+        return None
+
     return d.strftime("%Y-%m-%d")
 
-def extract_time(t):
-    m=re.search(r"(\d{1,2})(?:[:\.](\d{2}))?\s*(am|pm)?",t.lower())
-    if not m:return None
-    h=int(m.group(1)); mnt=int(m.group(2))if m.group(2)else 0; ap=m.group(3)
-    if ap=="pm"and h<12:h+=12
-    if ap=="am"and h==12:h=0
-    if h<6 or h>20:return None
-    return f"{h:02d}:{mnt:02d}"
 
-def faq_answer(t):
-    s=t.lower()
-    if"ubic" in s:return FAQ["ubicados"]
-    if"pago" in s or"nequi" in s:return FAQ["pago"]
-    if"dur" in s:return FAQ["dur"]
-    if"llevar" in s:return FAQ["llevar"]
-    if"domingo" in s:return FAQ["domingo"]
+def extract_time(msg: str):
+    t = msg.lower()
+    m = re.search(r"(\d{1,2})(?:[:\.](\d{2}))?\s*(am|pm)?", t)
+    if not m:
+        return None
+
+    hour = int(m.group(1))
+    minute = int(m.group(2)) if m.group(2) else 0
+    ampm = m.group(3)
+
+    if ampm == "pm" and hour < 12:
+        hour += 12
+    if ampm == "am" and hour == 12:
+        hour = 0
+
+    if hour < 6 or hour > 20:
+        return None
+
+    return f"{hour:02d}:{minute:02d}"
+
+# ============================================================
+# FAQ HANDLING
+# ============================================================
+
+def check_faq(msg: str):
+    t = msg.lower()
+    if "ubicad" in t or "direcc" in t:
+        return FAQ_RESPONSES["ubicados"]
+    if "pago" in t or "nequi" in t:
+        return FAQ_RESPONSES["pago"]
+    if "dur" in t:
+        return FAQ_RESPONSES["duracion"]
+    if "llevar" in t:
+        return FAQ_RESPONSES["llevar"]
+    if "domingo" in t:
+        return FAQ_RESPONSES["domingo"]
     return None
 
-def package_info(pkg):
-    return PACKAGE_INFO[pkg]["full"]+"\n\n¿Deseas agendar una cita?"
-def detect_intent_booking(t):
-    s=t.lower()
-    return any(x in s for x in["agendar","reserv","cita","quiero una cita"])
+# ============================================================
+# PACKAGE INFO
+# ============================================================
 
-def update_session(text,session):
-    updated=False
-    pkg=extract_package(text)
-    if pkg and not session["package"]:
-        session["package"]=pkg; session["booking_started"]=True; updated=True
+def package_information(pkg: str, ask=True):
+    info = PACKAGE_DATA[pkg]["full"]
+    if ask:
+        return f"{info}\n\n¿Deseas agendar una cita?"
+    return info
 
-    sn=extract_student_name(text)
-    if sn and not session["student_name"]:
-        session["student_name"]=sn; session["booking_started"]=True; updated=True
+# ============================================================
+# INTENCIÓN DE AGENDAR
+# ============================================================
 
-    sc=extract_school(text)
-    if sc and not session["school"]:
-        session["school"]=sc; session["booking_started"]=True; updated=True
+def detect_booking_intent(msg: str):
+    t = msg.lower()
+    return any(k in t for k in ["agendar", "reservar", "reserv", "cita", "quiero agendar"])
 
-    ag=extract_age(text)
-    if ag and not session["age"]:
-        session["age"]=ag; session["booking_started"]=True; updated=True
+# ============================================================
+# UPDATE SESSION WITH EXTRACTED FIELDS
+# ============================================================
 
-    cd=extract_cedula(text)
-    if cd and not session["cedula"]:
-        session["cedula"]=cd; session["booking_started"]=True; updated=True
+def update_session_with_extracted_data(msg: str, session: dict):
+    updated = []
 
-    dt=extract_date(text)
-    if dt and not session["date"]:
-        session["date"]=dt; session["booking_started"]=True; updated=True
+    extractors = [
+        ("package", extract_package),
+        ("student_name", extract_student_name),
+        ("school", extract_school),
+        ("age", extract_age),
+        ("cedula", extract_cedula),
+        ("date", extract_date),
+        ("time", extract_time),
+    ]
 
-    tm=extract_time(text)
-    if tm and not session["time"]:
-        session["time"]=tm; session["booking_started"]=True; updated=True
+    for field, fn in extractors:
+        if not session[field]:
+            val = fn(msg)
+            if val:
+                session[field] = val
+                session["booking_started"] = True
+                updated.append(field)
 
     return updated
 
-def missing_fields(s):
-    return[f for f in REQUIRED_FIELDS if not s[f]]
+# ============================================================
+# MISSING FIELDS & PROMPTS
+# ============================================================
 
-def ask_missing(s):
-    miss=missing_fields(s)
-    if not miss:return None
+def missing_fields(session: dict):
+    return [f for f in REQUIRED_FIELDS if not session.get(f)]
 
-    pkg=s["package"]
-    if pkg:
-        price=PACKAGE_INFO[pkg]["price"]
-        lbl=PACKAGE_INFO[pkg]["label"]
-    else:
-        price=""; lbl=""
 
-    if miss==["date"]:
-        return f"perfecto 😊, {lbl} {price}, solo necesito la fecha ..."
+FIELD_LABELS = {
+    "student_name": "el nombre del estudiante",
+    "school": "el colegio",
+    "age": "la edad",
+    "cedula": "la cédula",
+    "package": "el paquete",
+    "date": "la fecha",
+    "time": "la hora",
+}
 
-    if"student_name"in miss:return"¿Cuál es el nombre completo del estudiante?"
-    if"school"in miss:return"¿De qué colegio es el estudiante?"
-    if"age"in miss:return"¿Qué edad tiene el estudiante?"
-    if"cedula"in miss:return"Por favor indícame la cédula del estudiante."
-    if"package"in miss:return"¿Qué paquete deseas? Tenemos Esencial, Salud Activa y Bienestar Total."
-    if"date"in miss:return"¿Qué fecha te gustaría?"
-    if"time"in miss:return"¿A qué hora deseas agendar? (entre 6am y 8pm)"
-    return None
+def build_human_missing_prompt(session: dict):
+    missing = missing_fields(session)
+    if not missing:
+        return None
 
-def build_summary(s):
-    pkg=s["package"]
-    lbl=PACKAGE_INFO[pkg]["label"]
-    price=PACKAGE_INFO[pkg]["price"]
+    # Construcción humana
+    text = ", ".join(FIELD_LABELS[f] for f in missing)
+
+    if not session["emoji_used"]:
+        session["emoji_used"] = True
+        session["sent_full_prompt"] = True
+        return f"Claro, mira 😊, solo necesito {text}."
+
+    return f"Solo necesito {text}."
+
+# ============================================================
+# SUMMARY MESSAGE
+# ============================================================
+
+def build_summary(session: dict):
+    pkg = session["package"]
+    label = PACKAGE_DATA[pkg]["label"]
+    price = PACKAGE_DATA[pkg]["price"]
+
     return (
         "Ya tengo toda la información:\n\n"
-        f"👤 Estudiante: {s['student_name']}\n"
-        f"🎒 Colegio: {s['school']}\n"
-        f"📦 Paquete: {lbl} {price}\n"
-        f"📅 Fecha: {s['date']}\n"
-        f"⏰ Hora: {s['time']}\n"
-        f"🧒 Edad: {s['age']}\n"
-        f"🪪 Cédula: {s['cedula']}\n\n"
+        f"👤 Estudiante: {session['student_name']}\n"
+        f"🎒 Colegio: {session['school']}\n"
+        f"📦 Paquete: {label} {price}\n"
+        f"📅 Fecha: {session['date']}\n"
+        f"⏰ Hora: {session['time']}\n"
+        f"🧒 Edad: {session['age']}\n"
+        f"🪪 Cédula: {session['cedula']}\n\n"
         "¿Deseas confirmar esta cita? (Responde \"Confirmo\")"
     )
+# ============================================================
+# SUPABASE INSERT & TABLE ASSIGNMENT
+# ============================================================
 
 def assign_table():
-    if not supabase:return"T1"
+    if not supabase:
+        return "T1"
     try:
-        r=supabase.table("reservations").select("table_number").eq("business_id",2).execute()
-        used=[x["table_number"]for x in r.data]
-        n=len(used)+1
-        return f"T{n}"
-    except:return"T1"
+        res = supabase.table("reservations").select("table_number").eq("business_id", 2).execute()
+        nums = [r["table_number"] for r in res.data]
+        return f"T{len(nums) + 1}"
+    except:
+        return "T1"
 
-def insert_reservation(phone,s):
-    if not supabase:return True,"T1"
-    tbl=assign_table()
-    dt=datetime.strptime(f"{s['date']} {s['time']}","%Y-%m-%d %H:%M").astimezone(LOCAL_TZ).isoformat()
+
+def insert_reservation(phone: str, session: dict):
+    if not supabase:
+        return True, "T1"
+
+    table = assign_table()
+
+    dt = datetime.strptime(
+        f"{session['date']} {session['time']}",
+        "%Y-%m-%d %H:%M"
+    )
+    dt_iso = dt.astimezone(LOCAL_TZ).isoformat()
+
     try:
         supabase.table("reservations").insert({
-            "student_name":s["student_name"],"phone":phone,"datetime":dt,
-            "school":s["school"],"package":s["package"],"age":s["age"],
-            "cedula":s["cedula"],"business_id":2,"table_number":tbl,"status":"confirmado"
+            "student_name": session["student_name"],
+            "phone": phone,
+            "datetime": dt_iso,
+            "school": session["school"],
+            "package": session["package"],
+            "age": session["age"],
+            "cedula": session["cedula"],
+            "business_id": 2,
+            "table_number": table,
+            "status": "confirmado"
         }).execute()
-        return True,tbl
+
+        return True, table
+
     except Exception as e:
-        log(f"Supabase error: {e}")
-        return False,str(e)
+        return False, str(e)
 
-def handle_message(phone,text):
-    log(f"MSG from {phone}: {text}")
-    s=get_session(phone)
-    t=text.strip()
 
-    if any(t.lower().startswith(x)for x in["hola","buenos","buenas"])and not s["booking_started"]:
-        log("Saludo detectado")
-        return"Buenos días, estás comunicado con Oriental IPS. ¿En qué te podemos ayudar?"
+# ============================================================
+# MAIN CONVERSATION LOGIC
+# ============================================================
 
-    faq=faq_answer(t)
-    if faq and not s["booking_started"]:
-        log("FAQ detectado")
-        return faq
+def handle_message(phone: str, msg: str):
+    session = get_session(phone)
+    t = msg.strip()
+    l = t.lower()
 
-    pkg_temp=extract_package(t)
-    if pkg_temp and not s["booking_started"]:
-        log("Paquete fuera de reserva detectado")
-        return package_info(pkg_temp)
+    # Greeting detection
+    is_greeting = l.startswith("hola") or l.startswith("buenos") or l.startswith("buenas")
 
-    if detect_intent_booking(t):
-        s["booking_started"]=True
-        log("Intento de reserva detectado")
+    # 1. Silence if irrelevant, not greeting, and not booking
+    if not session["booking_started"] and not is_relevant(t) and not is_greeting:
+        return ""
 
-    updated=update_session(t,s)
-    if updated:log(f"Campos actualizados: {json.dumps(s)}")
+    # 2. Greeting
+    if not session["booking_started"] and is_greeting:
+        return "Buenos días, estás comunicado con Oriental IPS. ¿En qué te podemos ayudar?"
 
-    if not s["booking_started"]and not is_relevant(t):
-        log("Mensaje irrelevante — silencio")
-        return""
+    # 3. FAQs
+    if not session["booking_started"]:
+        ans = check_faq(t)
+        if ans:
+            return ans
 
-    if t.lower()=="confirmo":
-        if all(s[f]for f in REQUIRED_FIELDS):
-            ok,tbl=insert_reservation(phone,s)
+    # 4. Package information
+    pkg = extract_package(t)
+    if pkg and not session["booking_started"]:
+        if detect_booking_intent(t):
+            session["package"] = pkg
+            session["booking_started"] = True
+            return build_human_missing_prompt(session)
+
+        return package_information(pkg, ask=True)
+
+    # 5. Detect booking intent
+    if detect_booking_intent(t):
+        session["booking_started"] = True
+
+    # 6. Extraction
+    updated = update_session_with_extracted_data(t, session)
+
+    if not updated and not detect_booking_intent(t) and not is_relevant(t):
+        return ""
+
+    # 7. Confirm appointment
+    if l == "confirmo":
+        if all(session.get(f) for f in REQUIRED_FIELDS):
+            ok, table = insert_reservation(phone, session)
             if ok:
-                nm=s["student_name"]; pkg=s["package"]; lbl=PACKAGE_INFO[pkg]["label"]
-                d=s["date"]; h=s["time"]
+                name = session["student_name"]
+                pkg = session["package"]
+                label = PACKAGE_DATA[pkg]["label"]
+                date = session["date"]
+                time = session["time"]
                 reset_session(phone)
-                log("Cita confirmada")
-                return(
+                return (
                     f"✅ ¡Cita confirmada!\n"
-                    f"El estudiante {nm} tiene su cita para el paquete {lbl}.\n"
-                    f"Fecha: {d} a las {h}.\n"
-                    f"Te atenderemos en la mesa {tbl}.\n"
-                    "¡Te esperamos! 😊"
+                    f"El estudiante {name} tiene su cita para el paquete {label}.\n"
+                    f"Fecha: {date} a las {time}.\n"
+                    f"Te atenderemos en la mesa {table}.\n"
+                    f"¡Te esperamos!"
                 )
-            else:
-                return"Hubo un error registrando la cita. Intenta nuevamente."
-        else:
-            return"Aún faltan datos para poder confirmar la cita."
+            return "Hubo un error registrando la cita. Intenta nuevamente."
+        return ""
 
-    miss=ask_missing(s)
-    if miss:
-        log(f"Falta: {miss}")
-        return miss
+    # 8. Missing fields
+    missing = missing_fields(session)
 
-    if all(s[f]for f in REQUIRED_FIELDS):
-        log("Resumen generado")
-        return build_summary(s)
+    if missing:
+        if len(missing) > 1 and not session["sent_full_prompt"]:
+            return build_human_missing_prompt(session)
+        return build_human_missing_prompt(session)
 
-    if not is_relevant(t):
-        log("Irrelevante en flujo — silencio")
-        return""
+    # 9. Send summary only once
+    if not session["sent_summary"]:
+        session["sent_summary"] = True
+        return build_summary(session)
 
-    return""
+    return ""
+
+# ============================================================
+# TWILIO WEBHOOK
+# ============================================================
+
 @app.post("/whatsapp")
 async def whatsapp_webhook(request: Request):
     form = await request.form()
     text = form.get("Body", "")
     phone = form.get("From", "").replace("whatsapp:", "")
-    log(f"Webhook received: {phone} -> {text}")
 
     reply = handle_message(phone, text)
 
+    # SILENCIO TOTAL
     if reply == "":
         if TEST_MODE:
             return Response(content="", media_type="text/plain")
-        r = MessagingResponse()
-        return Response(content=str(r), media_type="application/xml")
+        return Response(content=str(MessagingResponse()), media_type="application/xml")
 
+    # RESPUESTA NORMAL
     return twiml(reply)
+
+
+# ============================================================
+# ROOT
+# ============================================================
 
 @app.get("/")
 def root():
-    return {"status": "Oriental IPS WhatsApp Bot running"}
+    return {"status": "Oriental IPS WhatsApp Bot running", "version": "2.1.1"}
