@@ -657,7 +657,7 @@ def process_message(msg, session):
                 return (
                     f"Perfecto, {data['name']} cuesta ${data['price']} COP.\n"
                     f"Incluye: {data['description']}\n\n"
-                    "Deseas agendar una cita con este paquete?
+                    "Deseas agendar una cita con este paquete?"
                 )
 
     # 5. Start booking automatically if something was extracted
