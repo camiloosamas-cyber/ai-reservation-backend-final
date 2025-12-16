@@ -639,9 +639,9 @@ if update_result == "INVALID_TIME":
 
 # 2. FAQ (before booking)
 if not session.get("booking_started"):
-faq_answer = check_faq(text)
-if faq_answer:
-    return faq_answer
+    faq_answer = check_faq(text)
+    if faq_answer:
+        return faq_answer
 
 # 3. Greeting
 is_greeting = any(lower.startswith(g) for g in ["hola", "buenos", "buenas", "buen dia"])
