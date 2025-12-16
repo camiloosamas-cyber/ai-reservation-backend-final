@@ -691,7 +691,7 @@ def process_message(msg, session):
         return "Soy Oriental IPS. Puedo ayudarte a agendar una cita o responder preguntas. Que necesitas?"
     
     # 8. Handle confirmation
-    if any(k in lower for k in ["confirmo", "confirmar") and session.get("awaiting_confirmation"):
+    if any(k in lower for k in ["confirmo", "confirmar"] and session.get("awaiting_confirmation"):
         ok, table = insert_reservation(session["phone"], session)
         
         if ok:
