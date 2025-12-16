@@ -707,18 +707,34 @@ def process_message(msg, session):
             )
         
         return "No pudimos completar la reserva."
-    
-    # 9. Ask for missing fields (one by one)
-    missing = get_missing_fields(session)
-    if missing:
-        return get_field_prompt(missing[0])
-    
-    # 10. Show summary once everything is complete
-    if not session.get("awaiting_confirmation"):
-        return build_summary(session)
-    
-    # 11. Final fallback
-    return "No entendi bien. Puedes repetir o decirme que necesitas?" 
+        
+        # 9. Allow questions EVEN during booking (price / FAQ)
+        if any(k in lower for k in ["cuanto", "precio", "cuesta"]):
+            pkg = extract_package(text)
+            if pkg:
+                for key, data in PACKAGES.items():
+                    if data["name"] == pkg:
+                        return (
+                            f"El {data['name']} cuesta ${data['price']} COP.\n"
+                            f"Incluye: {data['description']}"
+                        )
+            return "Tenemos 3 paquetes: Esencial ($45.000), Activa ($60.000), Bienestar ($75.000)."
+            
+        faq_answer = check_faq(text)
+        if faq_answer:
+            return faq_answer
+            
+       # 10. Ask for missing fields (ONLY after questions are handled)
+       missing = get_missing_fields(session)
+       if missing:
+           return get_field_prompt(missing[0])
+           
+       # 11. Show summary once everything is complete
+       if not session.get("awaiting_confirmation"):
+           return build_summary(session)
+           
+        # 12. Silent fallback (optional — or return nothing)
+        return "No entendi bien. Puedes repetir o decirme que necesitas?"
 
 # =============================================================================
 # TWILIO WEBHOOK
