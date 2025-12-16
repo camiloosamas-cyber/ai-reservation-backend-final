@@ -705,20 +705,21 @@ def process_message(msg, session):
             session.clear()
             session.update(create_new_session(phone))
             save_session(session)
-            
+        
             return (
                 f"Cita confirmada!\n\n"
                 f"El estudiante {name} tiene su cita para {pkg}.\n"
                 f"Fecha: {date} a las {time}\n"
                 f"Mesa: {table}\n\n"
                 f"Te esperamos en Oriental IPS! {FAQ['ubicacion']}"
-            )
-        else:
-            return f"No pudimos completar la reserva: {table}"
-    
+        )
+    else:
+        return f"No pudimos completar la reserva: {table}"
+        
     # 9. Check for missing fields
+    missing = get_missing_fields(session)  # ✅ ADD THIS LINE!
     if missing:
-        return get_field_prompt(missing[0])
+        return get_field_prompt(missing,[object Object],)
     
     # 10. All fields complete - show summary
     if not session.get("awaiting_confirmation"):
