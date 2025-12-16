@@ -631,113 +631,110 @@ def process_message(msg, session):
     text = msg.strip()
     lower = text.lower()
     
-# 1. Extract data from message
-update_result = update_session_with_message(text, session)
+    # 1. Extract data from message
+    update_result = update_session_with_message(text, session)
+    if update_result == "INVALID_TIME":
+        return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora dentro de ese horario."
+        
+    # 2. FAQ (before booking)
+    if not session.get("booking_started"):
+        faq_answer = check_faq(text)
+        if faq_answer:
+            return faq_answer
+            
+    # 3. Greeting
+    is_greeting = any(lower.startswith(g) for g in ["hola", "buenos", "buenas", "buen dia"])
+    if is_greeting and not session.get("booking_started") and not session.get("greeted"):
+        session["greeted"] = True
+        save_session(session)
+        return "Buenos dias, estas comunicado con Oriental IPS. En que te puedo ayudar?"
 
-if update_result == "INVALID_TIME":
-    return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora dentro de ese horario."
-
-# 2. FAQ (before booking)
-if not session.get("booking_started"):
-    faq_answer = check_faq(text)
-    if faq_answer:
-        return faq_answer
-
-# 3. Greeting
-is_greeting = any(lower.startswith(g) for g in ["hola", "buenos", "buenas", "buen dia"])
-if is_greeting and not session.get("booking_started") and not session.get("greeted"):
-    session["greeted"] = True
-save_session(session)
-return "Buenos dias, estas comunicado con Oriental IPS. En que te puedo ayudar?"
-
-# 4. Package info (before booking)
-pkg = extract_package(text)
-if pkg and not session.get("booking_started"):
-    for key, data in PACKAGES.items():
-        if data["name"] == pkg:
-            return (
-                f"Perfecto, {data['name']} cuesta ${data['price']} COP.\n"
-                f"Incluye: {data['description']}\n\n"
-                "Deseas agendar una cita con este paquete?"
-            )
-
-# 5. Start booking automatically if something was extracted
-if any([
-    session.get("student_name"),
-    session.get("school"),
-    session.get("package"),
-    session.get("date"),
-    session.get("time"),
-    session.get("age"),
-    session.get("cedula"),
-]):
-    session["booking_started"] = True
-    save_session(session)
-
-# 6. Explicit booking intent
-if any(k in lower for k in ["agendar", "cita", "reservar", "reserva"]):
-    session["booking_started"] = True
-    save_session(session)
-
-# 7. Still not booking → help message
-if not session.get("booking_started"):
-    return "Soy Oriental IPS. Puedo ayudarte a agendar una cita o responder preguntas. Que necesitas?"
-
-# 8. Handle confirmation
-if session.get("awaiting_confirmation") and any(k in lower for k in ["confirmo", "confirmar"]):
-    ok, table = insert_reservation(session["phone"], session)
-
-if ok:
-    name = session["student_name"]
-    pkg = session["package"]
-    date = session["date"]
-    time = session["time"]
-    
-    phone = session["phone"]
-    session.clear()
-    session.update(create_new_session(phone))
-    save_session(session)
-    
-    return (
-        f"Cita confirmada!\n\n"
-        f"El estudiante {name} tiene su cita para {pkg}.\n"
-        f"Fecha: {date} a las {time}\n"
-        f"Mesa: {table}\n\n"
-        f"Te esperamos en Oriental IPS! {FAQ['ubicacion']}"
-    )
-    
-return "No pudimos completar la reserva."
-
-# 9. Allow questions EVEN during booking (price / FAQ)
-if any(k in lower for k in ["cuanto", "precio", "cuesta"]):
+    # 4. Package info (before booking)
     pkg = extract_package(text)
-    if pkg:
+    if pkg and not session.get("booking_started"):
         for key, data in PACKAGES.items():
             if data["name"] == pkg:
                 return (
-                    f"El {data['name']} cuesta ${data['price']} COP.\n"
-                    f"Incluye: {data['description']}"
+                    f"Perfecto, {data['name']} cuesta ${data['price']} COP.\n"
+                    f"Incluye: {data['description']}\n\n"
+                    "Deseas agendar una cita con este paquete?
                 )
-    return "Tenemos 3 paquetes: Esencial ($45.000), Activa ($60.000), Bienestar ($75.000)."
+
+    # 5. Start booking automatically if something was extracted
+    if any([
+        session.get("student_name"),
+        session.get("school"),
+        session.get("package"),
+        session.get("date"),
+        session.get("time"),
+        session.get("age"),
+        session.get("cedula"),
+    ]):
+        session["booking_started"] = True
+        save_session(session)
+        
+    # 6. Explicit booking intent
+    if any(k in lower for k in ["agendar", "cita", "reservar", "reserva"]):
+        session["booking_started"] = True
+        save_session(session)
+    # 7. Still not booking → help message
+    if not session.get("booking_started"):
+        return "Soy Oriental IPS. Puedo ayudarte a agendar una cita o responder preguntas. Que necesitas?"
+        
+    # 8. Handle confirmation
+    if session.get("awaiting_confirmation") and any(k in lower for k in ["confirmo", "confirmar"]):
+        ok, table = insert_reservation(session["phone"], session)
+        if ok:
+            name = session["student_name"]
+            pkg = session["package"]
+            date = session["date"]
+            time = session["time"]
+            phone = session["phone"]
+            session.clear()
+            session.update(create_new_session(phone))
+            save_session(session)
+            
+        return (
+            f"Cita confirmada!\n\n"
+            f"El estudiante {name} tiene su cita para {pkg}.\n"
+            f"Fecha: {date} a las {time}\n"
+            f"Mesa: {table}\n\n"
+            f"Te esperamos en Oriental IPS! {FAQ['ubicacion']}"
+        )
+        
+    return "No pudimos completar la reserva."
+
+    # 9. Allow questions EVEN during booking (price / FAQ)
+    if any(k in lower for k in ["cuanto", "precio", "cuesta"]):
+        pkg = extract_package(text)
+        if pkg:
+            for key, data in PACKAGES.items():
+                if data["name"] == pkg:
+                    return (
+                        f"El {data['name']} cuesta ${data['price']} COP.\n"
+                        f"Incluye: {data['description']}"
+                )
+                
+            return "Tenemos 3 paquetes: Esencial ($45.000), Activa ($60.000), Bienestar ($75.000)."
     
-faq_answer = check_faq(text)
-if faq_answer:
-    return faq_answer
+    faq_answer = check_faq(text)
+    if faq_answer:
+        return faq_answer
     
-# 10. Ask for missing fields (ONLY after questions are handled)
-missing = get_missing_fields(session)
-if missing:
-   return get_field_prompt(missing[0])
+    # 10. Ask for missing fields (ONLY after questions are handled)
+    missing = get_missing_fields(session)
+    if missing:
+        return get_field_prompt(missing[0])
    
-# 11. Show summary once everything is complete
-if not session.get("awaiting_confirmation"):
-   return build_summary(session)
+    # 11. Show summary once everything is complete
+    if not session.get("awaiting_confirmation"):
+        return build_summary(session)
    
-# 12. Silent fallback (optional — or return nothing)
-   return "No entendi bien. Puedes repetir o decirme que necesitas?"
+    # 12. Silent fallback (optional — or return nothing)
+    return "No entendi bien. Puedes repetir o decirme que necesitas?"
     
-# 🔒 Absolute safety net — NEVER REMOVE
-return "Puedo ayudarte con precios o agendar una cita. ¿Qué deseas hacer?"
+    # 🔒 Absolute safety net — NEVER REMOVE
+    return "Puedo ayudarte con precios o agendar una cita. ¿Qué deseas hacer?"
 
 # =============================================================================
 # TWILIO WEBHOOK
