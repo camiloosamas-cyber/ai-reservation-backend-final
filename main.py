@@ -735,9 +735,9 @@ if not session.get("awaiting_confirmation"):
    
 # 12. Silent fallback (optional — or return nothing)
    return "No entendi bien. Puedes repetir o decirme que necesitas?"
-
-# 🔒 Absolute safety net — NEVER REMOVE
-   return "Puedo ayudarte con precios o agendar una cita. ¿Qué deseas hacer?"
+    
+    # 🔒 Absolute safety net — NEVER REMOVE
+    return "Puedo ayudarte con precios o agendar una cita. ¿Qué deseas hacer?"
 
 # =============================================================================
 # TWILIO WEBHOOK
