@@ -1,4 +1,4 @@
-print(">>> RUNNING ORIENTAL IPS BACKEND v3.2.0 ✅")
+print(">>> STARTING ORIENTAL IPS BOT v3.4.0 ✅")
 
 import os
 import re
@@ -11,30 +11,55 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
-import dateparser
-from supabase import create_client, Client, PostgrestAPIError
-from twilio.twiml.messaging_response import MessagingResponse
+# Optional imports with fallbacks
+try:
+    import dateparser
+    DATEPARSER_AVAILABLE = True
+except ImportError:
+    DATEPARSER_AVAILABLE = False
+    print("WARNING: dateparser not available")
 
-# ---------------------------------------------------------
+try:
+    from supabase import create_client, Client, PostgrestAPIError
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+    print("WARNING: Supabase not available")
+
+try:
+    from twilio.twiml.messaging_response import MessagingResponse
+    TWILIO_AVAILABLE = True
+except ImportError:
+    TWILIO_AVAILABLE = False
+    print("WARNING: Twilio not available")
+
+# =============================================================================
 # CONFIGURATION
-# ---------------------------------------------------------
+# =============================================================================
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 TEST_MODE = os.getenv("TEST_MODE") == "1"
 
-app = FastAPI(title="Oriental IPS Bot", version="3.2.0")
-print("🚀 Oriental IPS WhatsApp Bot v3.2.0 - Production Ready")
+app = FastAPI(title="Oriental IPS WhatsApp Bot", version="3.4.0")
+
+print("🚀 Oriental IPS Bot v3.4.0 - Production Ready")
 
 # Timezone
 try:
     LOCAL_TZ = ZoneInfo("America/Bogota")
 except ZoneInfoNotFoundError:
     LOCAL_TZ = ZoneInfo("UTC")
+    print("WARNING: Using UTC timezone")
 
 # Static files and templates
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+try:
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+    templates = Jinja2Templates(directory="templates")
+    print("✅ Static files and templates loaded")
+except Exception as e:
+    print(f"WARNING: Could not load static files: {e}")
+    templates = None
 
 # CORS
 app.add_middleware(
@@ -44,101 +69,101 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------
+# =============================================================================
 # EXTERNAL SERVICES
-# ---------------------------------------------------------
+# =============================================================================
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE")
 
 supabase = None
 
-try:
-    if SUPABASE_URL and SUPABASE_SERVICE_ROLE:
+if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_SERVICE_ROLE:
+    try:
         supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
-    else:
-        print("WARNING: Missing Supabase credentials")
-except Exception as e:
-    print(f"ERROR loading Supabase: {e}")
+        print("✅ Supabase connected")
+    except Exception as e:
+        print(f"ERROR: Supabase connection failed: {e}")
+else:
+    print("WARNING: Supabase credentials missing")
 
-# Business config
+# Business configuration
 RESERVATION_TABLE = "reservations"
 SESSION_TABLE = "sessions"
 BUSINESS_ID = 2
 TABLE_LIMIT = 10
 
-# ---------------------------------------------------------
-# SESSION MANAGEMENT
-# ---------------------------------------------------------
+# =============================================================================
+# IN-MEMORY SESSION STORE (Fallback)
+# =============================================================================
 
-DEFAULT_SESSION = {
-    "phone": None,
-    "student_name": None,
-    "school": None,
-    "package": None,
-    "date": None,
-    "time": None,
-    "age": None,
-    "cedula": None,
-    "booking_started": False,
-    "greeted": False,
-    "awaiting_confirmation": False
-}
+MEMORY_SESSIONS = {}
+
+# =============================================================================
+# SESSION MANAGEMENT
+# =============================================================================
+
+def create_new_session(phone):
+    """Create a fresh session"""
+    return {
+        "phone": phone,
+        "student_name": None,
+        "school": None,
+        "package": None,
+        "date": None,
+        "time": None,
+        "age": None,
+        "cedula": None,
+        "booking_started": False,
+        "greeted": False,
+        "awaiting_confirmation": False
+    }
 
 def get_session(phone):
-    """Retrieve or create session"""
-    if not supabase:
-        s = DEFAULT_SESSION.copy()
-        s["phone"] = phone
-        return s
-
-    try:
-        response = (
-            supabase.table(SESSION_TABLE)
-            .select("data")
-            .eq("phone", phone)
-            .maybe_single()
-            .execute()
-        )
-
-        if not response or not response.data or not response.data.get("data"):
-            s = DEFAULT_SESSION.copy()
-            s["phone"] = phone
-            return s
-
-        stored = response.data["data"]
-        stored["phone"] = phone
-        return {**DEFAULT_SESSION, **stored}
-
-    except Exception as e:
-        print(f"Error getting session: {e}")
-        s = DEFAULT_SESSION.copy()
-        s["phone"] = phone
-        return s
+    """Retrieve or create session for phone number"""
+    
+    # Try database first
+    if supabase:
+        try:
+            result = supabase.table(SESSION_TABLE).select("data").eq("phone", phone).maybe_single().execute()
+            
+            if result and result.data and result.data.get("data"):
+                session = result.data["data"]
+                session["phone"] = phone
+                return session
+        except Exception as e:
+            print(f"Error loading session from DB: {e}")
+    
+    # Fallback to memory
+    if phone not in MEMORY_SESSIONS:
+        MEMORY_SESSIONS[phone] = create_new_session(phone)
+    
+    return MEMORY_SESSIONS[phone]
 
 def save_session(session):
-    """Save session to database"""
-    if not supabase:
-        return
-
+    """Save session to database and memory"""
     phone = session.get("phone")
     if not phone:
         return
+    
+    # Always save to memory
+    MEMORY_SESSIONS[phone] = session
+    
+    # Try to save to database
+    if supabase:
+        try:
+            data = {k: v for k, v in session.items() if k != "phone"}
+            supabase.table(SESSION_TABLE).upsert({
+                "phone": phone,
+                "data": data,
+                "last_updated": datetime.now(LOCAL_TZ).isoformat()
+            }).execute()
+        except Exception as e:
+            print(f"Error saving session to DB: {e}")
 
-    data = {k: v for k, v in session.items() if k != "phone"}
-
-    try:
-        supabase.table(SESSION_TABLE).upsert({
-            "phone": phone,
-            "data": data,
-            "last_updated": datetime.now(LOCAL_TZ).isoformat()
-        }).execute()
-    except Exception as e:
-        print(f"Error saving session: {e}")
-
-# ---------------------------------------------------------
+# =============================================================================
 # PACKAGE DATA
-# ---------------------------------------------------------
+# =============================================================================
 
 PACKAGES = {
     "esencial": {
@@ -149,107 +174,128 @@ PACKAGES = {
     "activa": {
         "name": "Paquete Salud Activa",
         "price": "60.000",
-        "description": "Esencial + Psicologia"
+        "description": "Medicina General, Optometria, Audiometria y Psicologia"
     },
     "bienestar": {
         "name": "Paquete Bienestar Total",
         "price": "75.000",
-        "description": "Activa + Odontologia"
+        "description": "Medicina General, Optometria, Audiometria, Psicologia y Odontologia"
     }
 }
 
-# ---------------------------------------------------------
+# =============================================================================
+# FAQ RESPONSES
+# =============================================================================
+
+FAQ = {
+    "ubicacion": "Estamos ubicados en Calle 31 #29-61, Yopal.",
+    "pago": "Aceptamos Nequi y efectivo.",
+    "duracion": "El examen dura entre 30 y 45 minutos.",
+    "llevar": "Debes traer el documento de identidad del estudiante.",
+    "horario": "Atendemos de lunes a domingo de 7am a 5pm."
+}
+
+# =============================================================================
 # EXTRACTION FUNCTIONS
-# ---------------------------------------------------------
+# =============================================================================
 
 def extract_package(msg):
     """Extract package from message"""
     text = msg.lower()
     
-    if any(k in text for k in ["esencial", "verde", "45k", "45000", "45.000"]):
+    # Esencial
+    if any(k in text for k in ["esencial", "verde", "45k", "45000", "45.000", "45 mil"]):
         return "Paquete Cuidado Esencial"
-    if any(k in text for k in ["activa", "salud activa", "azul", "psico", "60k", "60000", "60.000"]):
+    
+    # Activa
+    if any(k in text for k in ["activa", "salud activa", "azul", "psico", "psicologia", "60k", "60000", "60.000", "60 mil"]):
         return "Paquete Salud Activa"
-    if any(k in text for k in ["bienestar", "total", "amarillo", "completo", "75k", "75000", "75.000"]):
+    
+    # Bienestar
+    if any(k in text for k in ["bienestar", "total", "amarillo", "completo", "odonto", "75k", "75000", "75.000", "75 mil"]):
         return "Paquete Bienestar Total"
     
     return None
 
 def extract_student_name(msg, current_name):
-    """Extract student name"""
-    text = msg.lower().strip()
+    """Extract student name from message"""
+    text = msg.strip()
+    lower = text.lower()
     
-    # Skip if name exists and user not trying to change it
-    if current_name and not any(k in text for k in ["cambiar", "otro nombre", "se llama"]):
+    # Skip if name exists and user not changing it
+    if current_name and not any(k in lower for k in ["cambiar", "otro nombre", "se llama"]):
         return None
     
     # Skip greetings
-    if text in ["hola", "buenos dias", "buenas tardes", "buenas"]:
+    if lower in ["hola", "buenos dias", "buenas tardes", "buenas noches", "buenas"]:
         return None
     
-    # Skip package queries
-    if any(k in text for k in ["paquete", "precio", "cuesta"]):
+    # Skip package/price queries
+    if any(k in lower for k in ["paquete", "precio", "cuesta", "cuanto"]):
         return None
     
     # Pattern: "se llama X"
-    if "se llama" in text:
-        name = text.split("se llama", 1),[object Object],strip()
-        if name:
-            return name.title()
+    if "se llama" in lower:
+        parts = lower.split("se llama", 1)
+        if len(parts) > 1:
+            name = parts,[object Object],strip()
+            # Clean up (remove age, school mentions)
+            name = re.split(r"\s+(?:de|del|tiene|anos?|colegio)", name),[object Object],strip()
+            if name:
+                return name.title()
     
-    # Pattern: "el nombre es X"
-    if "nombre es" in text:
-        name = text.split("nombre es", 1),[object Object],strip()
-        if name:
-            return name.title()
+    # Pattern: "nombre es X" or "nombre: X"
+    if "nombre" in lower:
+        m = re.search(r"nombre\s*:?\s*es\s+([a-z\s]+)", lower)
+        if m:
+            name = m.group(1).strip()
+            name = re.split(r"\s+(?:de|del|tiene|anos?|colegio)", name),[object Object],strip()
+            if name:
+                return name.title()
     
-    # Pattern: "nombre X"
-    m = re.search(r"nombre\s+([a-z\s]+)", text)
-    if m:
-        name = m.group(1).strip()
-        if 2 <= len(name.split()) <= 4:
-            return name.title()
-    
-    # Capitalized name detection
-    m = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b", msg)
+    # Capitalized name (Juan Perez)
+    m = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b", text)
     if m:
         return m.group(1).strip()
     
-    # Standalone name (2-4 words, all letters)
-    words = text.split()
+    # Standalone name (2-4 words, all lowercase letters)
+    words = lower.split()
     if 2 <= len(words) <= 4:
-        valid = [w for w in words if len(w) >= 2 and re.match(r'^[a-z]+$', w)]
-        if len(valid) >= 2:
-            combined = " ".join(valid)
-            avoid = ["buenos", "confirmo", "paquete", "colegio", "cita"]
+        valid_words = [w for w in words if len(w) >= 2 and re.match(r"^[a-z]+$", w)]
+        if len(valid_words) >= 2:
+            combined = " ".join(valid_words)
+            # Avoid common non-name phrases
+            avoid = ["buenos", "confirmo", "paquete", "colegio", "cita", "hora", "fecha"]
             if not any(k in combined for k in avoid):
-                return " ".join(valid).title()
+                return " ".join(valid_words).title()
     
     return None
 
 def extract_school(msg):
-    """Extract school name"""
+    """Extract school name from message"""
     text = msg.lower()
     
+    # Patterns with school keywords
     patterns = [
         r"(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-z0-9\s]+)",
-        r"(?:del\s+colegio|del\s+gimnasio)\s+([a-z0-9\s]+)",
+        r"(?:del\s+colegio|del\s+gimnasio|de\s+la\s+escuela)\s+([a-z0-9\s]+)",
     ]
     
-    for p in patterns:
-        m = re.search(p, text)
+    for pattern in patterns:
+        m = re.search(pattern, text)
         if m:
-            name = m.group(1).strip()
-            name = re.split(r"[.,!?]", name),[object Object],strip()
-            if len(name) > 1:
-                return name.title()
+            school_name = m.group(1).strip()
+            # Clean up (stop at punctuation or age mentions)
+            school_name = re.split(r"[.,!?]|\s+(?:tiene|anos?|edad)", school_name),[object Object],strip()
+            if len(school_name) > 1:
+                return school_name.title()
     
     # Standalone school keywords
     if any(k in text for k in ["gimnasio", "instituto", "comfacasanare"]):
         words = msg.strip().split()
         school_words = [w for w in words if len(w) >= 3]
         if school_words:
-            return " ".join(school_words).title()
+            return " ".join(school_words[:4]).title()
     
     return None
 
@@ -257,15 +303,15 @@ def extract_age(msg):
     """Extract age from message"""
     text = msg.lower()
     
-    # Pattern: "12 años"
+    # Pattern: "12 años" or "12 anos"
     m = re.search(r"(\d{1,2})\s*anos?", text)
     if m:
         age = int(m.group(1))
         if 5 <= age <= 25:
             return age
     
-    # Pattern: "edad 12"
-    m = re.search(r"edad\s+(\d{1,2})", text)
+    # Pattern: "edad 12" or "tiene 12"
+    m = re.search(r"(?:edad|tiene)\s+(\d{1,2})", text)
     if m:
         age = int(m.group(1))
         if 5 <= age <= 25:
@@ -280,8 +326,9 @@ def extract_age(msg):
     return None
 
 def extract_cedula(msg):
-    """Extract cedula (ID number)"""
-    m = re.search(r"\b(\d{5,12})\b", msg)
+    """Extract cedula (ID number) from message"""
+    # Colombian ID: 7-12 digits
+    m = re.search(r"\b(\d{7,12})\b", msg)
     if m:
         return m.group(0)
     return None
@@ -294,104 +341,132 @@ def extract_date(msg, session):
     # Explicit keywords
     if "manana" in text or "mañana" in text:
         return (today + timedelta(days=1)).strftime("%Y-%m-%d")
+    
     if "hoy" in text:
         return today.strftime("%Y-%m-%d")
+    
     if "pasado manana" in text or "pasado mañana" in text:
         return (today + timedelta(days=2)).strftime("%Y-%m-%d")
     
-    # Use dateparser
-    dt = dateparser.parse(
-        msg,
-        languages=["es"],
-        settings={
-            "TIMEZONE": str(LOCAL_TZ),
-            "PREFER_DATES_FROM": "future"
-        }
-    )
+    # Use dateparser if available
+    if DATEPARSER_AVAILABLE:
+        try:
+            dt = dateparser.parse(
+                msg,
+                languages=["es"],
+                settings={
+                    "TIMEZONE": str(LOCAL_TZ),
+                    "PREFER_DATES_FROM": "future"
+                }
+            )
+            
+            if dt:
+                parsed_date = dt.date()
+                if parsed_date >= today:
+                    return parsed_date.strftime("%Y-%m-%d")
+        except Exception as e:
+            print(f"Dateparser error: {e}")
     
-    if dt:
-        parsed_date = dt.date()
-        if parsed_date >= today:
-            return parsed_date.strftime("%Y-%m-%d")
-    
+    # Keep existing date if no new one found
     return session.get("date")
 
 def extract_time(msg, session):
     """Extract time from message"""
     text = msg.lower()
     
-    # Pattern: 10am, 3pm, 10:30am
-    m = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)", text)
+    # Pattern: 10am, 3pm, 10:30am, 10.30am
+    m = re.search(r"(\d{1,2})(?:[:\.](\d{2}))?\s*(am|pm)", text)
     if m:
         hour = int(m.group(1))
         minute = int(m.group(2)) if m.group(2) else 0
         ampm = m.group(3)
         
+        # Convert to 24-hour format
         if ampm == "pm" and hour != 12:
             hour += 12
         if ampm == "am" and hour == 12:
             hour = 0
         
-        # Validate business hours (7am - 5pm)
+        # Validate business hours (7am - 5pm = 7:00 - 17:00)
         if 7 <= hour <= 17:
             return f"{hour:02d}:{minute:02d}"
         else:
-            return "INVALID"
+            return "INVALID_TIME"
     
-    # Pattern: "las 11"
+    # Pattern: "las 11" or "a las 11"
     m = re.search(r"(?:las|a las)\s+(\d{1,2})", text)
     if m:
         hour = int(m.group(1))
         if 7 <= hour <= 17:
             return f"{hour:02d}:00"
+        else:
+            return "INVALID_TIME"
     
     # Vague times
     if "tarde" in text:
         return "15:00"
-    if "manana" in text or "mañana" in text:
+    if "manana" in text and "en la" in text:
         return "09:00"
     
+    # Keep existing time if no new one found
     return session.get("time")
 
-# ---------------------------------------------------------
+# =============================================================================
 # SESSION UPDATE
-# ---------------------------------------------------------
+# =============================================================================
 
-def update_session(msg, session):
-    """Extract all data from message and update session"""
+def update_session_with_message(msg, session):
+    """Extract all possible data from message and update session"""
     
     # Extract each field
-    new_package = extract_package(msg)
-    new_name = extract_student_name(msg, session.get("student_name"))
-    new_school = extract_school(msg)
-    new_age = extract_age(msg)
-    new_cedula = extract_cedula(msg)
-    new_date = extract_date(msg, session)
-    new_time = extract_time(msg, session)
+    pkg = extract_package(msg)
+    name = extract_student_name(msg, session.get("student_name"))
+    school = extract_school(msg)
+    age = extract_age(msg)
+    cedula = extract_cedula(msg)
+    date = extract_date(msg, session)
+    time = extract_time(msg, session)
     
-    # Update session
-    if new_package:
-        session["package"] = new_package
-    if new_name:
-        session["student_name"] = new_name
-    if new_school:
-        session["school"] = new_school
-    if new_age:
-        session["age"] = new_age
-    if new_cedula:
-        session["cedula"] = new_cedula
-    if new_date:
-        session["date"] = new_date
-    if new_time and new_time != "INVALID":
-        session["time"] = new_time
+    # Track what was updated
+    updated = []
+    
+    if pkg:
+        session["package"] = pkg
+        updated.append("package")
+    
+    if name:
+        session["student_name"] = name
+        updated.append("name")
+    
+    if school:
+        session["school"] = school
+        updated.append("school")
+    
+    if age:
+        session["age"] = age
+        updated.append("age")
+    
+    if cedula:
+        session["cedula"] = cedula
+        updated.append("cedula")
+    
+    if date:
+        session["date"] = date
+        updated.append("date")
+    
+    if time:
+        if time == "INVALID_TIME":
+            return "INVALID_TIME"
+        session["time"] = time
+        updated.append("time")
     
     save_session(session)
     
-    return new_time == "INVALID"
+    return updated
 
-# ---------------------------------------------------------
-# MISSING FIELDS
-# ---------------------------------------------------------
+# =============================================================================
+# MISSING FIELDS & PROMPTS
+# =============================================================================
 
 def get_missing_fields(session):
     """Get list of missing required fields"""
@@ -399,30 +474,35 @@ def get_missing_fields(session):
     return [f for f in required if not session.get(f)]
 
 def get_field_prompt(field):
-    """Get prompt for missing field"""
+    """Get prompt for specific missing field"""
     prompts = {
         "student_name": "Cual es el nombre completo del estudiante?",
-        "school": "De que colegio es?",
-        "age": "Que edad tiene?",
-        "cedula": "Cual es el numero de cedula?",
+        "school": "De que colegio es el estudiante?",
+        "age": "Que edad tiene el estudiante?",
+        "cedula": "Cual es el numero de cedula del estudiante?",
         "package": (
-            "Tenemos 3 paquetes:\n"
-            "- Cuidado Esencial: $45.000\n"
-            "- Salud Activa: $60.000\n"
-            "- Bienestar Total: $75.000\n\n"
-            "Cual deseas?"
+            "Tenemos 3 paquetes:\n\n"
+            "1. Cuidado Esencial - $45.000\n"
+            "   (Medicina General, Optometria, Audiometria)\n\n"
+            "2. Salud Activa - $60.000\n"
+            "   (Esencial + Psicologia)\n\n"
+            "3. Bienestar Total - $75.000\n"
+            "   (Activa + Odontologia)\n\n"
+            "Cual paquete deseas?"
         ),
-        "date": "Para que fecha deseas la cita? (ejemplo: 15 de enero)",
-        "time": "A que hora prefieres? Atendemos de 7am a 5pm (ejemplo: 10am)",
+        "date": "Para que fecha deseas la cita? (ejemplo: manana, 15 de enero)",
+        "time": "A que hora prefieres? Atendemos de 7am a 5pm (ejemplo: 10am o 3pm)",
     }
     return prompts.get(field, "")
 
-# ---------------------------------------------------------
+# =============================================================================
 # SUMMARY & CONFIRMATION
-# ---------------------------------------------------------
+# =============================================================================
 
 def build_summary(session):
-    """Build booking summary"""
+    """Build booking summary for confirmation"""
+    
+    # Get package details
     pkg_key = None
     for key, data in PACKAGES.items():
         if data["name"] == session["package"]:
@@ -441,9 +521,9 @@ def build_summary(session):
         f"Paquete: {pkg_data['name']} (${pkg_data['price']})\n"
         f"Fecha: {session['date']}\n"
         f"Hora: {session['time']}\n"
-        f"Edad: {session['age']}\n"
+        f"Edad: {session['age']} anos\n"
         f"Cedula: {session['cedula']}\n\n"
-        "Deseas confirmar esta cita? (Responde Confirmo)"
+        "Deseas confirmar esta cita? Responde CONFIRMO para agendar."
     )
     
     session["awaiting_confirmation"] = True
@@ -451,27 +531,25 @@ def build_summary(session):
     
     return summary
 
-# ---------------------------------------------------------
+# =============================================================================
 # DATABASE OPERATIONS
-# ---------------------------------------------------------
+# =============================================================================
 
-def assign_table(dt_iso):
-    """Assign next available table"""
+def assign_table_number(dt_iso):
+    """Assign next available table for given datetime"""
     if not supabase:
         return "T1"
     
     try:
-        booked = (
-            supabase.table(RESERVATION_TABLE)
-            .select("table_number")
-            .eq("datetime", dt_iso)
-            .execute()
-        )
-        taken = {r["table_number"] for r in (booked.data or [])}
+        # Get all reservations for this datetime
+        result = supabase.table(RESERVATION_TABLE).select("table_number").eq("datetime", dt_iso).execute()
         
+        taken_tables = {r["table_number"] for r in (result.data or [])}
+        
+        # Find first available table
         for i in range(1, TABLE_LIMIT + 1):
             table = f"T{i}"
-            if table not in taken:
+            if table not in taken_tables:
                 return table
         
         return None  # No tables available
@@ -481,24 +559,25 @@ def assign_table(dt_iso):
         return "T1"
 
 def insert_reservation(phone, session):
-    """Insert reservation into database"""
+    """Insert confirmed reservation into database"""
     if not supabase:
         return True, "T1"
     
-    # Build datetime
-    dt = datetime.strptime(
-        f"{session['date']} {session['time']}",
-        "%Y-%m-%d %H:%M"
-    )
-    dt_local = dt.replace(tzinfo=LOCAL_TZ)
-    dt_iso = dt_local.isoformat()
-    
-    # Assign table
-    table = assign_table(dt_iso)
-    if not table:
-        return False, "No hay cupos disponibles"
-    
     try:
+        # Build datetime
+        dt = datetime.strptime(
+            f"{session['date']} {session['time']}",
+            "%Y-%m-%d %H:%M"
+        )
+        dt_local = dt.replace(tzinfo=LOCAL_TZ)
+        dt_iso = dt_local.isoformat()
+        
+        # Assign table
+        table = assign_table_number(dt_iso)
+        if not table:
+            return False, "No hay cupos disponibles para ese horario"
+        
+        # Insert reservation
         supabase.table(RESERVATION_TABLE).insert({
             "customer_name": session["student_name"],
             "contact_phone": phone,
@@ -509,39 +588,70 @@ def insert_reservation(phone, session):
             "package": session["package"],
             "school_name": session["school"],
             "age": session["age"],
-            "cedula": session["cedula"],
+            "cedula": session["cedula"]
         }).execute()
         
         return True, table
         
-    except PostgrestAPIError as e:
+    except Exception as e:
         print(f"Error inserting reservation: {e}")
         return False, str(e)
 
-# ---------------------------------------------------------
+# =============================================================================
+# FAQ HANDLER
+# =============================================================================
+
+def check_faq(msg):
+    """Check if message is asking an FAQ question"""
+    text = msg.lower()
+    
+    if any(k in text for k in ["ubicad", "direcc", "donde", "dónde"]):
+        return FAQ["ubicacion"]
+    
+    if any(k in text for k in ["pago", "nequi", "efectivo", "como pag"]):
+        return FAQ["pago"]
+    
+    if any(k in text for k in ["dur", "demora", "cuanto tiempo"]):
+        return FAQ["duracion"]
+    
+    if any(k in text for k in ["llevar", "traer", "documento", "necesito"]):
+        return FAQ["llevar"]
+    
+    if any(k in text for k in ["horario", "atienden", "abren", "cierran"]):
+        return FAQ["horario"]
+    
+    return None
+
+# =============================================================================
 # MAIN MESSAGE HANDLER
-# ---------------------------------------------------------
+# =============================================================================
 
 def process_message(msg, session):
     """Main conversation logic"""
     text = msg.strip()
     lower = text.lower()
     
-    # 1. Extract data first
-    invalid_time = update_session(text, session)
+    # 1. Extract data from message
+    update_result = update_session_with_message(text, session)
     
     # Handle invalid time
-    if invalid_time:
-        return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora."
+    if update_result == "INVALID_TIME":
+        return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora dentro de ese horario."
     
-    # 2. Detect greeting (before booking)
-    is_greeting = any(lower.startswith(g) for g in ["hola", "buenos", "buenas"])
-    if is_greeting and not session.get("booking_started"):
+    # 2. Check for FAQ (before booking starts)
+    if not session.get("booking_started"):
+        faq_answer = check_faq(text)
+        if faq_answer:
+            return faq_answer
+    
+    # 3. Handle greeting (before booking)
+    is_greeting = any(lower.startswith(g) for g in ["hola", "buenos", "buenas", "buen dia"])
+    if is_greeting and not session.get("booking_started") and not session.get("greeted"):
         session["greeted"] = True
         save_session(session)
-        return "Buenos dias, estas comunicado con Oriental IPS, en que te podemos ayudar?"
+        return "Buenos dias, estas comunicado con Oriental IPS. En que te puedo ayudar?"
     
-    # 3. Package info request (before booking)
+    # 4. Package info request (before booking)
     pkg = extract_package(text)
     if pkg and not session.get("booking_started"):
         pkg_key = None
@@ -555,10 +665,10 @@ def process_message(msg, session):
             return (
                 f"Perfecto, {pkg_data['name']} cuesta ${pkg_data['price']} COP.\n"
                 f"Incluye: {pkg_data['description']}\n\n"
-                "Deseas agendar una cita?"
+                "Deseas agendar una cita con este paquete?"
             )
     
-    # 4. Start booking if any data extracted
+    # 5. Start booking if any field was extracted
     if any([
         session.get("student_name"),
         session.get("school"),
@@ -571,62 +681,65 @@ def process_message(msg, session):
         session["booking_started"] = True
         save_session(session)
     
-    # 5. Explicit booking intent
-    if any(k in lower for k in ["agendar", "cita", "reservar"]):
+    # 6. Explicit booking intent
+    if any(k in lower for k in ["agendar", "cita", "reservar", "reserva"]):
         session["booking_started"] = True
         save_session(session)
     
-    # 6. If not booking, provide help
+    # 7. If not booking yet, provide help
     if not session.get("booking_started"):
-        return "Soy Oriental IPS. Puedo ayudarte a agendar una cita o consultar precios. Que necesitas?"
+        return "Soy Oriental IPS. Puedo ayudarte a agendar una cita o responder preguntas. Que necesitas?"
     
-    # 7. Handle confirmation
-    if any(k in lower for k in ["confirmo", "si", "confirmar"]) and session.get("awaiting_confirmation"):
+    # 8. Handle confirmation
+    if any(k in lower for k in ["confirmo", "confirmar", "si"]) and session.get("awaiting_confirmation"):
         ok, table = insert_reservation(session["phone"], session)
+        
         if ok:
             name = session["student_name"]
             pkg = session["package"]
             date = session["date"]
             time = session["time"]
             
-            # Clear session
+            # Clear session after successful booking
             phone = session["phone"]
             session.clear()
-            session.update(DEFAULT_SESSION)
-            session["phone"] = phone
+            session.update(create_new_session(phone))
             save_session(session)
             
             return (
                 f"Cita confirmada!\n\n"
-                f"El estudiante {name} tiene su cita para el paquete {pkg}.\n"
-                f"Fecha: {date} a las {time}.\n"
-                f"Te atenderemos en la mesa {table}.\n\n"
-                "Te esperamos!"
+                f"El estudiante {name} tiene su cita para {pkg}.\n"
+                f"Fecha: {date} a las {time}\n"
+                f"Mesa: {table}\n\n"
+                f"Te esperamos en Oriental IPS! {FAQ['ubicacion']}"
             )
         else:
             return f"No pudimos completar la reserva: {table}"
     
-    # 8. Check for missing fields
+    # 9. Check for missing fields
     missing = get_missing_fields(session)
     if missing:
         return get_field_prompt(missing,[object Object],)
     
-    # 9. All fields complete - show summary
+    # 10. All fields complete - show summary
     if not session.get("awaiting_confirmation"):
         return build_summary(session)
     
-    # 10. Fallback
-    return "No entendi bien. Deseas agendar una cita o consultar precios?"
+    # 11. Fallback
+    return "No entendi bien. Puedes repetir o decirme que necesitas?"
 
-# ---------------------------------------------------------
+# =============================================================================
 # TWILIO WEBHOOK
-# ---------------------------------------------------------
+# =============================================================================
 
-@app.post("/whatsapp", response_class=Response)
+@app.post("/whatsapp")
 async def whatsapp_webhook(request: Request, WaId: str = Form(...), Body: str = Form(...)):
+    """Handle incoming WhatsApp messages"""
+    
     phone = WaId.split(":")[-1].strip()
     user_msg = Body.strip()
     
+    # Get session and process message
     session = get_session(phone)
     response_text = process_message(user_msg, session)
     
@@ -634,37 +747,53 @@ async def whatsapp_webhook(request: Request, WaId: str = Form(...), Body: str = 
     if TEST_MODE:
         return Response(content=response_text, media_type="text/plain")
     
-    # Production - return Twilio XML
-    twiml = MessagingResponse()
-    twiml.message(response_text)
-    return Response(content=str(twiml), media_type="application/xml")
+    # Production mode - return Twilio XML
+    if TWILIO_AVAILABLE:
+        twiml = MessagingResponse()
+        twiml.message(response_text)
+        return Response(content=str(twiml), media_type="application/xml")
+    
+    # Fallback - plain text
+    return Response(content=response_text, media_type="text/plain")
 
-# ---------------------------------------------------------
+# =============================================================================
 # WEB INTERFACE
-# ---------------------------------------------------------
+# =============================================================================
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "version": app.version,
-            "supabase_status": "Connected" if supabase else "Disconnected",
-            "local_tz": str(LOCAL_TZ),
-        },
-    )
+    """Home page / admin dashboard"""
+    
+    if templates:
+        return templates.TemplateResponse(
+            "index.html",
+            {
+                "request": request,
+                "version": app.version,
+                "supabase_status": "Connected" if supabase else "Disconnected",
+                "local_tz": str(LOCAL_TZ),
+            },
+        )
+    
+    # Fallback if no templates
+    return HTMLResponse(content=f"<h1>Oriental IPS Bot v{app.version}</h1><p>Status: Running</p>")
+
+# =============================================================================
+# API ENDPOINTS
+# =============================================================================
 
 @app.get("/api/reservations")
 async def get_reservations():
+    """Get upcoming reservations"""
+    
     if not supabase:
         return {"error": "Supabase not available"}
     
-    now = datetime.now(LOCAL_TZ)
-    seven_days = now + timedelta(days=7)
-    
     try:
-        response = (
+        now = datetime.now(LOCAL_TZ)
+        seven_days = now + timedelta(days=7)
+        
+        result = (
             supabase.table(RESERVATION_TABLE)
             .select("*")
             .eq("business_id", BUSINESS_ID)
@@ -673,14 +802,33 @@ async def get_reservations():
             .order("datetime", desc=False)
             .execute()
         )
-        return response.data
+        
+        return {"reservations": result.data}
+        
     except Exception as e:
         return {"error": str(e)}
 
 @app.get("/health")
-def health():
+def health_check():
+    """Health check endpoint"""
     return {
         "status": "healthy",
-        "version": "3.2.0",
+        "version": "3.4.0",
         "supabase": supabase is not None,
+        "timezone": str(LOCAL_TZ),
+        "active_sessions": len(MEMORY_SESSIONS)
     }
+
+@app.get("/api/sessions")
+def get_all_sessions():
+    """Debug endpoint - view all active sessions"""
+    return {"sessions": MEMORY_SESSIONS}
+
+# =============================================================================
+# STARTUP
+# =============================================================================
+
+print("✅ Oriental IPS Bot v3.4.0 ready!")
+print(f"   - Supabase: {'Connected' if supabase else 'Not available'}")
+print(f"   - Timezone: {LOCAL_TZ}")
+print(f"   - Test mode: {TEST_MODE}")
