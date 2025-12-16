@@ -654,12 +654,12 @@ return "Buenos dias, estas comunicado con Oriental IPS. En que te puedo ayudar?"
 pkg = extract_package(text)
 if pkg and not session.get("booking_started"):
     for key, data in PACKAGES.items():
-    if data["name"] == pkg:
-        return (
-            f"Perfecto, {data['name']} cuesta ${data['price']} COP.\n"
-            f"Incluye: {data['description']}\n\n"
-            "Deseas agendar una cita con este paquete?"
-        )
+        if data["name"] == pkg:
+            return (
+                f"Perfecto, {data['name']} cuesta ${data['price']} COP.\n"
+                f"Incluye: {data['description']}\n\n"
+                "Deseas agendar una cita con este paquete?"
+            )
 
 # 5. Start booking automatically if something was extracted
 if any([
