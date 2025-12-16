@@ -635,7 +635,7 @@ def process_message(msg, session):
 update_result = update_session_with_message(text, session)
 
 if update_result == "INVALID_TIME":
-return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora dentro de ese horario."
+    return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora dentro de ese horario."
 
 # 2. FAQ (before booking)
 if not session.get("booking_started"):
@@ -646,14 +646,14 @@ if faq_answer:
 # 3. Greeting
 is_greeting = any(lower.startswith(g) for g in ["hola", "buenos", "buenas", "buen dia"])
 if is_greeting and not session.get("booking_started") and not session.get("greeted"):
-session["greeted"] = True
+    session["greeted"] = True
 save_session(session)
 return "Buenos dias, estas comunicado con Oriental IPS. En que te puedo ayudar?"
 
 # 4. Package info (before booking)
 pkg = extract_package(text)
 if pkg and not session.get("booking_started"):
-for key, data in PACKAGES.items():
+    for key, data in PACKAGES.items():
     if data["name"] == pkg:
         return (
             f"Perfecto, {data['name']} cuesta ${data['price']} COP.\n"
@@ -663,29 +663,29 @@ for key, data in PACKAGES.items():
 
 # 5. Start booking automatically if something was extracted
 if any([
-session.get("student_name"),
-session.get("school"),
-session.get("package"),
-session.get("date"),
-session.get("time"),
-session.get("age"),
-session.get("cedula"),
+    session.get("student_name"),
+    session.get("school"),
+    session.get("package"),
+    session.get("date"),
+    session.get("time"),
+    session.get("age"),
+    session.get("cedula"),
 ]):
-session["booking_started"] = True
-save_session(session)
+    session["booking_started"] = True
+    save_session(session)
 
 # 6. Explicit booking intent
 if any(k in lower for k in ["agendar", "cita", "reservar", "reserva"]):
-session["booking_started"] = True
-save_session(session)
+    session["booking_started"] = True
+    save_session(session)
 
 # 7. Still not booking → help message
 if not session.get("booking_started"):
-return "Soy Oriental IPS. Puedo ayudarte a agendar una cita o responder preguntas. Que necesitas?"
+    return "Soy Oriental IPS. Puedo ayudarte a agendar una cita o responder preguntas. Que necesitas?"
 
 # 8. Handle confirmation
 if session.get("awaiting_confirmation") and any(k in lower for k in ["confirmo", "confirmar"]):
-ok, table = insert_reservation(session["phone"], session)
+    ok, table = insert_reservation(session["phone"], session)
 
 if ok:
     name = session["student_name"]
