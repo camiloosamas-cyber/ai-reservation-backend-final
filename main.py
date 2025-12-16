@@ -694,15 +694,15 @@ def process_message(msg, session):
             session.update(create_new_session(phone))
             save_session(session)
             
-        return (
-            f"Cita confirmada!\n\n"
-            f"El estudiante {name} tiene su cita para {pkg}.\n"
-            f"Fecha: {date} a las {time}\n"
-            f"Mesa: {table}\n\n"
-            f"Te esperamos en Oriental IPS! {FAQ['ubicacion']}"
-        )
-        
-    return "No pudimos completar la reserva."
+            return (
+                f"Cita confirmada!\n\n"
+                f"El estudiante {name} tiene su cita para {pkg}.\n"
+                f"Fecha: {date} a las {time}\n"
+                f"Mesa: {table}\n\n"
+                f"Te esperamos en Oriental IPS! {FAQ['ubicacion']}"
+            )
+            
+        return "No pudimos completar la reserva."
 
     # 9. Allow questions EVEN during booking (price / FAQ)
     if any(k in lower for k in ["cuanto", "precio", "cuesta"]):
