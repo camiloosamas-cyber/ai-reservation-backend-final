@@ -414,10 +414,9 @@ def get_field_prompt(field: str):
             "¿Cuál paquete deseas?"
         ),
         "date": "¿Para qué fecha deseas la cita? (ejemplo: 15 de enero)",
-        "time": "¿A qué hora prefieres? (ejemplo: 10am o 3pm)",
+        "time": "¿A qué hora prefieres? (ejemplo: 10am o 3pm)"
     }
     return prompts.get(field, "")
-
 
 def acknowledge_field(field: str, value: str):
     """Acknowledge received data naturally"""
