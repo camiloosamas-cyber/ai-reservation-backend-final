@@ -634,41 +634,34 @@ def process_message(msg, session):
     # 1. Extract data from message
     update_result = update_session_with_message(text, session)
     
-    # Handle invalid time
     if update_result == "INVALID_TIME":
         return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora dentro de ese horario."
     
-    # 2. Check for FAQ (before booking starts)
+    # 2. FAQ (before booking)
     if not session.get("booking_started"):
         faq_answer = check_faq(text)
         if faq_answer:
             return faq_answer
     
-    # 3. Handle greeting (before booking)
+    # 3. Greeting
     is_greeting = any(lower.startswith(g) for g in ["hola", "buenos", "buenas", "buen dia"])
     if is_greeting and not session.get("booking_started") and not session.get("greeted"):
         session["greeted"] = True
         save_session(session)
         return "Buenos dias, estas comunicado con Oriental IPS. En que te puedo ayudar?"
     
-    # 4. Package info request (before booking)
+    # 4. Package info (before booking)
     pkg = extract_package(text)
     if pkg and not session.get("booking_started"):
-        pkg_key = None
         for key, data in PACKAGES.items():
             if data["name"] == pkg:
-                pkg_key = key
-                break
-        
-        if pkg_key:
-            pkg_data = PACKAGES[pkg_key]
-            return (
-                f"Perfecto, {pkg_data['name']} cuesta ${pkg_data['price']} COP.\n"
-                f"Incluye: {pkg_data['description']}\n\n"
-                "Deseas agendar una cita con este paquete?"
-            )
+                return (
+                    f"Perfecto, {data['name']} cuesta ${data['price']} COP.\n"
+                    f"Incluye: {data['description']}\n\n"
+                    "Deseas agendar una cita con este paquete?"
+                )
     
-    # 5. Start booking if any field was extracted
+    # 5. Start booking automatically if something was extracted
     if any([
         session.get("student_name"),
         session.get("school"),
@@ -676,7 +669,7 @@ def process_message(msg, session):
         session.get("date"),
         session.get("time"),
         session.get("age"),
-        session.get("cedula")
+        session.get("cedula"),
     ]):
         session["booking_started"] = True
         save_session(session)
@@ -686,7 +679,7 @@ def process_message(msg, session):
         session["booking_started"] = True
         save_session(session)
     
-    # 7. If not booking yet, provide help
+    # 7. Still not booking → help message
     if not session.get("booking_started"):
         return "Soy Oriental IPS. Puedo ayudarte a agendar una cita o responder preguntas. Que necesitas?"
     
@@ -700,33 +693,32 @@ def process_message(msg, session):
             date = session["date"]
             time = session["time"]
             
-            # Clear session after successful booking
             phone = session["phone"]
             session.clear()
             session.update(create_new_session(phone))
             save_session(session)
-        
+            
             return (
                 f"Cita confirmada!\n\n"
                 f"El estudiante {name} tiene su cita para {pkg}.\n"
                 f"Fecha: {date} a las {time}\n"
                 f"Mesa: {table}\n\n"
                 f"Te esperamos en Oriental IPS! {FAQ['ubicacion']}"
-        )
-    else:
-        return f"No pudimos completar la reserva: {table}"
+            )
         
-    # 9. Check for missing fields
-    missing = get_missing_fields(session)  # ✅ ADD THIS LINE!
-    if missing:
-        return get_field_prompt(missing,[object Object],)
+        return "No pudimos completar la reserva."
     
-    # 10. All fields complete - show summary
+    # 9. Ask for missing fields (one by one)
+    missing = get_missing_fields(session)
+    if missing:
+        return get_field_prompt(missing[0])
+    
+    # 10. Show summary once everything is complete
     if not session.get("awaiting_confirmation"):
         return build_summary(session)
     
-    # 11. Fallback
-    return "No entendi bien. Puedes repetir o decirme que necesitas?"
+    # 11. Final fallback
+    return "No entendi bien. Puedes repetir o decirme que necesitas?" 
 
 # =============================================================================
 # TWILIO WEBHOOK
