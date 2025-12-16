@@ -238,9 +238,9 @@ def extract_student_name(msg, current_name):
     if "se llama" in lower:
         parts = lower.split("se llama", 1)
         if len(parts) > 1:
-            name = parts,strip()
+            name = parts[1].strip()
             # Clean up (remove age, school mentions)
-            name = re.split(r"\s+(?:de|del|tiene|anos?|colegio)", name),strip()
+            name = re.split(r"\s+(?:de|del|tiene|anos?|colegio)", name)[0].strip()
             if name:
                 return name.title()
     
@@ -286,7 +286,7 @@ def extract_school(msg):
         if m:
             school_name = m.group(1).strip()
             # Clean up (stop at punctuation or age mentions)
-            school_name = re.split(r"[.,!?]|\s+(?:tiene|anos?|edad)", school_name),strip()
+            school_name = re.split(r"[.,!?]|\s+(?:tiene|anos?|edad)", school_name)[0].strip()
             if len(school_name) > 1:
                 return school_name.title()
     
@@ -691,7 +691,7 @@ def process_message(msg, session):
         return "Soy Oriental IPS. Puedo ayudarte a agendar una cita o responder preguntas. Que necesitas?"
     
     # 8. Handle confirmation
-    if any(k in lower for k in ["confirmo", "confirmar"] and session.get("awaiting_confirmation"):
+    if session.get("awaiting_confirmation") and any(k in lower for k in ["confirmo", "confirmar"]):
         ok, table = insert_reservation(session["phone"], session)
         
         if ok:
@@ -717,9 +717,8 @@ def process_message(msg, session):
             return f"No pudimos completar la reserva: {table}"
     
     # 9. Check for missing fields
-    missing = get_missing_fields(session)
     if missing:
-        return get_field_prompt(missing)
+        return get_field_prompt(missing[0])
     
     # 10. All fields complete - show summary
     if not session.get("awaiting_confirmation"):
