@@ -631,12 +631,18 @@ def process_message(msg, session):
     text = msg.strip()
     lower = text.lower()
 
-    # 1) Greeting FIRST PRIORITY
+    # 1) Greeting FIRST PRIORITY — OVERRIDES EVERYTHING
     is_greeting = any(word in lower for word in ["hola", "buenos", "buenas", "buen dia", "hi", "hello"])
-    if is_greeting and not session.get("greeted"):
+
+    if is_greeting:
+        # FULL RESET if greeting comes in
+        phone = session["phone"]
+        session.clear()
+        session.update(create_new_session(phone))
         session["greeted"] = True
         save_session(session)
-        return "Buenos dias, estas comunicado con Oriental IPS. En que te puedo ayudar?"
+        
+        return "Buenos días, estás comunicado con Oriental IPS. ¿En qué te puedo ayudar?"
         
     # 1. Extract data from message
     update_result = update_session_with_message(text, session)
