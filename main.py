@@ -508,7 +508,7 @@ def get_field_prompt(field):
             "   (Activa + Odontologia)\n\n"
             "Cual paquete deseas?"
         ),
-        "date": "Para que fecha deseas la cita? (ejemplo: manana, 15 de enero)",
+        "date": "Para que fecha deseas la cita? (ejemplo: mañana, 15 de enero)",
         "time": "A que hora prefieres? Atendemos de 7am a 5pm (ejemplo: 10am o 3pm)",
     }
     return prompts.get(field, "")
@@ -714,7 +714,6 @@ def process_message(msg, session):
                 f"Cita confirmada!\n\n"
                 f"El estudiante {name} tiene su cita para {pkg}.\n"
                 f"Fecha: {date} a las {time}\n"
-                f"Mesa: {table}\n\n"
                 f"Te esperamos en Oriental IPS! {FAQ['ubicacion']}"
             )
             
