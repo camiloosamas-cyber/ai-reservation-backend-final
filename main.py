@@ -302,27 +302,38 @@ def extract_school(msg):
 def extract_age(msg):
     """Extract age from message"""
     text = msg.lower()
-    
-    # Pattern: "12 años" or "12 anos"
-    m = re.search(r"(\d{1,2})\s*anos?", text)
+
+    # Normalize accents (años → anos)
+    text = (
+        text.replace("á", "a")
+            .replace("é", "e")
+            .replace("í", "i")
+            .replace("ó", "o")
+            .replace("ú", "u")
+            .replace("ñ", "n")
+    )
+
+    # Pattern: "13 años", "13 ano(s)"
+    m = re.search(r"\b(\d{1,2})\s*(?:ano|anos)\b", text)
     if m:
         age = int(m.group(1))
         if 5 <= age <= 25:
             return age
-    
-    # Pattern: "edad 12" or "tiene 12"
-    m = re.search(r"(?:edad|tiene)\s+(\d{1,2})", text)
+
+    # Pattern: "edad 13", "tiene 13"
+    m = re.search(r"\b(?:edad|tiene)\s+(\d{1,2})\b", text)
     if m:
         age = int(m.group(1))
         if 5 <= age <= 25:
             return age
-    
+
     # Standalone number
-    if text.strip().isdigit():
-        age = int(text.strip())
+    m = re.search(r"\b(\d{1,2})\b", text)
+    if m:
+        age = int(m.group(1))
         if 5 <= age <= 25:
             return age
-    
+
     return None
 
 def extract_cedula(msg):
@@ -334,40 +345,44 @@ def extract_cedula(msg):
     return None
 
 def extract_date(msg, session):
-    """Extract date from message"""
     text = msg.lower()
     today = datetime.now(LOCAL_TZ).date()
-    
-    # Explicit keywords
+
     if "manana" in text or "mañana" in text:
         return (today + timedelta(days=1)).strftime("%Y-%m-%d")
-    
+
     if "hoy" in text:
         return today.strftime("%Y-%m-%d")
-    
+
     if "pasado manana" in text or "pasado mañana" in text:
         return (today + timedelta(days=2)).strftime("%Y-%m-%d")
-    
-    # Use dateparser if available
+
     if DATEPARSER_AVAILABLE:
         try:
             dt = dateparser.parse(
                 msg,
                 languages=["es"],
                 settings={
-                    "TIMEZONE": str(LOCAL_TZ),
-                    "PREFER_DATES_FROM": "future"
+                    "TIMEZONE": "America/Bogota",
+                    "RETURN_AS_TIMEZONE_AWARE": True,
+                    "PREFER_DATES_FROM": "future",
+                    "DATE_ORDER": "DMY"
                 }
             )
-            
+
             if dt:
-                parsed_date = dt.date()
-                if parsed_date >= today:
-                    return parsed_date.strftime("%Y-%m-%d")
+                local_dt = dt.astimezone(LOCAL_TZ)
+                parsed_date = local_dt.date()
+
+                # 🔧 YEAR FIX
+                if parsed_date < today:
+                    return "PAST_DATE"
+                    
+                return local_dt.strftime("%Y-%m-%d")
+
         except Exception as e:
             print(f"Dateparser error: {e}")
-    
-    # Keep existing date if no new one found
+
     return session.get("date")
 
 def extract_time(msg, session):
@@ -450,6 +465,9 @@ def update_session_with_message(msg, session):
         session["cedula"] = cedula
         updated.append("cedula")
     
+    if date == "PAST_DATE":
+        return "PAST_DATE"
+
     if date:
         session["date"] = date
         updated.append("date")
@@ -521,7 +539,7 @@ def build_summary(session):
         f"Paquete: {pkg_data['name']} (${pkg_data['price']})\n"
         f"Fecha: {session['date']}\n"
         f"Hora: {session['time']}\n"
-        f"Edad: {session['age']} anos\n"
+        f"Edad: {session['age']} años\n"
         f"Cedula: {session['cedula']}\n\n"
         "Deseas confirmar esta cita? Responde CONFIRMO para agendar."
     )
@@ -646,6 +664,8 @@ def process_message(msg, session):
         
     # 1. Extract data from message
     update_result = update_session_with_message(text, session)
+    if update_result == "PAST_DATE":
+        return "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
     if update_result == "INVALID_TIME":
         return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora dentro de ese horario."
         
@@ -668,8 +688,11 @@ def process_message(msg, session):
                 
     # 6. Explicit booking intent
     if any(k in lower for k in ["agendar", "cita", "reservar", "reserva"]):
-        session["booking_started"] = True
-        save_session(session)
+        if not session.get("booking_started"):
+            session["booking_started"] = True
+            session["booking_intro_shown"] = False
+            save_session(session)
+            
     # 7. Still not booking → help message
     if not session.get("booking_started"):
         return "Soy Oriental IPS. Puedo ayudarte a agendar una cita o responder preguntas. Que necesitas?"
@@ -707,13 +730,29 @@ def process_message(msg, session):
                         f"El {data['name']} cuesta ${data['price']} COP.\n"
                         f"Incluye: {data['description']}"
                 )
-                
+                    
             return "Tenemos 3 paquetes: Esencial ($45.000), Activa ($60.000), Bienestar ($75.000)."
-    
-    faq_answer = check_faq(text)
-    if faq_answer:
-        return faq_answer
-    
+            
+        faq_answer = check_faq(text)
+        if faq_answer:
+            return faq_answer
+            
+    # ✅ Booking intro (ONLY ONCE, right after booking starts)
+    if session.get("booking_started") and not session.get("booking_intro_shown"):
+        session["booking_intro_shown"] = True
+        save_session(session)
+        
+        return (
+            "Perfecto 😊 Para agendar la cita solo necesito la siguiente información:\n\n"
+            "- Nombre completo del estudiante\n"
+            "- Colegio\n"
+            "- Paquete (Esencial, Activa o Total)\n"
+            "- Fecha y hora\n"
+            "- Edad\n"
+            "- Número de cédula\n\n"
+            "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
+        )
+
     # 10. Ask for missing fields (ONLY after questions are handled)
     if session.get("booking_started"):
         missing = get_missing_fields(session)
