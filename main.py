@@ -660,16 +660,8 @@ def process_message(msg, session):
                     "Deseas agendar una cita con este paquete?"
                 )
 
-    # 5. Start booking automatically if something was extracted
-    if any([
-        session.get("student_name"),
-        session.get("school"),
-        session.get("package"),
-        session.get("date"),
-        session.get("time"),
-        session.get("age"),
-        session.get("cedula"),
-    ]):
+    # 5. Start booking ONLY if user shows intent
+    if any(k in lower for k in ["agendar", "cita", "reservar", "reserva"]):
         session["booking_started"] = True
         save_session(session)
         
