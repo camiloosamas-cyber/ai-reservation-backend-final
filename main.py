@@ -635,6 +635,13 @@ def process_message(msg, session):
     update_result = update_session_with_message(text, session)
     if update_result == "INVALID_TIME":
         return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora dentro de ese horario."
+
+    # 3. Greeting
+    is_greeting = any(lower.startswith(g) for g in ["hola", "buenos", "buenas", "buen dia"])
+    if is_greeting and not session.get("booking_started") and not session.get("greeted"):
+        session["greeted"] = True
+        save_session(session)
+        return "Buenos dias, estas comunicado con Oriental IPS. En que te puedo ayudar?"
         
     # 2. FAQ (before booking)
     if not session.get("booking_started"):
@@ -642,13 +649,6 @@ def process_message(msg, session):
         if faq_answer:
             return faq_answer
             
-    # 3. Greeting
-    is_greeting = any(lower.startswith(g) for g in ["hola", "buenos", "buenas", "buen dia"])
-    if is_greeting and not session.get("booking_started") and not session.get("greeted"):
-        session["greeted"] = True
-        save_session(session)
-        return "Buenos dias, estas comunicado con Oriental IPS. En que te puedo ayudar?"
-
     # 4. Package info (before booking)
     pkg = extract_package(text)
     if pkg and not session.get("booking_started"):
