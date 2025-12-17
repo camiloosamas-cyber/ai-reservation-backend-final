@@ -676,23 +676,95 @@ def process_message(msg, session):
             return faq_answer
             
     # 4. Package info (before booking)
+
     pkg = extract_package(text)
+    
+    # 4A. User mentioned a SPECIFIC package
     if pkg and not session.get("booking_started"):
-        for key, data in PACKAGES.items():
+         for key, data in PACKAGES.items():
             if data["name"] == pkg:
                 return (
-                    f"Perfecto, {data['name']} cuesta ${data['price']} COP.\n"
+                    f"Perfecto 😊 El *{data['name']}* cuesta ${data['price']} COP.\n"
                     f"Incluye: {data['description']}\n\n"
-                    "Deseas agendar una cita con este paquete?"
+                    "¿Deseas agendar una cita con este paquete?"
                 )
+    
+    # 4B. User asked for INFORMATION about school medical exams
+    # but did NOT mention a specific package
+    if (
+        not session.get("booking_started")
+        and any(w in normalized for w in ["examen", "examenes", "medico", "medicos"])
+    ):
+        return (
+            "Claro 😊 Para el ingreso al colegio contamos con los siguientes "
+            "*paquetes de exámenes médicos escolares*:\n\n"
+            "🔹 *Paquete Cuidado Esencial* – $45.000 COP\n"
+            "Medicina General, Optometría y Audiometría.\n\n"
+            "🔹 *Paquete Salud Activa* – $60.000 COP\n"
+            "Incluye el Esencial + Psicología.\n\n"
+            "🔹 *Paquete Bienestar Total* – $75.000 COP\n"
+            "Incluye el Activa + Odontología.\n\n"
+            "Si deseas, puedo ayudarte a *agendar la cita* o recomendarte "
+            "el paquete más adecuado según el colegio."
+        )
                 
     # 6. Explicit booking intent
-    if any(k in lower for k in ["agendar", "cita", "reservar", "reserva"]):
-        if not session.get("booking_started"):
+
+    # Normalize accents once
+    
+    normalized = (
+        lower
+        .replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+    )
+    
+    SCHOOL_CONTEXT = [
+        "examen",
+        "examenes",
+        "medico",
+        "medicos",
+        "colegio",
+        "escolar",
+        "ingreso"
+    ]
+    
+    ACTION_VERBS = [
+        "agendar",
+        "reservar",
+        "reserva",
+        "cita",
+        "apartar",
+        "adquirir",
+        "tomar",
+        "hacer",
+        "realizar",
+        "sacar"
+      ]
+    
+    INFO_PHRASES = [
+        "informacion",
+        "información",
+        "quisiera saber",
+        "me gustaria informacion",
+        "me gustaría información",
+        "que incluye",
+        "qué incluye"
+    ]
+
+    is_info_request = any(p in normalized for p in INFO_PHRASES)
+
+    if not session.get("booking_started"):
+        has_context = sum(1 for w in SCHOOL_CONTEXT if w in normalized) >= 2
+        has_action = any(w in normalized for w in ACTION_VERBS)
+
+        if has_context and has_action and not is_info_request:
             session["booking_started"] = True
             session["booking_intro_shown"] = False
             save_session(session)
-            
+        
     # 7. Still not booking → help message
     if not session.get("booking_started"):
         return "Soy Oriental IPS. Puedo ayudarte a agendar una cita o responder preguntas. Que necesitas?"
