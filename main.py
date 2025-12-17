@@ -648,6 +648,14 @@ def process_message(msg, session):
     """Main conversation logic"""
     text = msg.strip()
     lower = text.lower()
+    normalized = (
+        lower
+        .replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+    )
 
     # 1) Greeting FIRST PRIORITY — OVERRIDES EVERYTHING
     is_greeting = any(word in lower for word in ["hola", "buenos", "buenas", "buen dia", "hi", "hello"])
@@ -674,52 +682,8 @@ def process_message(msg, session):
         faq_answer = check_faq(text)
         if faq_answer:
             return faq_answer
-            
-    # 4. Package info (before booking)
 
-    pkg = extract_package(text)
-    
-    # 4A. User mentioned a SPECIFIC package
-    if pkg and not session.get("booking_started"):
-         for key, data in PACKAGES.items():
-            if data["name"] == pkg:
-                return (
-                    f"Perfecto 😊 El *{data['name']}* cuesta ${data['price']} COP.\n"
-                    f"Incluye: {data['description']}\n\n"
-                    "¿Deseas agendar una cita con este paquete?"
-                )
-    
-    # 4B. User asked for INFORMATION about school medical exams
-    # but did NOT mention a specific package
-    if (
-        not session.get("booking_started")
-        and any(w in normalized for w in ["examen", "examenes", "medico", "medicos"])
-    ):
-        return (
-            "Claro 😊 Para el ingreso al colegio contamos con los siguientes "
-            "*paquetes de exámenes médicos escolares*:\n\n"
-            "🔹 *Paquete Cuidado Esencial* – $45.000 COP\n"
-            "Medicina General, Optometría y Audiometría.\n\n"
-            "🔹 *Paquete Salud Activa* – $60.000 COP\n"
-            "Incluye el Esencial + Psicología.\n\n"
-            "🔹 *Paquete Bienestar Total* – $75.000 COP\n"
-            "Incluye el Activa + Odontología.\n\n"
-            "Si deseas, puedo ayudarte a *agendar la cita* o recomendarte "
-            "el paquete más adecuado según el colegio."
-        )
-                
     # 6. Explicit booking intent
-
-    # Normalize accents once
-    
-    normalized = (
-        lower
-        .replace("á", "a")
-        .replace("é", "e")
-        .replace("í", "i")
-        .replace("ó", "o")
-        .replace("ú", "u")
-    )
     
     SCHOOL_CONTEXT = [
         "examen",
@@ -764,7 +728,40 @@ def process_message(msg, session):
             session["booking_started"] = True
             session["booking_intro_shown"] = False
             save_session(session)
-        
+            
+    # 4. Package info (before booking)
+
+    pkg = extract_package(text)
+    
+    # 4A. User mentioned a SPECIFIC package
+    if pkg and not session.get("booking_started"):
+        for key, data in PACKAGES.items():
+            if data["name"] == pkg:
+                return (
+                    f"Perfecto 😊 El *{data['name']}* cuesta ${data['price']} COP.\n"
+                    f"Incluye: {data['description']}\n\n"
+                    "¿Deseas agendar una cita con este paquete?"
+                )
+    
+    # 4B. User asked for INFORMATION about school medical exams
+    # but did NOT mention a specific package
+    if (
+        not session.get("booking_started")
+        and any(w in normalized for w in ["examen", "examenes", "medico", "medicos"])
+    ):
+        return (
+            "Claro 😊 Para el ingreso al colegio contamos con los siguientes "
+            "*paquetes de exámenes médicos escolares*:\n\n"
+            "🔹 *Paquete Cuidado Esencial* – $45.000 COP\n"
+            "Medicina General, Optometría y Audiometría.\n\n"
+            "🔹 *Paquete Salud Activa* – $60.000 COP\n"
+            "Incluye el Esencial + Psicología.\n\n"
+            "🔹 *Paquete Bienestar Total* – $75.000 COP\n"
+            "Incluye el Activa + Odontología.\n\n"
+            "Si deseas, puedo ayudarte a *agendar la cita* o recomendarte "
+            "el paquete más adecuado según el colegio."
+        )
+                        
     # 7. Still not booking → help message
     if not session.get("booking_started"):
         return "Soy Oriental IPS. Puedo ayudarte a agendar una cita o responder preguntas. Que necesitas?"
