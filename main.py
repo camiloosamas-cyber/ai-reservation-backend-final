@@ -659,12 +659,7 @@ def process_message(msg, session):
                     f"Incluye: {data['description']}\n\n"
                     "Deseas agendar una cita con este paquete?"
                 )
-
-    # 5. Start booking ONLY if user shows intent
-    if any(k in lower for k in ["agendar", "cita", "reservar", "reserva"]):
-        session["booking_started"] = True
-        save_session(session)
-        
+                
     # 6. Explicit booking intent
     if any(k in lower for k in ["agendar", "cita", "reservar", "reserva"]):
         session["booking_started"] = True
