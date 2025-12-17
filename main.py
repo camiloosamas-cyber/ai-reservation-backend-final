@@ -630,11 +630,6 @@ def process_message(msg, session):
     """Main conversation logic"""
     text = msg.strip()
     lower = text.lower()
-    
-    # 1. Extract data from message
-    update_result = update_session_with_message(text, session)
-    if update_result == "INVALID_TIME":
-        return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora dentro de ese horario."
 
     # 3. Greeting
     is_greeting = any(lower.startswith(g) for g in ["hola", "buenos", "buenas", "buen dia"])
@@ -642,6 +637,11 @@ def process_message(msg, session):
         session["greeted"] = True
         save_session(session)
         return "Buenos dias, estas comunicado con Oriental IPS. En que te puedo ayudar?"
+        
+    # 1. Extract data from message
+    update_result = update_session_with_message(text, session)
+    if update_result == "INVALID_TIME":
+        return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora dentro de ese horario."
         
     # 2. FAQ (before booking)
     if not session.get("booking_started"):
