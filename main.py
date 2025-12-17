@@ -631,9 +631,9 @@ def process_message(msg, session):
     text = msg.strip()
     lower = text.lower()
 
-    # 3. Greeting
-    is_greeting = any(lower.startswith(g) for g in ["hola", "buenos", "buenas", "buen dia"])
-    if is_greeting and not session.get("booking_started") and not session.get("greeted"):
+    # 1) Greeting FIRST PRIORITY
+    is_greeting = any(word in lower for word in ["hola", "buenos", "buenas", "buen dia", "hi", "hello"])
+    if is_greeting and not session.get("greeted"):
         session["greeted"] = True
         save_session(session)
         return "Buenos dias, estas comunicado con Oriental IPS. En que te puedo ayudar?"
