@@ -709,10 +709,11 @@ def process_message(msg, session):
         return faq_answer
     
     # 10. Ask for missing fields (ONLY after questions are handled)
-    missing = get_missing_fields(session)
-    if missing:
-        return get_field_prompt(missing[0])
-   
+    if session.get("booking_started"):
+        missing = get_missing_fields(session)
+        if missing:
+            return get_field_prompt(missing[0])
+            
     # 11. Show summary once everything is complete
     if not session.get("awaiting_confirmation"):
         return build_summary(session)
