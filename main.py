@@ -432,54 +432,85 @@ def extract_time(msg, session):
 
 def update_session_with_message(msg, session):
     """Extract all possible data from message and update session"""
-    
-    # Extract each field
-    pkg = extract_package(msg)
-    name = extract_student_name(msg, session.get("student_name"))
-    school = extract_school(msg)
-    age = extract_age(msg)
-    cedula = extract_cedula(msg)
-    date = extract_date(msg, session)
-    time = extract_time(msg, session)
-    
-    # Track what was updated
+
+    # ---------- NORMALIZATION ----------
+    raw_msg = msg.lower()
+
+    normalized_msg = (
+        raw_msg
+        .replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+    )
+
+    FILLER_PHRASES = [
+        "para el ",
+        "para la ",
+        "el dia ",
+        "el día ",
+        "dia ",
+        "día ",
+    ]
+
+    COMMON_FIXES = {
+        "diembre": "diciembre",
+        "setiembre": "septiembre",
+    }
+
+    for wrong, correct in COMMON_FIXES.items():
+        normalized_msg = normalized_msg.replace(wrong, correct)
+
+    for filler in FILLER_PHRASES:
+        normalized_msg = normalized_msg.replace(filler, "")
+
+    # ---------- EXTRACTION (USE NORMALIZED TEXT) ----------
+    pkg = extract_package(normalized_msg)
+    name = extract_student_name(normalized_msg, session.get("student_name"))
+    school = extract_school(normalized_msg)
+    age = extract_age(normalized_msg)
+    cedula = extract_cedula(normalized_msg)
+    date = extract_date(normalized_msg, session)
+    time = extract_time(normalized_msg, session)
+
+    # ---------- UPDATE SESSION ----------
     updated = []
-    
+
     if pkg:
         session["package"] = pkg
         updated.append("package")
-    
+
     if name:
         session["student_name"] = name
         updated.append("name")
-    
+
     if school:
         session["school"] = school
         updated.append("school")
-    
+
     if age:
         session["age"] = age
         updated.append("age")
-    
+
     if cedula:
         session["cedula"] = cedula
         updated.append("cedula")
-    
+
     if date == "PAST_DATE":
         return "PAST_DATE"
 
     if date:
         session["date"] = date
         updated.append("date")
-    
+
     if time:
         if time == "INVALID_TIME":
             return "INVALID_TIME"
         session["time"] = time
         updated.append("time")
-    
+
     save_session(session)
-    
     return updated
 
 # =============================================================================
@@ -656,6 +687,8 @@ def process_message(msg, session):
         .replace("ó", "o")
         .replace("ú", "u")
     )
+
+    
 
      # ---------- ACTION DETECTION (MUST BE EARLY) ----------
     ACTION_VERBS = [
