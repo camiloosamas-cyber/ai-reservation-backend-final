@@ -657,6 +657,22 @@ def process_message(msg, session):
         .replace("ú", "u")
     )
 
+     # ---------- ACTION DETECTION (MUST BE EARLY) ----------
+    ACTION_VERBS = [
+        "agendar",
+        "reservar",
+        "reserva",
+        "cita",
+        "apartar",
+        "adquirir",
+        "tomar",
+        "hacer",
+        "realizar",
+        "sacar"
+    ]
+
+    has_action = any(w in normalized for w in ACTION_VERBS)
+
     # 1) Greeting FIRST PRIORITY — OVERRIDES EVERYTHING
     is_greeting = any(word in lower for word in ["hola", "buenos", "buenas", "buen dia", "hi", "hello"])
 
@@ -689,7 +705,7 @@ def process_message(msg, session):
         "exámenes"
     ]
 
-    if any(p in normalized for p in INFO_TRIGGERS):
+    if any(p in normalized for p in INFO_TRIGGERS) and not has_action:
         # If a specific package is mentioned, explain it
         pkg = extract_package(text)
         if pkg:
@@ -729,19 +745,6 @@ def process_message(msg, session):
         "ingreso"
     ]
     
-    ACTION_VERBS = [
-        "agendar",
-        "reservar",
-        "reserva",
-        "cita",
-        "apartar",
-        "adquirir",
-        "tomar",
-        "hacer",
-        "realizar",
-        "sacar"
-      ]
-
     INFO_PHRASES = [
         "informacion",
         "me gustaria informacion",
@@ -754,7 +757,6 @@ def process_message(msg, session):
 
     if not session.get("booking_started"):
         has_context = sum(1 for w in SCHOOL_CONTEXT if w in normalized) >= 2
-        has_action = any(w in normalized for w in ACTION_VERBS)
 
         if has_context and has_action and not is_info_request:
             session["booking_started"] = True
