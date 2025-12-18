@@ -708,6 +708,14 @@ def process_message(msg, session):
         "sacar"
       ]
 
+    INFO_PHRASES = [
+        "informacion",
+        "me gustaria informacion",
+        "quisiera saber",
+        "que incluye",
+        "que contiene"
+    ]
+
     is_info_request = any(p in normalized for p in INFO_PHRASES)
 
     if not session.get("booking_started"):
