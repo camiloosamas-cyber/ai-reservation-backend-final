@@ -815,7 +815,7 @@ def process_message(msg, session):
         "exámenes"
     ]
 
-    if any(p in normalized for p in INFO_TRIGGERS):
+    if any(p in normalized for p in INFO_TRIGGERS) and not has_action:
         # If a specific package is mentioned, explain it
         pkg = extract_package(text)
         if pkg:
