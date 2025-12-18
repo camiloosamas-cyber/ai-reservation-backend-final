@@ -707,16 +707,6 @@ def process_message(msg, session):
         "realizar",
         "sacar"
       ]
-    
-    INFO_PHRASES = [
-        "informacion",
-        "información",
-        "quisiera saber",
-        "me gustaria informacion",
-        "me gustaría información",
-        "que incluye",
-        "qué incluye"
-    ]
 
     is_info_request = any(p in normalized for p in INFO_PHRASES)
 
@@ -804,6 +794,40 @@ def process_message(msg, session):
         faq_answer = check_faq(text)
         if faq_answer:
             return faq_answer
+
+     # 🧠 INFO QUESTIONS OVERRIDE BOOKING FLOW
+    INFO_TRIGGERS = [
+        "que contiene",
+        "que incluye",
+        "informacion",
+        "información",
+        "paquetes",
+        "paquete",
+        "examenes",
+        "exámenes"
+    ]
+
+    if any(p in normalized for p in INFO_TRIGGERS):
+        # If a specific package is mentioned, explain it
+        pkg = extract_package(text)
+        if pkg:
+            for data in PACKAGES.values():
+                if data["name"] == pkg:
+                    return (
+                        f"El *{data['name']}* incluye:\n{data['description']}\n\n"
+                        f"Precio: ${data['price']} COP"
+                    )
+    
+        # Otherwise show all packages
+        return (
+            "Claro 😊 Estos son nuestros *paquetes de exámenes médicos escolares*:\n\n"
+            "🔹 *Cuidado Esencial* – $45.000 COP\n"
+            "Medicina General, Optometría y Audiometría.\n\n"
+            "🔹 *Salud Activa* – $60.000 COP\n"
+            "Incluye el Esencial + Psicología.\n\n"
+            "🔹 *Bienestar Total* – $75.000 COP\n"
+            "Incluye el Activa + Odontología."
+        )
             
     # ✅ Booking intro (ONLY ONCE, right after booking starts)
     if session.get("booking_started") and not session.get("booking_intro_shown"):
