@@ -115,6 +115,7 @@ def create_new_session(phone):
         "age": None,
         "cedula": None,
         "booking_started": False,
+        "booking_intro_shown": False,
         "greeted": False,
         "awaiting_confirmation": False
     }
@@ -799,11 +800,23 @@ def process_message(msg, session):
     ]
 
     if not session.get("booking_started"):
-        has_context = sum(1 for w in SCHOOL_CONTEXT if w in normalized) >= 2
-        if has_context and has_action:
-            session["booking_started"] = True
-            session["booking_intro_shown"] = False
-            save_session(session)
+    has_context = sum(1 for w in SCHOOL_CONTEXT if w in normalized) >= 2
+
+    if has_context and has_action:
+        session["booking_started"] = True
+        session["booking_intro_shown"] = True
+        save_session(session)
+
+        return (
+            "Perfecto 😊 Para agendar la cita solo necesito la siguiente información:\n\n"
+            "- Nombre completo del estudiante\n"
+            "- Colegio\n"
+            "- Paquete (Esencial, Activa o Total)\n"
+            "- Fecha y hora\n"
+            "- Edad\n"
+            "- Número de cédula\n\n"
+            "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
+        )
 
     # --------------------------------------------------
     # 6. SHOW BOOKING INTRO (ONCE)
