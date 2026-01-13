@@ -250,7 +250,7 @@ def extract_student_name(msg, current_name):
         m = re.search(r"nombre\s*:?\s*es\s+([a-z\s]+)", lower)
         if m:
             name = m.group(1).strip()
-            name = re.split(r"\s+(?:de|del|tiene|anos?|colegio)", name),strip()
+            name = re.split(r"\s+(?:de|del|tiene|anos?|colegio)", name)[0].strip()
             if name:
                 return name.title()
     
@@ -799,10 +799,9 @@ def process_message(msg, session):
         "colegio", "escolar", "ingreso"
     ]
 
-    if not session.get("booking_started"):
     has_context = sum(1 for w in SCHOOL_CONTEXT if w in normalized) >= 2
 
-    if has_context and has_action:
+    if not session.get("booking_started") and has_context and has_action:
         session["booking_started"] = True
         session["booking_intro_shown"] = True
         save_session(session)
