@@ -676,70 +676,58 @@ def check_faq(msg):
 # =============================================================================
 
 def process_message(msg, session):
-    """Main conversation logic"""
+    """Main conversation logic (STRICT FLOW VERSION)"""
+
     text = msg.strip()
     lower = text.lower()
     normalized = (
-        lower
-        .replace("á", "a")
-        .replace("é", "e")
-        .replace("í", "i")
-        .replace("ó", "o")
-        .replace("ú", "u")
+        lower.replace("á", "a")
+             .replace("é", "e")
+             .replace("í", "i")
+             .replace("ó", "o")
+             .replace("ú", "u")
     )
 
-    
-
-     # ---------- ACTION DETECTION (MUST BE EARLY) ----------
+    # --------------------------------------------------
+    # 0. ACTION DETECTION (USED AS A GUARD)
+    # --------------------------------------------------
     ACTION_VERBS = [
-        "agendar",
-        "reservar",
-        "reserva",
-        "cita",
-        "apartar",
-        "adquirir",
-        "tomar",
-        "hacer",
-        "realizar",
-        "sacar"
+        "agendar", "reservar", "reserva", "cita",
+        "apartar", "adquirir", "tomar", "hacer",
+        "realizar", "sacar"
     ]
-
     has_action = any(w in normalized for w in ACTION_VERBS)
 
-    # 1) Greeting FIRST PRIORITY — OVERRIDES EVERYTHING
-    is_greeting = any(word in lower for word in ["hola", "buenos", "buenas", "buen dia", "hi", "hello"])
-
-    if is_greeting:
-        # FULL RESET if greeting comes in
+    # --------------------------------------------------
+    # 1. GREETING (HARD RESET)
+    # --------------------------------------------------
+    if any(w in normalized for w in ["hola", "buenos", "buenas", "hi", "hello"]):
         phone = session["phone"]
         session.clear()
         session.update(create_new_session(phone))
         session["greeted"] = True
         save_session(session)
-        
         return "Buenos días, estás comunicado con Oriental IPS. ¿En qué te puedo ayudar?"
-        
-    # 1. Extract data from message
+
+    # --------------------------------------------------
+    # 2. UPDATE SESSION (EXTRACTION ONLY)
+    # --------------------------------------------------
     update_result = update_session_with_message(text, session)
     if update_result == "PAST_DATE":
         return "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
     if update_result == "INVALID_TIME":
-        return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora dentro de ese horario."
+        return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora."
 
-    # 🧠 INFO QUESTIONS OVERRIDE BOOKING FLOW
+    # --------------------------------------------------
+    # 3. INFO QUESTIONS (ALLOWED ANYTIME, BUT NO ACTION)
+    # --------------------------------------------------
     INFO_TRIGGERS = [
-        "que contiene",
-        "que incluye",
-        "informacion",
-        "información",
-        "paquetes",
-        "paquete",
-        "examenes",
-        "exámenes"
+        "que contiene", "que incluye", "informacion",
+        "información", "paquetes", "paquete",
+        "examenes", "exámenes"
     ]
 
     if any(p in normalized for p in INFO_TRIGGERS) and not has_action:
-        # If a specific package is mentioned, explain it
         pkg = extract_package(text)
         if pkg:
             for data in PACKAGES.values():
@@ -748,8 +736,7 @@ def process_message(msg, session):
                         f"El *{data['name']}* incluye:\n{data['description']}\n\n"
                         f"Precio: ${data['price']} COP"
                     )
-    
-        # Otherwise show all packages
+
         return (
             "Claro 😊 Estos son nuestros *paquetes de exámenes médicos escolares*:\n\n"
             "🔹 *Cuidado Esencial* – $45.000 COP\n"
@@ -759,124 +746,36 @@ def process_message(msg, session):
             "🔹 *Bienestar Total* – $75.000 COP\n"
             "Incluye el Activa + Odontología."
         )
-        
-    # 2. FAQ (before booking)
+
+    # --------------------------------------------------
+    # 4. FAQ (ONLY BEFORE BOOKING STARTS)
+    # --------------------------------------------------
     if not session.get("booking_started"):
         faq_answer = check_faq(text)
         if faq_answer:
             return faq_answer
 
-    # 6. Explicit booking intent
-    
+    # --------------------------------------------------
+    # 5. START BOOKING (ONLY ONCE)
+    # --------------------------------------------------
     SCHOOL_CONTEXT = [
-        "examen",
-        "examenes",
-        "medico",
-        "medicos",
-        "colegio",
-        "escolar",
-        "ingreso"
+        "examen", "examenes", "medico", "medicos",
+        "colegio", "escolar", "ingreso"
     ]
-    
-    INFO_PHRASES = [
-        "informacion",
-        "me gustaria informacion",
-        "quisiera saber",
-        "que incluye",
-        "que contiene"
-    ]
-
-    is_info_request = any(p in normalized for p in INFO_PHRASES)
 
     if not session.get("booking_started"):
         has_context = sum(1 for w in SCHOOL_CONTEXT if w in normalized) >= 2
-
-        if has_context and has_action and not is_info_request:
+        if has_context and has_action:
             session["booking_started"] = True
             session["booking_intro_shown"] = False
             save_session(session)
-            
-    # 4. Package info (before booking)
 
-    pkg = extract_package(text)
-    
-    # 4A. User mentioned a SPECIFIC package
-    if pkg and not session.get("booking_started"):
-        for key, data in PACKAGES.items():
-            if data["name"] == pkg:
-                return (
-                    f"Perfecto 😊 El *{data['name']}* cuesta ${data['price']} COP.\n"
-                    f"Incluye: {data['description']}\n\n"
-                    "¿Deseas agendar una cita con este paquete?"
-                )
-    
-    # 4B. User asked for INFORMATION about school medical exams
-    # but did NOT mention a specific package
-    if (
-        not session.get("booking_started")
-        and any(w in normalized for w in ["examen", "examenes", "medico", "medicos"])
-    ):
-        return (
-            "Claro 😊 Para el ingreso al colegio contamos con los siguientes "
-            "*paquetes de exámenes médicos escolares*:\n\n"
-            "🔹 *Paquete Cuidado Esencial* – $45.000 COP\n"
-            "Medicina General, Optometría y Audiometría.\n\n"
-            "🔹 *Paquete Salud Activa* – $60.000 COP\n"
-            "Incluye el Esencial + Psicología.\n\n"
-            "🔹 *Paquete Bienestar Total* – $75.000 COP\n"
-            "Incluye el Activa + Odontología.\n\n"
-            "Si deseas, puedo ayudarte a *agendar la cita* o recomendarte "
-            "el paquete más adecuado según el colegio."
-        )
-                        
-    # 7. Still not booking → help message
-    if not session.get("booking_started"):
-        return "Soy Oriental IPS. Puedo ayudarte a agendar una cita o responder preguntas. Que necesitas?"
-        
-    # 8. Handle confirmation
-    if session.get("awaiting_confirmation") and any(k in lower for k in ["confirmo", "confirmar"]):
-        ok, table = insert_reservation(session["phone"], session)
-        if ok:
-            name = session["student_name"]
-            pkg = session["package"]
-            date = session["date"]
-            time = session["time"]
-            phone = session["phone"]
-            session.clear()
-            session.update(create_new_session(phone))
-            save_session(session)
-            
-            return (
-                f"Cita confirmada!\n\n"
-                f"El estudiante {name} tiene su cita para {pkg}.\n"
-                f"Fecha: {date} a las {time}\n"
-                f"Te esperamos en Oriental IPS! {FAQ['ubicacion']}"
-            )
-            
-        return "No pudimos completar la reserva."
-
-    # 9. Allow questions EVEN during booking (price / FAQ)
-    if any(k in lower for k in ["cuanto", "precio", "cuesta"]):
-        pkg = extract_package(text)
-        if pkg:
-            for key, data in PACKAGES.items():
-                if data["name"] == pkg:
-                    return (
-                        f"El {data['name']} cuesta ${data['price']} COP.\n"
-                        f"Incluye: {data['description']}"
-                )
-                    
-            return "Tenemos 3 paquetes: Esencial ($45.000), Activa ($60.000), Bienestar ($75.000)."
-            
-        faq_answer = check_faq(text)
-        if faq_answer:
-            return faq_answer
-            
-    # ✅ Booking intro (ONLY ONCE, right after booking starts)
+    # --------------------------------------------------
+    # 6. SHOW BOOKING INTRO (ONCE)
+    # --------------------------------------------------
     if session.get("booking_started") and not session.get("booking_intro_shown"):
         session["booking_intro_shown"] = True
         save_session(session)
-        
         return (
             "Perfecto 😊 Para agendar la cita solo necesito la siguiente información:\n\n"
             "- Nombre completo del estudiante\n"
@@ -888,21 +787,34 @@ def process_message(msg, session):
             "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
         )
 
-    # 10. Ask for missing fields (ONLY after questions are handled)
+    # --------------------------------------------------
+    # 7. ASK NEXT MISSING FIELD (ONE AT A TIME)
+    # --------------------------------------------------
     if session.get("booking_started"):
         missing = get_missing_fields(session)
         if missing:
             return get_field_prompt(missing[0])
-            
-    # 11. Show summary once everything is complete
-    if not session.get("awaiting_confirmation"):
+
+    # --------------------------------------------------
+    # 8. SUMMARY + CONFIRMATION
+    # --------------------------------------------------
+    if session.get("booking_started") and not session.get("awaiting_confirmation"):
         return build_summary(session)
-   
-    # 12. Silent fallback (optional — or return nothing)
-    return "No entendi bien. Puedes repetir o decirme que necesitas?"
-    
-    # 🔒 Absolute safety net — NEVER REMOVE
-    return "Puedo ayudarte con precios o agendar una cita. ¿Qué deseas hacer?"
+
+    if session.get("awaiting_confirmation") and "confirmo" in normalized:
+        ok, table = insert_reservation(session["phone"], session)
+        if ok:
+            phone = session["phone"]
+            session.clear()
+            session.update(create_new_session(phone))
+            save_session(session)
+            return "✅ Cita confirmada. ¡Te esperamos en Oriental IPS!"
+        return "❌ No pudimos completar la reserva. Intenta nuevamente."
+
+    # --------------------------------------------------
+    # 9. FALLBACK
+    # --------------------------------------------------
+    return "No entendí bien. ¿Deseas agendar una cita o recibir información?"
 
 # =============================================================================
 # TWILIO WEBHOOK
