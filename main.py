@@ -272,67 +272,66 @@ def extract_student_name(msg, current_name):
     return None
 
 def extract_school(msg):
-    """Extract school name from message"""
-    text = msg.lower()
-    
-    # Patterns with school keywords
-    patterns = [
-        r"(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-z0-9\s]+)",
-        r"(?:del\s+colegio|del\s+gimnasio|de\s+la\s+escuela)\s+([a-z0-9\s]+)",
-    ]
-    
-    for pattern in patterns:
-        m = re.search(pattern, text)
-        if m:
-            school_name = m.group(1).strip()
-            # Clean up (stop at punctuation or age mentions)
-            school_name = re.split(r"[.,!?]|\s+(?:tiene|anos?|edad)", school_name)[0].strip()
-            if len(school_name) > 1:
-                return school_name.title()
-    
-    # Standalone school keywords
-    if any(k in text for k in ["gimnasio", "instituto", "comfacasanare"]):
-        words = msg.strip().split()
-        school_words = [w for w in words if len(w) >= 3]
-        if school_words:
-            return " ".join(school_words[:4]).title()
-    
-    return None
+    """Extract school name from message (robust, typo-tolerant)"""
 
-def extract_age(msg):
-    """Extract age from message"""
     text = msg.lower()
 
-    # Normalize accents (años → anos)
+    # ---------- NORMALIZATION ----------
     text = (
         text.replace("á", "a")
             .replace("é", "e")
             .replace("í", "i")
             .replace("ó", "o")
             .replace("ú", "u")
-            .replace("ñ", "n")
     )
 
-    # Pattern: "13 años", "13 ano(s)"
-    m = re.search(r"\b(\d{1,2})\s*(?:ano|anos)\b", text)
-    if m:
-        age = int(m.group(1))
-        if 5 <= age <= 25:
-            return age
+    # Common typos
+    COMMON_FIXES = {
+        "gimnacio": "gimnasio",
+        "collegio": "colegio",
+    }
 
-    # Pattern: "edad 13", "tiene 13"
-    m = re.search(r"\b(?:edad|tiene)\s+(\d{1,2})\b", text)
-    if m:
-        age = int(m.group(1))
-        if 5 <= age <= 25:
-            return age
+    for wrong, correct in COMMON_FIXES.items():
+        text = text.replace(wrong, correct)
 
-    # Standalone number
-    m = re.search(r"\b(\d{1,2})\b", text)
-    if m:
-        age = int(m.group(1))
-        if 5 <= age <= 25:
-            return age
+    # Remove filler words
+    FILLERS = [
+        "del ",
+        "de la ",
+        "de ",
+    ]
+
+    clean_text = text
+    for f in FILLERS:
+        clean_text = clean_text.replace(f, "")
+
+    # ---------- STRONG PATTERNS ----------
+    patterns = [
+        r"(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-z\s]{3,})",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, text)
+        if m:
+            school = m.group(1).strip()
+            school = re.split(r"[.,!?]|\s+(?:tiene|anos?|edad)", school)[0]
+            return school.title()
+
+    # ---------- WEAK FALLBACK (after bot asked explicitly) ----------
+    words = clean_text.split()
+
+    # Avoid obvious non-school replies
+    BLOCKLIST = [
+        "sabado", "domingo", "lunes",
+        "manana", "hoy",
+        "anos", "edad",
+        "confirmo", "si",
+        "paquete", "hora", "fecha",
+    ]
+
+    if 2 <= len(words) <= 6:
+        if not any(w in words for w in BLOCKLIST):
+            return " ".join(words).title()
 
     return None
 
@@ -345,9 +344,44 @@ def extract_cedula(msg):
     return None
 
 def extract_date(msg, session):
+    """Extract date from message (robust to fillers & typos)"""
+
+    # ---------- NORMALIZATION ----------
     text = msg.lower()
+
+    text = (
+        text.replace("á", "a")
+            .replace("é", "e")
+            .replace("í", "i")
+            .replace("ó", "o")
+            .replace("ú", "u")
+    )
+
+    # Common misspellings
+    COMMON_FIXES = {
+        "diembre": "diciembre",
+        "setiembre": "septiembre",
+    }
+
+    for wrong, correct in COMMON_FIXES.items():
+        text = text.replace(wrong, correct)
+
+    # Remove filler phrases that confuse dateparser
+    FILLERS = [
+        "para el ",
+        "para la ",
+        "el dia ",
+        "el día ",
+        "dia ",
+        "día ",
+    ]
+
+    for f in FILLERS:
+        text = text.replace(f, "")
+
     today = datetime.now(LOCAL_TZ).date()
 
+    # ---------- RELATIVE DATES ----------
     if "manana" in text or "mañana" in text:
         return (today + timedelta(days=1)).strftime("%Y-%m-%d")
 
@@ -357,16 +391,17 @@ def extract_date(msg, session):
     if "pasado manana" in text or "pasado mañana" in text:
         return (today + timedelta(days=2)).strftime("%Y-%m-%d")
 
+    # ---------- ABSOLUTE DATES ----------
     if DATEPARSER_AVAILABLE:
         try:
             dt = dateparser.parse(
-                msg,
+                text,
                 languages=["es"],
                 settings={
                     "TIMEZONE": "America/Bogota",
                     "RETURN_AS_TIMEZONE_AWARE": True,
                     "PREFER_DATES_FROM": "future",
-                    "DATE_ORDER": "DMY"
+                    "DATE_ORDER": "DMY",
                 }
             )
 
@@ -374,15 +409,15 @@ def extract_date(msg, session):
                 local_dt = dt.astimezone(LOCAL_TZ)
                 parsed_date = local_dt.date()
 
-                # 🔧 YEAR FIX
                 if parsed_date < today:
                     return "PAST_DATE"
-                    
+
                 return local_dt.strftime("%Y-%m-%d")
 
         except Exception as e:
             print(f"Dateparser error: {e}")
 
+    # ---------- FALLBACK ----------
     return session.get("date")
 
 def extract_time(msg, session):
