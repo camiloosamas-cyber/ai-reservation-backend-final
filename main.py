@@ -644,8 +644,10 @@ def insert_reservation(phone, session):
         return True, table
         
     except Exception as e:
-        print(f"Error inserting reservation: {e}")
-        return False, str(e)
+        print("❌ INSERT RESERVATION FAILED")
+        print("ERROR:", repr(e))
+        print("SESSION DATA:", session)
+        return False, repr(e)
 
 # =============================================================================
 # FAQ HANDLER
