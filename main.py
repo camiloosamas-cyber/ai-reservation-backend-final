@@ -702,16 +702,22 @@ def process_message(msg, session):
     # --------------------------------------------------
     # 1. GREETING (ONLY IF MESSAGE IS JUST A GREETING)
     # --------------------------------------------------
-    GREETING_WORDS = {"hola", "buenos", "buenas", "hi", "hello"}
+    GREETING_PATTERNS = [
+        "hola",
+        "buenas",
+        "buenos dias",
+        "buenas tardes",
+        "buenas noches",
+        "hi",
+        "hello"
+    ]
 
-    words = normalized.split()
+    cleaned = normalized.replace(",", "").replace(".", "").replace("!", "").strip()
 
-    is_pure_greeting = (
-        len(words) <= 3
-        and all(w in GREETING_WORDS for w in words)
-    )
+    is_greeting = any(cleaned == g or cleaned.startswith(g) for g in GREETING_PATTERNS)
 
-    if is_pure_greeting and not session.get("greeted"):
+    if is_greeting and not session.get("booking_started"):
+        # Reset only greeting flag
         session["greeted"] = True
         save_session(session)
         return "Buenos días, estás comunicado con Oriental IPS. ¿En qué te puedo ayudar?"
