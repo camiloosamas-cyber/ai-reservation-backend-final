@@ -449,8 +449,23 @@ def update_session_with_message(msg, session):
     ]
 
     COMMON_FIXES = {
-        "diembre": "diciembre",
-        "setiembre": "septiembre",
+        "febero": "febrero",        # Fix your normalization damage
+        "febreo": "febrero",
+        "febro": "febrero",
+    
+        "enero": "enero",
+        "marzo": "marzo",
+        "abril": "abril",
+        "mayo": "mayo",
+        "junio": "junio",
+        "julio": "julio",
+        "agosto": "agosto",
+        "septiembre": "septiembre",
+        "setiembre": "septiembre",  # common misspelling
+        "octubre": "octubre",
+        "noviembre": "noviembre",
+        "diciembre": "diciembre",
+        "diembre": "diciembre",     # your existing fix
     }
 
     for wrong, correct in COMMON_FIXES.items():
