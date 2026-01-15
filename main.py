@@ -695,8 +695,10 @@ def process_message(msg, session):
     ACTION_VERBS = [
         "agendar", "reservar", "reserva", "cita",
         "apartar", "adquirir", "tomar", "hacer",
-        "realizar", "sacar"
+        "realizar", "sacar",
+        "quiero", "gustaria", "gustaría"
     ]
+
     has_action = any(w in normalized for w in ACTION_VERBS)
     
     # --------------------------------------------------
@@ -776,7 +778,7 @@ def process_message(msg, session):
         "colegio", "escolar", "ingreso"
     ]
 
-    has_context = sum(1 for w in SCHOOL_CONTEXT if w in normalized) >= 2
+    has_context = any(w in normalized for w in SCHOOL_CONTEXT)
 
     if not session.get("booking_started") and has_context and has_action:
         session["booking_started"] = True
