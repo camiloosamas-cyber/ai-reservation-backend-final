@@ -301,10 +301,10 @@ def extract_school(msg):
     return None
 
 def extract_age(msg):
-    """Extract age from message"""
+    """Extract age from message ONLY if explicitly stated"""
     text = msg.lower()
 
-    # Normalize accents (años → anos)
+    # Normalize accents
     text = (
         text.replace("á", "a")
             .replace("é", "e")
@@ -314,7 +314,7 @@ def extract_age(msg):
             .replace("ñ", "n")
     )
 
-    # Pattern: "13 años", "13 ano(s)"
+    # Pattern: "13 años", "13 anos"
     m = re.search(r"\b(\d{1,2})\s*(?:ano|anos)\b", text)
     if m:
         age = int(m.group(1))
@@ -323,13 +323,6 @@ def extract_age(msg):
 
     # Pattern: "edad 13", "tiene 13"
     m = re.search(r"\b(?:edad|tiene)\s+(\d{1,2})\b", text)
-    if m:
-        age = int(m.group(1))
-        if 5 <= age <= 25:
-            return age
-
-    # Standalone number
-    m = re.search(r"\b(\d{1,2})\b", text)
     if m:
         age = int(m.group(1))
         if 5 <= age <= 25:
