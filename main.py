@@ -796,12 +796,32 @@ def process_message(msg, session):
             "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
         )
 
-    # --------------------------------------------------
-    # 6. SHOW BOOKING INTRO (ONCE)
-    # --------------------------------------------------
+    # 6. SHOW BOOKING INTRO (ONCE, BUT NOT IF USER ALREADY GAVE INFO)
     if session.get("booking_started") and not session.get("booking_intro_shown"):
+
+        # Mark intro as shown BEFORE deciding what to do
         session["booking_intro_shown"] = True
         save_session(session)
+
+        # If the user already provided ANY booking info,
+        # DO NOT repeat the intro message.
+        if (
+            session.get("student_name") or
+            session.get("school") or
+            session.get("package") or
+            session.get("date") or
+            session.get("time") or
+            session.get("age") or
+            session.get("cedula")
+        ):
+            # Skip intro — continue with next missing field
+            missing = get_missing_fields(session)
+            if missing:
+                return get_field_prompt(missing[0])
+            else:
+                return build_summary(session)
+    
+        # Otherwise show intro normally
         return (
             "Perfecto 😊 Para agendar la cita solo necesito la siguiente información:\n\n"
             "- Nombre completo del estudiante\n"
