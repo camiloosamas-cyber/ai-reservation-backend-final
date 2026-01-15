@@ -822,14 +822,26 @@ def process_message(msg, session):
             return build_summary(session)
 
     if session.get("awaiting_confirmation") and "confirmo" in normalized:
-        ok, table = insert_reservation(session["phone"], session)
-        if ok:
-            phone = session["phone"]
-            session.clear()
-            session.update(create_new_session(phone))
-            save_session(session)
-            return "✅ Cita confirmada. ¡Te esperamos en Oriental IPS!"
-        return "❌ No pudimos completar la reserva. Intenta nuevamente."
+    ok, table = insert_reservation(session["phone"], session)
+    if ok:
+        confirmation_message = (
+            "✅ *Cita confirmada con éxito*\n\n"
+            f"Te esperamos el *{session['date']}* a las *{session['time']}* en *Oriental IPS*.\n\n"
+            "📍 Dirección:\n"
+            "Calle 31 #29-61, Yopal.\n\n"
+            "Por favor recuerda traer el documento de identidad del estudiante.\n"
+            "Si necesitas cambiar o cancelar la cita, escríbenos y con gusto te ayudamos.\n\n"
+            "¡Será un gusto atenderte!"
+        )
+
+        phone = session["phone"]
+        session.clear()
+        session.update(create_new_session(phone))
+        save_session(session)
+
+        return confirmation_message
+
+    return "❌ No pudimos completar la reserva. Intenta nuevamente."
 
     # --------------------------------------------------
     # 9. FALLBACK
