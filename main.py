@@ -698,8 +698,8 @@ def process_message(msg, session):
         "realizar", "sacar"
     ]
     has_action = any(w in normalized for w in ACTION_VERBS)
-
-   # --------------------------------------------------
+    
+    # --------------------------------------------------
     # 1. GREETING (ONLY IF MESSAGE IS JUST A GREETING)
     # --------------------------------------------------
     GREETING_WORDS = {"hola", "buenos", "buenas", "hi", "hello"}
