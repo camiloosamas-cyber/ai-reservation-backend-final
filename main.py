@@ -480,7 +480,7 @@ def update_session_with_message(msg, session):
     school = extract_school(normalized_msg)
     age = extract_age(normalized_msg)
     cedula = extract_cedula(normalized_msg)
-    date = extract_date(normalized_msg, session)
+    date = extract_date(msg, session)   # use RAW message, not normalized
     time = extract_time(normalized_msg, session)
 
     # ---------- UPDATE SESSION ----------
