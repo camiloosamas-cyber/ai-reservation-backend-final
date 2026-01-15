@@ -699,13 +699,19 @@ def process_message(msg, session):
     ]
     has_action = any(w in normalized for w in ACTION_VERBS)
 
+   # --------------------------------------------------
+    # 1. GREETING (ONLY IF MESSAGE IS JUST A GREETING)
     # --------------------------------------------------
-    # 1. GREETING (HARD RESET)
-    # --------------------------------------------------
-    if any(w in normalized for w in ["hola", "buenos", "buenas", "hi", "hello"]):
-        phone = session["phone"]
-        session.clear()
-        session.update(create_new_session(phone))
+    GREETING_WORDS = {"hola", "buenos", "buenas", "hi", "hello"}
+
+    words = normalized.split()
+
+    is_pure_greeting = (
+        len(words) <= 3
+        and all(w in GREETING_WORDS for w in words)
+    )
+
+    if is_pure_greeting and not session.get("greeted"):
         session["greeted"] = True
         save_session(session)
         return "Buenos días, estás comunicado con Oriental IPS. ¿En qué te puedo ayudar?"
