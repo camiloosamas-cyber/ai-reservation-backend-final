@@ -782,7 +782,12 @@ def process_message(msg, session):
         session["booking_started"] = True
         session["booking_intro_shown"] = False
         save_session(session)
-        # DO NOT RETURN ANYTHING HERE
+
+        # 🔒 FORCE A RESPONSE AFTER BOOKING STARTS
+        missing = get_missing_fields(session)
+        if missing:
+            return get_field_prompt(missing[0])
+        return build_summary(session)
     
     # --------------------------------------------------
     # 3. INFO QUESTIONS (ALLOWED ANYTIME, BUT NO ACTION)
