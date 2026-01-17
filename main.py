@@ -234,24 +234,35 @@ def extract_student_name(msg, current_name):
     # Skip package/price queries
     if any(k in lower for k in ["paquete", "precio", "cuesta", "cuanto"]):
         return None
-    
+
+    # Pattern: "mi hijo juan perez" — stop at context words or punctuation
+    m = re.search(
+        r"mi\s+(?:hijo|hiijo|niña|niño|hija)\s+([a-záéíóúñ\s]+?)(?=\s*(?:,|\.|del|de|tiene|edad|colegio|$))",
+        lower
+    )
+    if m:
+        name = m.group(1).strip()
+        # Remove any trailing context fragments
+        name = re.split(r"\s+(?:del|de|tiene|edad|colegio)", name)[0].strip()
+        if name and len(name.split()) >= 2:
+            return name.title()
+        
     # Pattern: "se llama X"
     if "se llama" in lower:
         parts = lower.split("se llama", 1)
         if len(parts) > 1:
             name = parts[1].strip()
-            # Clean up (remove age, school mentions)
             name = re.split(r"\s+(?:de|del|tiene|anos?|colegio)", name)[0].strip()
-            if name:
+            if name and len(name.split()) >= 2:
                 return name.title()
     
     # Pattern: "nombre es X" or "nombre: X"
     if "nombre" in lower:
-        m = re.search(r"nombre\s*:?\s*es\s+([a-z\s]+)", lower)
+        m = re.search(r"nombre\s*:?\s*es\s+([a-záéíóúñ\s]+)", lower)
         if m:
             name = m.group(1).strip()
             name = re.split(r"\s+(?:de|del|tiene|anos?|colegio)", name)[0].strip()
-            if name:
+            if name and len(name.split()) >= 2:
                 return name.title()
     
     # Capitalized name (Juan Perez)
@@ -262,16 +273,15 @@ def extract_student_name(msg, current_name):
     # Standalone name (2-4 words, all lowercase letters)
     words = lower.split()
     if 2 <= len(words) <= 4:
-        valid_words = [w for w in words if len(w) >= 2 and re.match(r"^[a-z]+$", w)]
+        valid_words = [w for w in words if len(w) >= 2 and re.match(r"^[a-záéíóúñ]+$", w)]
         if len(valid_words) >= 2:
             combined = " ".join(valid_words)
-            # Avoid common non-name phrases
             avoid = ["buenos", "confirmo", "paquete", "colegio", "cita", "hora", "fecha"]
             if not any(k in combined for k in avoid):
                 return " ".join(valid_words).title()
     
     return None
-
+    
 def extract_school(msg):
     """Extract school name from message"""
     text = msg.lower()
@@ -383,6 +393,9 @@ def extract_time(msg, session):
     """Extract time from message"""
     text = msg.lower()
     
+    # Handle "9m" as "9am"
+    text = re.sub(r"\b(\d{1,2})\s*m\b", r"\1am", text)
+    
     # Pattern: 10am, 3pm, 10:30am, 10.30am
     m = re.search(r"(\d{1,2})(?:[:\.](\d{2}))?\s*(am|pm)", text)
     if m:
@@ -474,14 +487,16 @@ def update_session_with_message(msg, session):
     for filler in FILLER_PHRASES:
         normalized_msg = normalized_msg.replace(filler, "")
 
-    # ---------- EXTRACTION (USE NORMALIZED TEXT) ----------
+    # ---------- EXTRACTION (USE RAW MSG FOR NAME, NORMALIZED FOR OTHERS) ----------
     pkg = extract_package(normalized_msg)
-    name = extract_student_name(normalized_msg, session.get("student_name"))
+    name = extract_student_name(msg, session.get("student_name"))  # ← Use raw msg
     school = extract_school(normalized_msg)
     age = extract_age(normalized_msg)
     cedula = extract_cedula(normalized_msg)
-    date = extract_date(msg, session)   # use RAW message, not normalized
+    date = extract_date(msg, session)   # ← Raw msg for dateparser
     time = extract_time(normalized_msg, session)
+
+    print(f"EXTRACTED: pkg={pkg}, name={name}, school={school}, age={age}, cedula={cedula}, date={date}, time={time}")
 
     # ---------- UPDATE SESSION ----------
     updated = []
@@ -715,7 +730,21 @@ def process_message(msg, session):
     ]
 
     has_action = any(w in normalized for w in ACTION_VERBS)
+    print("DEBUG: normalized =", normalized)
+    print("DEBUG: has_action =", has_action)
+
+    # --------------------------------------------------
+    # ALWAYS EXTRACT DATA IF THE USER WANTS TO BOOK
+    # --------------------------------------------------
+    if has_action:
+        update_result = update_session_with_message(text, session)
     
+        if update_result == "PAST_DATE":
+            return "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
+        
+        if update_result == "INVALID_TIME":
+            return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora."
+        
     # --------------------------------------------------
     # 1. GREETING (ONLY IF MESSAGE IS JUST A GREETING)
     # --------------------------------------------------
@@ -738,16 +767,23 @@ def process_message(msg, session):
         session["greeted"] = True
         save_session(session)
         return "Buenos días, estás comunicado con Oriental IPS. ¿En qué te puedo ayudar?"
-
+        
     # --------------------------------------------------
-    # 2. UPDATE SESSION (EXTRACTION ONLY)
+    # 5. START BOOKING (ONLY ONCE)
     # --------------------------------------------------
-    update_result = update_session_with_message(text, session)
-    if update_result == "PAST_DATE":
-        return "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
-    if update_result == "INVALID_TIME":
-        return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora."
+    SCHOOL_CONTEXT = [
+        "examen", "examenes", "medico", "medicos",
+        "colegio", "escolar", "ingreso"
+    ]
 
+    has_context = any(w in normalized for w in SCHOOL_CONTEXT)
+
+    if not session.get("booking_started") and has_action:
+        session["booking_started"] = True
+        session["booking_intro_shown"] = False
+        save_session(session)
+        # DO NOT RETURN ANYTHING HERE
+    
     # --------------------------------------------------
     # 3. INFO QUESTIONS (ALLOWED ANYTIME, BUT NO ACTION)
     # --------------------------------------------------
@@ -785,69 +821,41 @@ def process_message(msg, session):
         if faq_answer:
             return faq_answer
 
-    # --------------------------------------------------
-    # 5. START BOOKING (ONLY ONCE)
-    # --------------------------------------------------
-    SCHOOL_CONTEXT = [
-        "examen", "examenes", "medico", "medicos",
-        "colegio", "escolar", "ingreso"
-    ]
-
-    has_context = any(w in normalized for w in SCHOOL_CONTEXT)
-
-    if not session.get("booking_started") and has_context and has_action:
-        session["booking_started"] = True
-        session["booking_intro_shown"] = False
-        save_session(session)
-
-        return (
-            "Perfecto 😊 Para agendar la cita solo necesito la siguiente información:\n\n"
-            "- Nombre completo del estudiante\n"
-            "- Colegio\n"
-            "- Paquete (Esencial, Activa o Total)\n"
-            "- Fecha y hora\n"
-            "- Edad\n"
-            "- Número de cédula\n\n"
-            "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
-        )
-
-    # 6. SHOW BOOKING INTRO (ONCE, BUT NOT IF USER ALREADY GAVE INFO)
+    # 6. SHOW BOOKING INTRO (ONLY IF USER HAS GIVEN NO INFO AT ALL)
     if session.get("booking_started") and not session.get("booking_intro_shown"):
 
-        # Mark intro as shown BEFORE deciding what to do
-        session["booking_intro_shown"] = True
-        save_session(session)
-
-        # If the user already provided ANY booking info,
-        # DO NOT repeat the intro message.
-        if (
-            session.get("student_name") or
-            session.get("school") or
-            session.get("package") or
-            session.get("date") or
-            session.get("time") or
-            session.get("age") or
-            session.get("cedula")
-        ):
-            # Skip intro — continue with next missing field
+        # If user ALREADY provided something in this same message,
+        # DO NOT show the intro.
+        if any([
+            session.get("student_name"),
+            session.get("school"),
+            session.get("package"),
+            session.get("date"),
+            session.get("time"),
+            session.get("age"),
+            session.get("cedula"),
+        ]):
+            session["booking_intro_shown"] = True
+            save_session(session)
             missing = get_missing_fields(session)
             if missing:
                 return get_field_prompt(missing[0])
-            else:
-                return build_summary(session)
-    
-        # Otherwise show intro normally
+            return build_summary(session)
+
+        # Otherwise, show intro
+        session["booking_intro_shown"] = True
+        save_session(session)
         return (
             "Perfecto 😊 Para agendar la cita solo necesito la siguiente información:\n\n"
             "- Nombre completo del estudiante\n"
             "- Colegio\n"
-            "- Paquete (Esencial, Activa o Total)\n"
+            "- Paquete\n"
             "- Fecha y hora\n"
             "- Edad\n"
-            "- Número de cédula\n\n"
+            "- Cédula\n\n"
             "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
         )
-
+        
     # --------------------------------------------------
     # 7. ASK NEXT MISSING FIELD (ONE AT A TIME)
     # --------------------------------------------------
