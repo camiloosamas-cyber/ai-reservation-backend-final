@@ -721,7 +721,19 @@ def process_message(msg, session):
     ]
 
     has_action = any(w in normalized for w in ACTION_VERBS)
+
+    # --------------------------------------------------
+    # ALWAYS EXTRACT DATA IF THE USER WANTS TO BOOK
+    # --------------------------------------------------
+    if has_action:
+        update_result = update_session_with_message(text, session)
     
+        if update_result == "PAST_DATE":
+            return "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
+        
+        if update_result == "INVALID_TIME":
+            return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora."
+        
     # --------------------------------------------------
     # 1. GREETING (ONLY IF MESSAGE IS JUST A GREETING)
     # --------------------------------------------------
@@ -755,21 +767,12 @@ def process_message(msg, session):
 
     has_context = any(w in normalized for w in SCHOOL_CONTEXT)
 
-    if not session.get("booking_started") and has_context and has_action:
+    if not session.get("booking_started") and has_action:
         session["booking_started"] = True
         session["booking_intro_shown"] = False
         save_session(session)
         # DO NOT RETURN ANYTHING HERE
-
-    # --------------------------------------------------
-    # 2. UPDATE SESSION (EXTRACTION ONLY)
-    # --------------------------------------------------
-    update_result = update_session_with_message(text, session)
-    if update_result == "PAST_DATE":
-        return "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
-    if update_result == "INVALID_TIME":
-        return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora."
-
+    
     # --------------------------------------------------
     # 3. INFO QUESTIONS (ALLOWED ANYTIME, BUT NO ACTION)
     # --------------------------------------------------
