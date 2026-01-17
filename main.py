@@ -482,7 +482,7 @@ def update_session_with_message(msg, session):
 
     # ---------- EXTRACTION (USE NORMALIZED TEXT) ----------
     pkg = extract_package(normalized_msg)
-    name = extract_student_name(normalized_msg, session.get("student_name"))
+    name = extract_student_name(msg, session.get("student_name"))
     school = extract_school(normalized_msg)
     age = extract_age(normalized_msg)
     cedula = extract_cedula(normalized_msg)
