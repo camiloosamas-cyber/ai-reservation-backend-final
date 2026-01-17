@@ -234,7 +234,13 @@ def extract_student_name(msg, current_name):
     # Skip package/price queries
     if any(k in lower for k in ["paquete", "precio", "cuesta", "cuanto"]):
         return None
-    
+
+    # Pattern: "mi hijo juan perez"
+    m = re.search(r"(?:mi\s+hijo|mi\s+hiijo|mi\s+niña|mi\s+niño|mi\s+hija)\s+([a-z]+(?:\s+[a-z]+){1,3})", lower)
+    if m:
+        name = m.group(1).strip()
+        return name.title()
+        
     # Pattern: "se llama X"
     if "se llama" in lower:
         parts = lower.split("se llama", 1)
