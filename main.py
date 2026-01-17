@@ -281,7 +281,7 @@ def extract_student_name(msg, current_name):
                 return " ".join(valid_words).title()
     
     return None
-    
+
 def extract_school(msg):
     """Extract school name from message"""
     text = msg.lower()
@@ -496,8 +496,6 @@ def update_session_with_message(msg, session):
     date = extract_date(msg, session)   # ← Raw msg for dateparser
     time = extract_time(normalized_msg, session)
 
-    print(f"EXTRACTED: pkg={pkg}, name={name}, school={school}, age={age}, cedula={cedula}, date={date}, time={time}")
-
     # ---------- UPDATE SESSION ----------
     updated = []
 
@@ -707,8 +705,6 @@ def process_message(msg, session):
     print("PROCESS MESSAGE:", msg)
     print("SESSION STATE:", session)
     
-    
-
     text = msg.strip()
     lower = text.lower()
     normalized = (
@@ -720,7 +716,7 @@ def process_message(msg, session):
     )
 
     # --------------------------------------------------
-    # 0. ACTION DETECTION (USED AS A GUARD)
+    # Detect intent
     # --------------------------------------------------
     ACTION_VERBS = [
         "agendar", "reservar", "reserva", "cita",
@@ -728,26 +724,8 @@ def process_message(msg, session):
         "realizar", "sacar",
         "quiero", "gustaria", "gustaría"
     ]
-
     has_action = any(w in normalized for w in ACTION_VERBS)
-    print("DEBUG: normalized =", normalized)
-    print("DEBUG: has_action =", has_action)
 
-    # --------------------------------------------------
-    # ALWAYS EXTRACT DATA IF THE USER WANTS TO BOOK
-    # --------------------------------------------------
-    if has_action:
-        update_result = update_session_with_message(text, session)
-    
-        if update_result == "PAST_DATE":
-            return "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
-        
-        if update_result == "INVALID_TIME":
-            return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora."
-        
-    # --------------------------------------------------
-    # 1. GREETING (ONLY IF MESSAGE IS JUST A GREETING)
-    # --------------------------------------------------
     GREETING_PATTERNS = [
         "hola",
         "buenas",
@@ -757,43 +735,38 @@ def process_message(msg, session):
         "hi",
         "hello"
     ]
-
     cleaned = normalized.replace(",", "").replace(".", "").replace("!", "").strip()
-
     is_greeting = any(cleaned == g or cleaned.startswith(g) for g in GREETING_PATTERNS)
 
-    if is_greeting and not session.get("booking_started"):
-        # Reset only greeting flag
-        session["greeted"] = True
-        save_session(session)
-        return "Buenos días, estás comunicado con Oriental IPS. ¿En qué te puedo ayudar?"
-        
-    # --------------------------------------------------
-    # 5. START BOOKING (ONLY ONCE)
-    # --------------------------------------------------
-    SCHOOL_CONTEXT = [
-        "examen", "examenes", "medico", "medicos",
-        "colegio", "escolar", "ingreso"
-    ]
-
-    has_context = any(w in normalized for w in SCHOOL_CONTEXT)
-
-    if not session.get("booking_started") and has_action:
-        session["booking_started"] = True
-        session["booking_intro_shown"] = False
-        save_session(session)
-        # DO NOT RETURN ANYTHING HERE
-    
-    # --------------------------------------------------
-    # 3. INFO QUESTIONS (ALLOWED ANYTIME, BUT NO ACTION)
-    # --------------------------------------------------
     INFO_TRIGGERS = [
         "que contiene", "que incluye", "informacion",
         "información", "paquetes", "paquete",
         "examenes", "exámenes"
     ]
+    is_info = any(p in normalized for p in INFO_TRIGGERS)
 
-    if any(p in normalized for p in INFO_TRIGGERS) and not has_action:
+    # --------------------------------------------------
+    # ALWAYS extract data unless it's a pure greeting or info query
+    # --------------------------------------------------
+    if not (is_greeting and not session.get("booking_started")) and not (is_info and not has_action):
+        update_result = update_session_with_message(text, session)
+        if update_result == "PAST_DATE":
+            return "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
+        if update_result == "INVALID_TIME":
+            return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora."
+
+    # --------------------------------------------------
+    # 1. GREETING (ONLY IF MESSAGE IS JUST A GREETING)
+    # --------------------------------------------------
+    if is_greeting and not session.get("booking_started"):
+        session["greeted"] = True
+        save_session(session)
+        return "Buenos días, estás comunicado con Oriental IPS. ¿En qué te puedo ayudar?"
+
+    # --------------------------------------------------
+    # 2. INFO QUESTIONS (ALLOWED ANYTIME, BUT NO ACTION)
+    # --------------------------------------------------
+    if is_info and not has_action:
         pkg = extract_package(text)
         if pkg:
             for data in PACKAGES.values():
@@ -814,18 +787,33 @@ def process_message(msg, session):
         )
 
     # --------------------------------------------------
-    # 4. FAQ (ONLY BEFORE BOOKING STARTS)
+    # 3. FAQ (ONLY BEFORE BOOKING STARTS)
     # --------------------------------------------------
     if not session.get("booking_started"):
         faq_answer = check_faq(text)
         if faq_answer:
             return faq_answer
 
-    # 6. SHOW BOOKING INTRO (ONLY IF USER HAS GIVEN NO INFO AT ALL)
-    if session.get("booking_started") and not session.get("booking_intro_shown"):
+    # --------------------------------------------------
+    # 4. START BOOKING (ONCE)
+    # --------------------------------------------------
+    SCHOOL_CONTEXT = [
+        "examen", "examenes", "medico", "medicos",
+        "colegio", "escolar", "ingreso"
+    ]
+    has_context = any(w in normalized for w in SCHOOL_CONTEXT)
 
-        # If user ALREADY provided something in this same message,
-        # DO NOT show the intro.
+    if not session.get("booking_started") and (has_action or has_context):
+        session["booking_started"] = True
+        session["booking_intro_shown"] = False
+        save_session(session)
+
+    # --------------------------------------------------
+    # 5. SHOW INTRO OR CONTINUE
+    # --------------------------------------------------
+    if session.get("booking_started") and not session.get("booking_intro_shown"):
+        session["booking_intro_shown"] = True
+        save_session(session)
         if any([
             session.get("student_name"),
             session.get("school"),
@@ -835,29 +823,24 @@ def process_message(msg, session):
             session.get("age"),
             session.get("cedula"),
         ]):
-            session["booking_intro_shown"] = True
-            save_session(session)
             missing = get_missing_fields(session)
             if missing:
                 return get_field_prompt(missing[0])
             return build_summary(session)
+        else:
+            return (
+                "Perfecto 😊 Para agendar la cita solo necesito la siguiente información:\n\n"
+                "- Nombre completo del estudiante\n"
+                "- Colegio\n"
+                "- Paquete\n"
+                "- Fecha y hora\n"
+                "- Edad\n"
+                "- Cédula\n\n"
+                "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
+            )
 
-        # Otherwise, show intro
-        session["booking_intro_shown"] = True
-        save_session(session)
-        return (
-            "Perfecto 😊 Para agendar la cita solo necesito la siguiente información:\n\n"
-            "- Nombre completo del estudiante\n"
-            "- Colegio\n"
-            "- Paquete\n"
-            "- Fecha y hora\n"
-            "- Edad\n"
-            "- Cédula\n\n"
-            "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
-        )
-        
     # --------------------------------------------------
-    # 7. ASK NEXT MISSING FIELD (ONE AT A TIME)
+    # 6. ASK NEXT MISSING FIELD
     # --------------------------------------------------
     if session.get("booking_started"):
         missing = get_missing_fields(session)
@@ -865,7 +848,7 @@ def process_message(msg, session):
             return get_field_prompt(missing[0])
 
     # --------------------------------------------------
-    # 8. SUMMARY + CONFIRMATION
+    # 7. SUMMARY + CONFIRMATION
     # --------------------------------------------------
     if session.get("booking_started") and not session.get("awaiting_confirmation"):
         if not get_missing_fields(session):
@@ -873,11 +856,9 @@ def process_message(msg, session):
 
     if session.get("awaiting_confirmation") and "confirmo" in normalized:
         ok, table = insert_reservation(session["phone"], session)
-    
         if ok:
             date = session.get("date")
             time = session.get("time")
-
             confirmation_message = (
                 "✅ *Cita confirmada*\n\n"
                 f"📅 Fecha: {date}\n"
@@ -887,18 +868,15 @@ def process_message(msg, session):
                 "🪪 Recuerda traer el documento de identidad del estudiante.\n\n"
                 "¡Te estaremos esperando!"
             )
-
             phone = session["phone"]
             session.clear()
             session.update(create_new_session(phone))
             save_session(session)
-
             return confirmation_message
-
         return "❌ No pudimos completar la reserva. Intenta nuevamente."
 
     # --------------------------------------------------
-    # 9. FALLBACK
+    # 8. FALLBACK
     # --------------------------------------------------
     return "No entendí bien. ¿Deseas agendar una cita o recibir información?"
 
