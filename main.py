@@ -799,17 +799,7 @@ def process_message(msg, session):
         session["booking_started"] = True
         session["booking_intro_shown"] = False
         save_session(session)
-
-        return (
-            "Perfecto 😊 Para agendar la cita solo necesito la siguiente información:\n\n"
-            "- Nombre completo del estudiante\n"
-            "- Colegio\n"
-            "- Paquete (Esencial, Activa o Total)\n"
-            "- Fecha y hora\n"
-            "- Edad\n"
-            "- Número de cédula\n\n"
-            "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
-        )
+        # DO NOT RETURN ANYTHING HERE
 
     # 6. SHOW BOOKING INTRO (ONCE, BUT NOT IF USER ALREADY GAVE INFO)
     if session.get("booking_started") and not session.get("booking_intro_shown"):
