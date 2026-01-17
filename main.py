@@ -738,6 +738,22 @@ def process_message(msg, session):
         session["greeted"] = True
         save_session(session)
         return "Buenos días, estás comunicado con Oriental IPS. ¿En qué te puedo ayudar?"
+        
+    # --------------------------------------------------
+    # 5. START BOOKING (ONLY ONCE)
+    # --------------------------------------------------
+    SCHOOL_CONTEXT = [
+        "examen", "examenes", "medico", "medicos",
+        "colegio", "escolar", "ingreso"
+    ]
+
+    has_context = any(w in normalized for w in SCHOOL_CONTEXT)
+
+    if not session.get("booking_started") and has_context and has_action:
+        session["booking_started"] = True
+        session["booking_intro_shown"] = False
+        save_session(session)
+        # DO NOT RETURN ANYTHING HERE
 
     # --------------------------------------------------
     # 2. UPDATE SESSION (EXTRACTION ONLY)
@@ -784,22 +800,6 @@ def process_message(msg, session):
         faq_answer = check_faq(text)
         if faq_answer:
             return faq_answer
-
-    # --------------------------------------------------
-    # 5. START BOOKING (ONLY ONCE)
-    # --------------------------------------------------
-    SCHOOL_CONTEXT = [
-        "examen", "examenes", "medico", "medicos",
-        "colegio", "escolar", "ingreso"
-    ]
-
-    has_context = any(w in normalized for w in SCHOOL_CONTEXT)
-
-    if not session.get("booking_started") and has_context and has_action:
-        session["booking_started"] = True
-        session["booking_intro_shown"] = False
-        save_session(session)
-        # DO NOT RETURN ANYTHING HERE
 
     # 6. SHOW BOOKING INTRO (ONCE, BUT NOT IF USER ALREADY GAVE INFO)
     if session.get("booking_started") and not session.get("booking_intro_shown"):
