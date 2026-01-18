@@ -751,6 +751,12 @@ def process_message(msg, session):
     ]
     is_info = any(p in normalized for p in INFO_TRIGGERS)
 
+    SCHOOL_CONTEXT = [
+        "examen", "examenes", "medico", "medicos",
+        "colegio", "escolar", "ingreso"
+    ]
+    has_context = any(w in normalized for w in SCHOOL_CONTEXT)
+
     # --------------------------------------------------
     # ALWAYS extract data unless it's a pure greeting or info query
     # --------------------------------------------------
@@ -817,10 +823,7 @@ def process_message(msg, session):
         session["booking_started"] = True
         session["booking_intro_shown"] = False
         save_session(session)
-
-    # 🔥 RE-RUN EXTRACTION NOW THAT BOOKING IS ACTIVE
-    update_session_with_message(text, session)
-
+        
     # --------------------------------------------------
     # 5. SHOW INTRO OR CONTINUE
     # --------------------------------------------------
