@@ -349,28 +349,73 @@ def extract_cedula(msg):
     return None
 
 def extract_date(msg, session):
+    """Extract date from message"""
     text = msg.lower()
     today = datetime.now(LOCAL_TZ).date()
 
     # Quick natural dates
     if "mañana" in text or "manana" in text:
         return (today + timedelta(days=1)).strftime("%Y-%m-%d")
-
     if "hoy" in text:
         return today.strftime("%Y-%m-%d")
-
     if "pasado mañana" in text or "pasado manana" in text:
         return (today + timedelta(days=2)).strftime("%Y-%m-%d")
 
-    # CLEAN TIME REFERENCES BEFORE PARSING
-    cleaned = re.sub(r"\b(\d{1,2})(?:[:\.]\d{2})?\s*(am|pm)\b", "", text)
-    cleaned = re.sub(r"\b(a las|las)\s+\d{1,2}(?:(?::\d{2}))?\b", "", cleaned)
-    cleaned = re.sub(r"\b\d{1,2}\s*m\b", "", cleaned)  # "9m" fix
+    # Handle "13 de febrero" directly with regex
+    # Pattern: "13 de febrero", "13 feb", "13/02", etc.
+    date_patterns = [
+        r"(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)",
+        r"(\d{1,2})\s+(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)",
+        r"(\d{1,2})[/\-](\d{1,2})",
+        r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})"
+    ]
 
+    for pattern in date_patterns:
+        m = re.search(pattern, text)
+        if m:
+            day = int(m.group(1))
+            month_str = m.group(2) if len(m.groups()) > 1 else None
+            
+            # Map month names to numbers
+            month_map = {
+                "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+                "julio": 7, "agosto": 8, "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
+                "ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6,
+                "jul": 7, "ago": 8, "sep": 9, "oct": 10, "nov": 11, "dic": 12
+            }
+
+            if month_str:
+                month = month_map.get(month_str.lower())
+                if month:
+                    year = today.year
+                    # If date is in past, assume next year
+                    try:
+                        parsed_date = datetime(year, month, day).date()
+                        if parsed_date < today:
+                            parsed_date = parsed_date.replace(year=year + 1)
+                        return parsed_date.strftime("%Y-%m-%d")
+                    except ValueError:
+                        pass  # Invalid date (e.g., Feb 30)
+
+            # For MM/DD or DD/MM formats
+            if len(m.groups()) == 2:
+                # Assume DD/MM if first number <= 12
+                if day <= 12:
+                    month = int(m.group(2))
+                    year = today.year
+                    try:
+                        parsed_date = datetime(year, month, day).date()
+                        if parsed_date < today:
+                            parsed_date = parsed_date.replace(year=year + 1)
+                        return parsed_date.strftime("%Y-%m-%d")
+                    except ValueError:
+                        pass
+
+    # Fallback to dateparser if no direct match
     if DATEPARSER_AVAILABLE:
         try:
             dt = dateparser.parse(
-                cleaned,
+                msg,  # ← Use original msg, not cleaned!
                 languages=["es"],
                 settings={
                     "TIMEZONE": "America/Bogota",
