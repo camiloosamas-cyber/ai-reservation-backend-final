@@ -754,7 +754,11 @@ def process_message(msg, session):
     # --------------------------------------------------
     # ALWAYS extract data unless it's a pure greeting or info query
     # --------------------------------------------------
-    if not (is_greeting and not session.get("booking_started")) and not (is_info and not has_action):
+
+    # If user mentions school/exam context, treat as booking intent
+    force_booking_intent = has_action or has_context
+    
+    if force_booking_intent or not (is_greeting and not session.get("booking_started")):
         update_result = update_session_with_message(text, session)
         if update_result == "PAST_DATE":
             return "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
