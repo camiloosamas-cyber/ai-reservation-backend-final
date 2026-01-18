@@ -352,19 +352,25 @@ def extract_date(msg, session):
     text = msg.lower()
     today = datetime.now(LOCAL_TZ).date()
 
-    if "manana" in text or "mañana" in text:
+    # Quick natural dates
+    if "mañana" in text or "manana" in text:
         return (today + timedelta(days=1)).strftime("%Y-%m-%d")
 
     if "hoy" in text:
         return today.strftime("%Y-%m-%d")
 
-    if "pasado manana" in text or "pasado mañana" in text:
+    if "pasado mañana" in text or "pasado manana" in text:
         return (today + timedelta(days=2)).strftime("%Y-%m-%d")
+
+    # CLEAN TIME REFERENCES BEFORE PARSING
+    cleaned = re.sub(r"\b(\d{1,2})(?:[:\.]\d{2})?\s*(am|pm)\b", "", text)
+    cleaned = re.sub(r"\b(a las|las)\s+\d{1,2}(?:(?::\d{2}))?\b", "", cleaned)
+    cleaned = re.sub(r"\b\d{1,2}\s*m\b", "", cleaned)  # "9m" fix
 
     if DATEPARSER_AVAILABLE:
         try:
             dt = dateparser.parse(
-                msg,
+                cleaned,
                 languages=["es"],
                 settings={
                     "TIMEZONE": "America/Bogota",
@@ -378,14 +384,14 @@ def extract_date(msg, session):
                 local_dt = dt.astimezone(LOCAL_TZ)
                 parsed_date = local_dt.date()
 
-                # 🔧 YEAR FIX
+                # If date is still before today, assume user means next year
                 if parsed_date < today:
-                    return "PAST_DATE"
-                    
-                return local_dt.strftime("%Y-%m-%d")
+                    parsed_date = parsed_date.replace(year=today.year + 1)
+
+                return parsed_date.strftime("%Y-%m-%d")
 
         except Exception as e:
-            print(f"Dateparser error: {e}")
+            print("Dateparser error:", e)
 
     return session.get("date")
 
