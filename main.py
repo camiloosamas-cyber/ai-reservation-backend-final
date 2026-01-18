@@ -814,6 +814,9 @@ def process_message(msg, session):
         session["booking_intro_shown"] = False
         save_session(session)
 
+    # 🔥 RE-RUN EXTRACTION NOW THAT BOOKING IS ACTIVE
+    update_session_with_message(text, session)
+
     # --------------------------------------------------
     # 5. SHOW INTRO OR CONTINUE
     # --------------------------------------------------
