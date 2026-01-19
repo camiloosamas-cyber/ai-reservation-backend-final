@@ -940,9 +940,9 @@ def process_message(msg, session):
         return "❌ No pudimos completar la reserva. Intenta nuevamente."
 
     # --------------------------------------------------
-    # 8. FALLBACK
+    # 8. SILENT FALLBACK (do not reply)
     # --------------------------------------------------
-    return "No entendí bien. ¿Deseas agendar una cita o recibir información?"
+    return None  # Bot stays silent
 
 # =============================================================================
 # TWILIO WEBHOOK
@@ -950,27 +950,28 @@ def process_message(msg, session):
 
 @app.post("/whatsapp")
 async def whatsapp_webhook(request: Request, WaId: str = Form(...), Body: str = Form(...)):
-    """Handle incoming WhatsApp messages"""
-    
     phone = WaId.split(":")[-1].strip()
     user_msg = Body.strip()
     
-    # Get session and process message
     session = get_session(phone)
     response_text = process_message(user_msg, session)
     
     # Test mode - return plain text
     if TEST_MODE:
-        return Response(content=response_text, media_type="text/plain")
+        return Response(content=response_text or "", media_type="text/plain")
     
     # Production mode - return Twilio XML
     if TWILIO_AVAILABLE:
-        twiml = MessagingResponse()
-        twiml.message(response_text)
-        return Response(content=str(twiml), media_type="application/xml")
+        if response_text:  # Only reply if there's a message
+            twiml = MessagingResponse()
+            twiml.message(response_text)
+            return Response(content=str(twiml), media_type="application/xml")
+        else:
+            # Return empty response → no WhatsApp reply
+            return Response(content="", media_type="text/plain")
     
     # Fallback - plain text
-    return Response(content=response_text, media_type="text/plain")
+    return Response(content=response_text or "", media_type="text/plain")
 
 # =============================================================================
 # WEB INTERFACE
