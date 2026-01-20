@@ -184,6 +184,77 @@ PACKAGES = {
     }
 }
 
+# Known schools in Yopal (case-insensitive, used for extraction)
+KNOWN_SCHOOLS = [
+    # Public / Official Institutions
+    "institución educativa 1 de mayo",
+    "institución educativa antonio nariño",
+    "institución educativa braulio gonzález",
+    "institución educativa camilo torres",
+    "institución educativa camilo torres restrepo",
+    "institución educativa carlos lleras restrepo",
+    "institución educativa centro social la presentación",
+    "institución educativa luis hernández vargas",
+    "institución educativa megacolegio yopal",
+    "institución educativa policarpa salavarrieta",
+    "institución educativa picón arenal",
+    "institución educativa santa teresa",
+    "institución educativa santa teresita",
+    "escuela santa bárbara",
+    "escuela santa inés",
+    "escuela el paraíso",
+    
+    # Private / Non-Official Schools
+    "academia militar josé antonio páez",
+    "colegio alianza pedagógica",
+    "colegio antonio nariño",
+    "colegio bethel yopal",
+    "colegio braulio gonzález – sede campestre",
+    "colegio campestre hispano inglés del casanare",
+    "colegio campestre liceo literario del casanare",
+    "colegio lucila piragauta",
+    "colegio rafael pombo",
+    "colegio san mateo apóstol",
+    "gimnasio comfacasanare",
+    "gimnasio de los llanos",
+    "gimnasio loris malaguzzi",
+    "instituto pilosophia",
+    "liceo escolar los ángeles",
+    "liceo gustavo matamoros león",
+    "liceo moderno celestín freinet casanare",
+    "liceo pedagógico colombo inglés",
+    "liceo pedagógico san martín",
+    
+    # Technical / Vocational
+    "instituto técnico empresarial de yopal",
+    "instituto técnico ambiental san mateo",
+    
+    # Early Childhood
+    "jardín infantil castillo de la alegría",
+    "jardín infantil carrusel mágico",
+    
+    # COMMON SHORT FORMS & TYPING VARIANTS (no accents, partial names)
+    "gimnasio los llanos",
+    "los llanos",
+    "comfacasanare",
+    "san jose",
+    "santa teresita",
+    "santa teresa",
+    "rafael pombo",
+    "lucila piragauta",
+    "campestre hispano",
+    "liceo literario",
+    "megacolegio",
+    "itey",
+    "instituto tecnico",
+    "jardin carrusel",
+    "castillo alegria",
+    "picon arenal",
+    "braulio gonzalez",
+    "camilo torres",
+    "antonio narino",
+]
+
 # =============================================================================
 # FAQ RESPONSES
 # =============================================================================
@@ -283,26 +354,64 @@ def extract_student_name(msg, current_name):
     return None
 
 def extract_school(msg):
-    """Extract school name from message"""
-    text = msg.lower()
+    """Extract school name from message using known schools list"""
+    text = msg.lower().strip()
     
-    # Patterns with school keywords
+    # Normalize common accent variations for matching
+    normalized_text = (
+        text.replace("á", "a")
+             .replace("é", "e")
+             .replace("í", "i")
+             .replace("ó", "o")
+             .replace("ú", "u")
+             .replace("ñ", "n")
+             .replace("ü", "u")
+    )
+
+    # First: try patterns with explicit keywords (original logic)
     patterns = [
-        r"(?:colegio|gimnasio|liceo|instituto|escuela)\s+([a-z0-9\s]+)",
-        r"(?:del\s+colegio|del\s+gimnasio|de\s+la\s+escuela)\s+([a-z0-9\s]+)",
+        r"(?:colegio|gimnasio|liceo|instituto|escuela|jardín|jardin)\s+([a-z0-9\s]+)",
+        r"(?:del\s+(?:colegio|gimnasio|liceo|instituto|escuela)|de\s+la\s+(?:escuela|institución))\s+([a-z0-9\s]+)",
     ]
     
     for pattern in patterns:
-        m = re.search(pattern, text)
+        m = re.search(pattern, normalized_text)
         if m:
             school_name = m.group(1).strip()
-            # Clean up (stop at punctuation or age mentions)
-            school_name = re.split(r"[.,!?]|\s+(?:tiene|anos?|edad)", school_name)[0].strip()
-            if len(school_name) > 1:
+            # Clean up trailing context
+            school_name = re.split(r"[.,!?]|\s+(?:tiene|anos?|edad|cédula|cedula)", school_name)[0].strip()
+            if len(school_name) > 2:
                 return school_name.title()
-    
-    # Standalone school keywords
-    if any(k in text for k in ["gimnasio", "instituto", "comfacasanare"]):
+
+    # Second: match against known schools (even without keywords)
+    for school in KNOWN_SCHOOLS:
+        # Normalize school name too
+        norm_school = (
+            school.lower()
+                 .replace("á", "a")
+                 .replace("é", "e")
+                 .replace("í", "i")
+                 .replace("ó", "o")
+                 .replace("ú", "u")
+                 .replace("ñ", "n")
+        )
+        
+        if norm_school in normalized_text:
+            # Extract full match and clean
+            start = normalized_text.find(norm_school)
+            end = start + len(norm_school)
+            
+            # Try to capture up to 3 extra words (for full names)
+            remaining = normalized_text[end:].split()[:3]
+            full_match = norm_school + " " + " ".join(remaining)
+            full_match = re.split(r"[.,!?]", full_match)[0].strip()
+            
+            if len(full_match) > 3:
+                # Restore original capitalization from KNOWN_SCHOOLS
+                return school.title()
+
+    # Fallback: if any school-related keyword exists, take next words
+    if any(kw in normalized_text for kw in ["gimnasio", "colegio", "instituto", "liceo", "comfacasanare"]):
         words = msg.strip().split()
         school_words = [w for w in words if len(w) >= 3]
         if school_words:
