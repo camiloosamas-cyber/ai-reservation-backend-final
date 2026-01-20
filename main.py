@@ -302,8 +302,11 @@ def extract_student_name(msg, current_name):
     if lower in ["hola", "buenos dias", "buenas tardes", "buenas noches", "buenas"]:
         return None
     
-    # Skip package/price queries
-    if any(k in lower for k in ["paquete", "precio", "cuesta", "cuanto"]):
+    # Skip package/price queries ONLY if no name context is present
+    has_name_context = any(phrase in lower for phrase in [
+        "se llama", "mi hijo", "mi hija", "mi niño", "mi niña", "nombre", "hijo de", "hija de"
+    ])
+    if any(k in lower for k in ["paquete", "precio", "cuesta", "cuanto"]) and not has_name_context:
         return None
 
     # Pattern: "mi hijo juan perez" — stop at context words or punctuation
