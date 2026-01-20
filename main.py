@@ -320,10 +320,10 @@ def extract_student_name(msg, current_name):
         
     # Pattern: "se llama X"
     if "se llama" in lower:
-        parts = lower.split("se llama", 1)
-        if len(parts) > 1:
-            name = parts[1].strip()
-            name = re.split(r"\s+(?:de|del|tiene|anos?|colegio)", name)[0].strip()
+        # Use regex to capture name until stop words or punctuation
+        m = re.search(r"se\s+llama\s+([a-záéíóúñ\s]+?)(?=\s*(?:,|\.|del|de|tiene|edad|colegio|$))", lower)
+        if m:
+            name = m.group(1).strip()
             if name and len(name.split()) >= 2:
                 return name.title()
     
