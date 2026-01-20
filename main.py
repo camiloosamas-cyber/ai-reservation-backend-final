@@ -923,12 +923,16 @@ def process_message(msg, session):
     ]
     has_context = any(w in normalized for w in SCHOOL_CONTEXT)
 
+    # Treat package mentions as booking intent
+    PACKAGE_KEYWORDS = ["paquete", "45 mil", "60 mil", "75 mil", "esencial", "activa", "bienestar", "45k", "60k", "75k"]
+    has_package_intent = any(kw in normalized for kw in PACKAGE_KEYWORDS)
+
     # --------------------------------------------------
     # ALWAYS extract data unless it's a pure greeting or info query
     # --------------------------------------------------
 
     # If user mentions school/exam context, treat as booking intent
-    force_booking_intent = has_action or has_context
+    force_booking_intent = has_action or has_context or has_package_intent
     
     if force_booking_intent or not (is_greeting and not session.get("booking_started")):
         update_result = update_session_with_message(text, session)
@@ -985,7 +989,7 @@ def process_message(msg, session):
     ]
     has_context = any(w in normalized for w in SCHOOL_CONTEXT)
 
-    if not session.get("booking_started") and (has_action or has_context):
+    if not session.get("booking_started") and (has_action or has_context or has_package_intent):
         session["booking_started"] = True
         session["booking_intro_shown"] = False
         save_session(session)
