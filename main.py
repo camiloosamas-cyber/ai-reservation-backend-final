@@ -297,6 +297,10 @@ def extract_student_name(msg, current_name):
     # Skip if name exists and user not changing it
     if current_name and not any(k in lower for k in ["cambiar", "otro nombre", "se llama"]):
         return None
+        
+    # Skip if message is a confirmation or command
+    if any(kw in lower for kw in ["quiero", "confirmo", "si", "ok", "ese", "este", "lo quiero", "lo tomo", "agendo", "reservo"]):
+        return None
     
     # Skip greetings
     if lower in ["hola", "buenos dias", "buenas tardes", "buenas noches", "buenas"]:
@@ -656,6 +660,12 @@ def update_session_with_message(msg, session):
     for filler in FILLER_PHRASES:
         normalized_msg = normalized_msg.replace(filler, "")
 
+    # If all fields are set, don't re-extract unless user says "cambiar"
+    required_fields = ["student_name", "school", "package", "date", "time", "age", "cedula"]
+    if all(session.get(f) for f in required_fields):
+        if not any(kw in msg.lower() for kw in ["cambiar", "otro nombre", "se llama", "nombre es"]):
+            return None  # Don't overwrite
+
     # ---------- EXTRACTION (USE RAW MSG FOR NAME, NORMALIZED FOR OTHERS) ----------
     pkg = extract_package(normalized_msg)
     name = extract_student_name(msg, session.get("student_name"))  # ← Use raw msg
@@ -912,8 +922,7 @@ def process_message(msg, session):
 
     INFO_TRIGGERS = [
         "que contiene", "que incluye", "informacion",
-        "información", "paquetes", "paquete",
-        "examenes", "exámenes"
+        "información", "paquetes","examenes", "exámenes"
     ]
     is_info = any(p in normalized for p in INFO_TRIGGERS)
 
