@@ -354,13 +354,26 @@ def extract_student_name(msg, current_name):
     if m:
         return m.group(1).strip()
     
-    # Standalone name (2-4 words, all lowercase letters)
+    # Check each line for a potential name (common in multi-line messages)
+    lines = [line.strip() for line in msg.split("\n") if line.strip()]
+    for line in lines:
+        line_lower = line.lower()
+        # Skip lines with non-name context
+        if any(kw in line_lower for kw in ["paquete", "para", "tiene", "años", "ano", "cedula", "mañana", "manana", "pasado", "9am", "10am", "am", "pm", "del", "de la"]):
+            continue
+        words = line.split()
+        if 2 <= len(words) <= 3:
+            # Must be capitalized words (Juan Perez)
+            if all(re.match(r"^[A-Z][a-záéíóúñ]+$", word) for word in words):
+                return line.title()
+    
+    # Fallback: old standalone logic (for single-line messages)
     words = lower.split()
     if 2 <= len(words) <= 4:
         valid_words = [w for w in words if len(w) >= 2 and re.match(r"^[a-záéíóúñ]+$", w)]
         if len(valid_words) >= 2:
             combined = " ".join(valid_words)
-            avoid = ["buenos", "confirmo", "paquete", "colegio", "cita", "hora", "fecha"]
+            avoid = ["buenos", "confirmo", "paquete", "colegio", "cita", "hora", "fecha", "mañana", "manana", "para", "tiene"]
             if not any(k in combined for k in avoid):
                 return " ".join(valid_words).title()
     
