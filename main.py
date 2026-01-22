@@ -298,49 +298,36 @@ def extract_student_name(msg, current_name):
     if current_name and not any(k in lower for k in ["cambiar", "otro nombre", "se llama"]):
         return None
         
-    # Skip if message is a confirmation or command
-    if any(kw in lower for kw in ["quiero", "confirmo", "si", "ok", "ese", "este", "lo quiero", "lo tomo", "agendo", "reservo"]):
-        return None
-    
     # Skip greetings
     if lower in ["hola", "buenos dias", "buenas tardes", "buenas noches", "buenas"]:
         return None
-    
-    # Skip package/price queries ONLY if no name context is present
-    has_name_context = any(phrase in lower for phrase in [
-        "se llama", "mi hijo", "mi hija", "mi niño", "mi niña", "nombre", "hijo de", "hija de"
-    ])
-    if any(k in lower for k in ["paquete", "precio", "cuesta", "cuanto"]) and not has_name_context:
-        return None
 
-    # Pattern: "mi hijo juan perez" — stop at context words or punctuation
-    m = re.search(
-        r"mi\s+(?:hijo|hiijo|niña|niño|hija)\s+([a-záéíóúñ\s]+?)(?=\s*(?:,|\.|del|de|tiene|edad|colegio|$))",
-        lower
-    )
+    # Pattern: "se llama X"
+    if "se llama" in lower:
+        # Use flexible split that handles commas and extra spaces
+        parts = lower.split("se llama", 1)
+        if len(parts) > 1:
+            candidate = parts[1].strip()
+            # Remove everything after stop words
+            for stop in ["del", "de", "tiene", "edad", "colegio", "cedula", "su", "para", "quiero", "el", "la", ",", "."]:
+                if f" {stop}" in candidate:
+                    candidate = candidate.split(f" {stop}")[0]
+                elif candidate.startswith(stop):
+                    candidate = ""
+                    break
+            candidate = candidate.strip().rstrip(".,!?")
+            if candidate and len(candidate.split()) >= 2:
+                return candidate.title()
+
+    # Pattern: "mi hijo X"
+    m = re.search(r"mi\s+(?:hijo|hiijo|niña|niño|hija)\s+([a-záéíóúñ\s]+?)(?=\s*(?:,|\.|del|de|tiene|edad|colegio|$))", lower)
     if m:
         name = m.group(1).strip()
-        # Remove any trailing context fragments
         name = re.split(r"\s+(?:del|de|tiene|edad|colegio)", name)[0].strip()
         if name and len(name.split()) >= 2:
             return name.title()
-        
-    # Pattern: "se llama X"
-    if "se llama" in lower:
-        parts = lower.split("se llama", 1)
-        if len(parts) > 1:
-            name_part = parts[1].strip()
-            # Stop at common context words
-            stop_words = ["del", "de", "tiene", "edad", "colegio", "cedula", "su", "para", "quiero", "el", "la", "con"]
-            for word in stop_words:
-                if f" {word} " in name_part:
-                    name_part = name_part.split(f" {word} ")[0]
-                    break
-            name_part = name_part.strip().rstrip(".,!?")
-            if name_part and len(name_part.split()) >= 2:
-                return name_part.title()
-    
-    # Pattern: "nombre es X" or "nombre: X"
+
+    # Pattern: "nombre es X"
     if "nombre" in lower:
         m = re.search(r"nombre\s*:?\s*es\s+([a-záéíóúñ\s]+)", lower)
         if m:
@@ -348,26 +335,24 @@ def extract_student_name(msg, current_name):
             name = re.split(r"\s+(?:de|del|tiene|anos?|colegio)", name)[0].strip()
             if name and len(name.split()) >= 2:
                 return name.title()
-    
-    # Capitalized name (Juan Perez)
-    m = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b", text)
-    if m:
-        return m.group(1).strip()
-    
-    # Check each line for a potential name (common in multi-line messages)
+
+    # Multi-line: first line as name (even if lowercase)
     lines = [line.strip() for line in msg.split("\n") if line.strip()]
-    for line in lines:
-        line_lower = line.lower()
-        # Skip lines with non-name context
-        if any(kw in line_lower for kw in ["paquete", "para", "tiene", "años", "ano", "cedula", "mañana", "manana", "pasado", "9am", "10am", "am", "pm", "del", "de la"]):
-            continue
-        words = line.split()
+    if len(lines) >= 2:
+        first_line = lines[0]
+        words = first_line.split()
         if 2 <= len(words) <= 3:
-            # Must be capitalized words (Juan Perez)
-            if all(re.match(r"^[A-Z][a-záéíóúñ]+$", word) for word in words):
-                return line.title()
-    
-    # Fallback: old standalone logic (for single-line messages)
+            clean_words = []
+            for w in words:
+                if re.match(r"^[a-záéíóúñ]+$", w.lower()) and len(w) >= 2:
+                    clean_words.append(w.capitalize())
+                else:
+                    clean_words = []
+                    break
+            if len(clean_words) == len(words):
+                return " ".join(clean_words)
+
+    # Fallback: standalone name in single-line message
     words = lower.split()
     if 2 <= len(words) <= 4:
         valid_words = [w for w in words if len(w) >= 2 and re.match(r"^[a-záéíóúñ]+$", w)]
@@ -935,7 +920,7 @@ def process_message(msg, session):
 
     INFO_TRIGGERS = [
         "que contiene", "que incluye", "informacion",
-        "información", "paquetes","examenes", "exámenes"
+        "información", "paquetes", "paquete", "examenes", "exámenes"
     ]
     is_info = any(p in normalized for p in INFO_TRIGGERS)
 
