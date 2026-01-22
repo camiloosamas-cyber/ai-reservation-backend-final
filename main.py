@@ -33,6 +33,13 @@ except ImportError:
     TWILIO_AVAILABLE = False
     print("WARNING: Twilio not available")
 
+import unicodedata
+
+def remove_accents(input_str):
+    """Remove Spanish accents for robust matching"""
+    nfkd_form = unicodedata.normalize('NFKD', input_str)
+    return ''.join([c for c in nfkd_form if not unicodedata.combining(c)])
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -255,6 +262,205 @@ KNOWN_SCHOOLS = [
     "antonio narino",
 ]
 
+# Common first names in Colombia (Yopal region)
+COMMON_FIRST_NAMES = {
+    "alejandro", "alejo", "adrián", "aarón", "abel", "abraham", "agustín", "alan", "alberto",
+    "albán", "aldair", "alexander", "alexis", "alfonso", "alfredo", "álvaro", "amador", "anderson",
+    "andrés", "ángel", "aníbal", "anthony", "antonio", "ariel", "armando", "arley", "arturo",
+    "bairon", "baltazar", "benjamín", "bernardo", "bladimir", "boris", "brayan", "brayhan", "breiner",
+    "bruno", "camilo", "carlos", "carmelo", "césar", "cristian", "cristóbal", "daniel", "dante",
+    "darío", "darian", "dario", "david", "deiver", "deiby", "delfín", "diego", "dilan", "dilan mateo",
+    "dilan steven", "dilan andrés", "dimitri", "dixon", "duarte", "duberney", "duvan", "duván",
+    "edgar", "edinson", "edison", "eduardo", "edwin", "efrén", "eider", "einer", "eivar", "elías",
+    "elkin", "emerson", "emilio", "emmanuel", "enrique", "erick", "ernesto", "esneider", "esteban",
+    "eugenio", "evaristo", "ezequiel", "fabián", "facundo", "felipe", "félix", "fernando", "flavio",
+    "francisco", "franco", "fredy", "froilán", "gabriel", "gael", "germán", "gerson", "gildardo",
+    "gonzalo", "gregorio", "guillermo", "gustavo", "harold", "héctor", "helmer", "henry", "hernán",
+    "hilario", "hugo", "ignacio", "ismael", "iván", "jacob", "jaime", "jairo", "jampier", "javier",
+    "jean", "jefferson", "jerónimo", "jesús", "jhon", "jhonatan", "jhon fredy", "jhon anderson",
+    "jhon edwar", "joaquín", "joel", "jonatan", "jordán", "jorge", "josé", "joseph", "josué", "juan",
+    "juan camilo", "juan esteban", "juan josé", "juan sebastián", "juan david", "juan manuel", "julio",
+    "julián", "justo", "kevin", "keider", "kendry", "kendall", "kenneth", "kenny", "kevin andrés",
+    "kevin steven", "leandro", "leo", "leonardo", "leonel", "lorenzo", "luciano", "luis", "luis ángel",
+    "luis carlos", "luis eduardo", "luis fernando", "luis miguel", "manuel", "marco", "marcos", "mario",
+    "martín", "mateo", "matías", "mauricio", "maximiliano", "medardo", "miguel", "miguel ángel", "miller",
+    "moisés", "nicolás", "néstor", "nilson", "noel", "óscar", "omar", "orlando", "pablo", "pascual",
+    "patricio", "pedro", "rafael", "ramiro", "randall", "raúl", "reinaldo", "rené", "richard", "rigo",
+    "rigoberto", "roberto", "rodolfo", "rogelio", "román", "ronald", "rubén", "ruddy", "rudy", "salomón",
+    "salvador", "samuel", "samuel andrés", "samuel david", "santiago", "sebastián", "segundo", "sergio",
+    "sneyder", "stiven", "steven", "simón", "teófilo", "thiago", "tobías", "tomás", "ulises", "valentín",
+    "valerio", "vicente", "víctor", "wálter", "wílmar", "wilmer", "william", "wilson", "xavier", "yahir",
+    "yair", "yamid", "yeferson", "yeison", "yorman", "yulian", "yurgen", "zacarías", "abigaíl", "adela",
+    "adelaida", "adriana", "aída", "ainhoa", "alba", "albertina", "alejandra", "alexandra", "alina",
+    "alicia", "alison", "allison", "amalia", "ambar", "amelia", "amparo", "ana", "ana belén", "ana carolina",
+    "ana cristina", "ana isabel", "ana lucía", "ana maría", "ana milena", "ana paola", "ana patricia",
+    "ana sofía", "andrea", "ángela", "angélica", "anita", "antonia", "aracely", "aranzazu", "arelis",
+    "arleth", "astrid", "aura", "aurora", "azucena", "bárbara", "beatriz", "belén", "benedicta", "bernarda",
+    "bertha", "betty", "blanca", "blanca inés", "brenda", "brianna", "briggitte", "carina", "carla",
+    "carlota", "carlina", "carmenza", "carmen", "carmen rosa", "carolina", "casandra", "catalina",
+    "cecilia", "celeste", "celia", "celmira", "cindy", "clara", "clara inés", "clarisa", "claudia",
+    "claudia patricia", "claudia marcela", "claudia milena", "clemencia", "cloe", "concepción", "constanza",
+    "consuelo", "coral", "cristina", "dafne", "dalia", "damaris", "dana", "dana valentina", "daniela",
+    "danna", "danna sofía", "dayana", "débora", "deyanira", "diana", "diana carolina", "diana paola",
+    "diana patricia", "diana marcela", "diana lorena", "dilia", "dolores", "dominga", "dora", "edith",
+    "elena", "elianna", "elisa", "elisabeth", "elka", "ella", "elsa", "elvia", "elvira", "emilia", "emma",
+    "erika", "ermelinda", "esmeralda", "esperanza", "estefanía", "estela", "esther", "eugenia", "eva",
+    "evelin", "evelyn", "fabiola", "fara", "fatima", "fernanda", "fidela", "filomena", "floresmira", "flor",
+    "flor ángela", "flor alba", "flor amarilis", "flor elena", "flor marina", "florinda", "francy", "francia",
+    "francy lorena", "gabriela", "genoveva", "geraldine", "gina", "giselle", "gladis", "glenda", "gloria",
+    "graciela", "grecia", "greta", "guadalupe", "hanna", "haydee", "helena", "helena sofía", "hilda",
+    "iliana", "inés", "ingrid", "irene", "iris", "isabel", "isabela", "isabella", "isidora", "iveth",
+    "ivonne", "jacqueline", "jazmín", "jenifer", "jennifer", "jessica", "jimena", "joana", "johanna",
+    "josefa", "josefina", "joyce", "judith", "julia", "juliana", "julieta", "july", "karen", "karina",
+    "karla", "katherine", "katherin", "katerine", "katrina", "kelly", "keila", "kimberly", "koral", "lana",
+    "lara", "laura", "laura sofía", "layla", "leidy", "leidy johana", "leidy tatiana", "leonor", "leydi",
+    "lia", "liana", "libia", "lida", "lidia", "ligia", "liliana", "lina", "lina maría", "lina marcela",
+    "lina sofía", "linda", "liseth", "lissette", "livia", "lola", "lorena", "lorna", "lourdes", "lucero",
+    "lucía", "lucila", "lucrecia", "luisa", "luisa fernanda", "luisa maría", "luna", "luz", "luz adriana",
+    "luz ángela", "luz amanda", "luz dary", "luz elena", "luz marina", "luz mery", "magaly", "magda",
+    "magdalena", "maite", "maira", "malena", "manuela", "marcela", "margarita", "maría", "maría alejandra",
+    "maría camila", "maría cristina", "maría del carmen", "maría del mar", "maría elena", "maría fernanda",
+    "maría isabel", "maría josé", "maría laura", "maría paula", "maría victoria", "mariana", "maritza",
+    "martha", "martina", "mateo", "matilde", "mayra", "melani", "melany", "melba", "melissa", "mercedes",
+    "mery", "micaela", "michelle", "milena", "mireya", "mónica", "nancy", "narda", "natalia", "natividad",
+    "nayeli", "nayibe", "nazareth", "nelly", "nicole", "nidia", "nidia esperanza", "noelia", "nora", "norma",
+    "nubia", "nury", "ofelia", "olga", "olga lucía", "olga marina", "olivia", "otilia", "pamela", "paola",
+    "paola andrea", "pasión", "patricia", "paula", "paulina", "piedad", "pilar", "rafaela", "raiza",
+    "raquel", "rebeca", "regina", "rita", "rocío", "rosa", "rosa ángela", "rosa alicia", "rosa elena",
+    "rosa maría", "rosalba", "rosalía", "rosario", "roxana", "ruby", "ruth", "salomé", "samara", "samira",
+    "sandra", "sandra patricia", "sara", "sarita", "sebastiana", "selena", "serena", "sharon", "sheyla",
+    "silvia", "sofía", "sonia", "stella", "susana", "tatiana", "teresa", "teresita", "tiffany", "trinidad",
+    "valentina", "valeria", "vanessa", "vera", "verónica", "vicenta", "victoria", "vilma", "vivian",
+    "viviana", "wendy", "ximena", "xiomara", "yadira", "yamile", "yennifer", "yenny", "yiceth", "yina",
+    "yohana", "yolanda", "yuleidy", "yuliana", "yurani", "zulma"
+}
+
+# Common last names in Colombia (Yopal region)
+COMMON_LAST_NAMES = {
+    "acuña", "afanador", "agudelo", "aguilar", "aguirre", "alarcón", "albarracín", "albornoz", "alfaro",
+    "almanza", "almeida", "almonacid", "alvarado", "álvarez", "amado", "amaya", "amézquita", "andrade",
+    "angel", "angulo", "anzola", "aponte", "arango", "arbeláez", "arboleda", "arciniegas", "ardila",
+    "arguello", "arias", "aricapa", "aristizábal", "ariza", "armenta", "armenteros", "armesto", "arroyave",
+    "arteaga", "arzayús", "ascencio", "atuesta", "avendaño", "ayala", "ayuela", "badillo", "bahamón",
+    "baldión", "banguero", "bañol", "barrera", "barrero", "barreto", "barrios", "barros", "barón",
+    "bastidas", "bautista", "bedoya", "bejarano", "belalcázar", "beltrán", "benavides", "bendeck", "bermúdez",
+    "bernal", "berrío", "betancourt", "biel", "blandón", "blanco", "bocanegra", "bohórquez", "bolívar",
+    "bonilla", "borda", "borja", "borrero", "borromeo", "botero", "brahim", "brand", "bravo", "briceño",
+    "buendía", "buitrago", "burbano", "burgos", "bustamante", "bustos", "caballero", "cabra", "cabrera",
+    "cadena", "caicedo", "cajiao", "calderón", "calero", "calvache", "calvo", "camacho", "camargo", "cambar",
+    "camejo", "campillo", "campos", "canales", "cañas", "canaval", "cano", "cantillo", "cañón", "cárcamo",
+    "cárdens", "cardona", "carillo", "carmona", "carranza", "carrasco", "carreño", "carrillo", "carrión",
+    "carvajal", "casadiego", "casallas", "casas", "castañeda", "castaño", "castiblanco", "castillo", "castro",
+    "ceballos", "cediel", "celis", "cepeda", "cerón", "cerquera", "cervantes", "chacón", "chalarca", "chaparro",
+    "chávez", "chica", "chiquillo", "chitiva", "chocontá", "cifuentes", "ciro", "clavijo", "cobo", "cochise",
+    "cocomá", "colmenares", "colorado", "colón", "colonia", "conde", "contreras", "córdoba", "coronado",
+    "coronel", "correa", "corrales", "cortázar", "cortés", "cortizo", "cossio", "cuadrado", "cuadros", "cuartas",
+    "cuberos", "cubillos", "cuéllar", "cuenú", "cuentas", "currea", "daza", "de la cruz", "de la espriella",
+    "delgado", "del hierro", "del salto", "díaz", "diez", "díez granados", "dimate", "díez garcía", "dízz",
+    "domínguez", "donado", "doncel", "duque", "durán", "echeverri", "echavarría", "eljach", "escalante",
+    "escalona", "escamilla", "escandón", "escobar", "escorcia", "españa", "españa gómez", "espinal", "esquivel",
+    "estepa", "estupiñán", "evans", "fajardo", "farías", "farfán", "ferro", "fierro", "figueredo", "flechas",
+    "flórez", "fonseca", "forero", "franco", "franco suárez", "frasser", "frías", "fuentes", "galán", "galindo",
+    "gallego", "gallo", "galvis", "gamarra", "gamboa", "garavito", "garay", "garces", "garibello", "garzón",
+    "gaviria", "gélvez", "giraldo", "góez", "gómez", "góngora", "gonzález", "gordo", "gordillo", "górriz",
+    "goyeneche", "guaca", "guacaneme", "guáqueta", "guarín", "guayazán", "guecha", "güengue", "guevara", "guisa",
+    "guzmán", "haro", "henao", "hereira", "herrera", "herrán", "hidalgo", "higuita", "hinestroza", "holguín",
+    "hormiga", "hoyos", "huertas", "hurtado", "ibañez", "ibarra", "ibargüen", "illera", "íñiguez", "inestrosa",
+    "insignares", "irriarte", "isaza", "jaimes", "jáuregui", "jerez", "jeronimo", "jhaime", "jiménez", "jiraldo",
+    "jurado", "ladino", "lagos", "laguado", "lamerca", "lamilla", "lancheros", "landinez", "lara", "largacha",
+    "lascarro", "lasso", "latorre", "laverde", "leal", "león", "lerma", "lesmes", "leyva", "lezama", "liévano",
+    "linares", "llamas", "llinás", "lloreda", "llorente", "lobatón", "lobo", "lozano", "lozada", "lucena",
+    "lugo", "luján", "luna", "macías", "macias collazos", "madera", "madroñero", "madrid", "maestre", "maldonado",
+    "manjarrez", "manrique", "mantilla", "manzo", "maradiaga", "marenco", "marín", "marino", "marmolejo",
+    "marroquín", "marrugo", "martelo", "martínez", "martín", "martínez gómez", "martínez rojas", "maryory",
+    "massa", "mateus", "matiz", "maturana", "maya", "mayorga", "mazabel", "mejía", "meléndez", "meneses",
+    "mendoza", "mendivelso", "mendieta", "menjura", "mesa", "mestra", "mestre", "metke", "meza", "millán",
+    "mina", "miranda", "mogollón", "molina", "molleja", "moncada", "moncayo", "mondragón", "monroy", "monsalve",
+    "montaña", "montañez", "montañés", "montenegro", "montero", "montes", "montoya", "morales", "moreno",
+    "morillo", "morlán", "morón", "moscote", "mosquera", "motta", "moyano", "muelas", "muñoz", "murcia",
+    "murgas", "murillo", "mussa", "najar", "naranjo", "narváez", "navas", "navarrete", "navarro", "negrete",
+    "neira", "nerio", "nieves", "nieto", "niño", "nivia", "noguera", "noriega", "nova", "novoa", "núñez",
+    "obando", "ocampo", "octavio", "olarte", "olaya", "oleas", "oliveros", "omaña", "oñate", "ontiveros",
+    "oquendo", "ordóñez", "orjuela", "ormaza", "orrego", "ortega", "ortiz", "ospina", "osorno", "osorio",
+    "ossa", "otero", "otálora", "oviedo", "oyola", "pabón", "pacheco", "padilla", "páez", "palacios", "palencia",
+    "pallares", "palma", "pardo", "paredes", "parra", "paternina", "patiño", "pava", "pavón", "payares",
+    "pecero", "pedraza", "peña", "perdomo", "pérez", "perilla", "pereira", "perea", "perico", "pestana",
+    "petro", "pico", "pinchao", "pineda", "pinilla", "pinzón", "pinto", "piraquive", "pizarro", "plazas",
+    "plata", "plaza", "polo", "pomares", "pombo", "porras", "portela", "portillo", "posada", "posso", "prado",
+    "pradilla", "preciado", "prieto", "puello", "puentes", "puga", "pulido", "pupo", "quiñones", "quiceno",
+    "quijano", "quimbayo", "quintero", "quiroga", "quirós", "rada", "rafael", "ramírez", "ramírez castaño",
+    "ramírez hoyos", "ramírez ortiz", "ramón", "rangel", "rasgado", "rave", "rayo", "realpe", "reátiga",
+    "rebolledo", "recalde", "reina", "restrepo", "retamoso", "revelo", "revelo narváez", "reyes", "ríaño",
+    "ricaurte", "rico", "rincón", "rios", "ríos", "rivadeneira", "rivera", "riveros", "robayo", "roberto",
+    "robles", "roca", "rodríguez", "rodríguez cárdens", "rodríguez garcía", "rodríguez lópez", "rojas",
+    "roldán", "romero", "romero ospina", "romo", "ronderos", "rondón", "roque", "rosales", "rosero",
+    "rosero cabrera", "rosso", "rousseau", "rubiano", "ruiz", "ruiz hurtado", "saavedra", "sabogal", "sacristán",
+    "saénz", "sáenz", "sáez", "saiz", "salamanca", "salas", "salazar", "salcedo", "salgado", "salinas",
+    "salmerón", "samarra", "samudio", "sánchez", "sánchez amaya", "sánchez garcía", "sánchez lópez", "sandoval",
+    "sanguino", "santacruz", "santa", "santafé", "santamaría", "santander", "santiago", "santofimio", "santos",
+    "santos gómez", "sarabia", "saray", "saravia", "sarmiento", "sarria", "segovia", "segura", "sepúlveda",
+    "sevilla", "sierra", "silgado", "silva", "silvera", "simanca", "simón", "sinisterra", "sierralta", "silos",
+    "solano", "solarte", "solís", "solórzano", "sosa", "soto", "sotelo", "suárez", "subía", "sua", "suárez martínez",
+    "suárez giraldo", "suaza", "suescún", "supelano", "taborda", "taborda vélez", "tabares", "tacuma", "tafur",
+    "tamayo", "támara", "tambon", "tapiquihua", "tarazona", "tatis", "tautiva", "tejada", "téllez", "tello",
+    "tena", "tenero", "tinjacá", "tique", "tirado", "tobar", "toledo", "tolosa", "torijano", "toro", "torralba",
+    "torrealba", "torreglosa", "torres", "torres día", "torres martínez", "torres pineda", "torrijos", "tovar",
+    "triviño", "triana", "trochez", "trujillo", "tuberquia", "turriago", "tuta", "ulloa", "umaña", "upegui",
+    "urbano", "urdaneta", "ureña", "uribe", "urquijo", "urueta", "useche", "ustate", "valbuena", "valdés",
+    "valderrama", "valdivia", "valdivieso", "valencia", "valencia cárdens", "valencia gonzález", "valera",
+    "valero", "valladares", "valle", "vallecilla", "vallesilla", "vanegas", "varela", "vargas", "vargas gómez",
+    "vargas niño", "vargas silva", "varón", "velandia", "velarde", "velasco", "velásquez", "velásquez rojas",
+    "vélez", "veloza", "vences", "vera", "vera martínez", "vergara", "verraco", "vesga", "vianchá", "vidal",
+    "vidales", "vides", "villabona", "villadiego", "villafañe", "villagra", "villalba", "villalobos", "villamil",
+    "villamizar", "villaneda", "villanueva", "villaquirán", "villarraga", "villarreal", "villate", "villavicencio",
+    "villegas", "vinasco", "virviescas", "viveros", "vizcaíno", "yepes", "yépez", "yopasa", "yotagri", "yustres",
+    "yusti", "yusti cifuentes", "yucuma", "zabaleta", "zabaleta oñate", "zabrano", "zacipa", "zafra", "zambrano",
+    "zamora", "zapata", "zapata castaño", "zárate", "zarur", "zea", "zegarra", "zerda", "zipaquirá", "zorilla",
+    "zubiría", "zuluaga", "zurita", "abad", "abello", "abondano", "abril", "acebedo", "acevedo", "acevedo gutiérrez",
+    "acha", "acuña molina", "adarme", "adrada", "affonso", "agamez", "aguillón", "ahumada", "aiza", "aldana",
+    "alegría", "alferez", "allende", "almanzar", "almosny", "altahona", "altamar", "alturo", "alvarino", "alveiro",
+    "amador ríos", "amorocho", "amortegui", "anacona", "anchico", "andocilla", "anillo", "anillo casadiego",
+    "antezana", "antolinez", "aparicio", "apraez", "aragón", "aranda", "ararat", "araque", "arbeláez sánchez",
+    "arboledas", "arce", "archila", "ardón", "arévalo", "argumedo", "argumedo torres", "arisa", "arieta",
+    "ariza molina", "arjona", "armenteros lugo", "armeni", "arnaiz", "arnedo", "arrieta", "arrieta yances",
+    "arriola", "arroyave pérez", "arteaga lara", "artiles", "arzayus", "asprilla", "aspuac", "astorga", "astorquiza",
+    "atencia", "atuesta gonzales", "aubad", "avilés", "ayola", "ayucar", "bacca", "bachiller", "badel", "badillo redondo",
+    "bahamón ocampo", "baiocco", "balaguera", "balanta", "balcázar", "baleta", "baloco", "balsalobre", "baltán",
+    "bambague", "banguera", "banquet", "barahona", "barbosa", "barcena", "barragán", "barreneche", "barrieta",
+    "barsallo", "bartolo", "basabe", "bascur", "basualdo", "batista", "bazurto", "behaine", "bejarano mendoza",
+    "belalcázar gamboa", "beltrán suárez", "benavente", "benjumea", "benzaquen", "berbeo", "berenguer", "bermon",
+    "bernal castillo", "bernate", "bernini", "bertel", "berrioza", "betin", "beuth", "beytia", "bielsa", "bihun",
+    "bilbao", "bitar", "blanquicett", "blaya", "bocarejo", "bocanumenth", "bochagova", "bojacá", "boldt", "bolivar lópez",
+    "bolívar barajas", "bollette", "bolona", "bongiorno", "bonnett", "boquet", "borda ramírez", "borja rivera",
+    "borray", "botache", "boutureira", "bravo ortiz", "bravo puentes", "briceño villate", "briñez", "brito", "brun",
+    "brunal", "buchelli", "buenaventura", "buelvas", "buendía cárdens", "bueno", "buesaquillo", "bueso", "buitrón",
+    "buonpane", "burbano guzmán", "burgos portilla", "buriticá", "busch", "bustacara", "bustos palacios", "caballero lópez",
+    "caballero parra", "cabeza", "cabrales", "cabrera lópez", "caceres", "cadavid", "caguazango", "caicedo lópez",
+    "caimoy", "cajamarc", "calambas", "calambéz", "calderín", "calindo", "calpa", "calvachi", "calvijo", "camaño",
+    "camero", "camero torres", "camiña", "campiño", "campuzano", "canabal", "canales ibáñez", "canchala", "canchila",
+    "candelo", "canelón", "cangrejo", "cangrejo rivas", "canosa", "cantillo torres", "caño", "cañón gómez", "canzio",
+    "capacho", "capacho rondón", "capera", "capote", "capurro", "caraña", "carantón", "carballo", "carbonell", "carcamo",
+    "cárdens robayo", "cardiel", "cardozo", "carhuamaca", "carillo hoyos", "carizales", "carles", "carmenza",
+    "carmona valdés", "carnaza", "carpa", "carranza garzón", "carrero lópez", "carrillo sánchez", "carrizosa", "carro",
+    "cartagena", "carvajal hoyos", "carvajal pava", "casares", "casasbuenas", "casasola", "casimiro", "castañeda lópez",
+    "castaño vélez", "castiblanco ruiz", "castillejo", "castro albarracín", "castro camargo", "castro hoyos", "catalán",
+    "catambuco", "caycedo", "ceballos rueda", "cedrés", "ceferino", "celada", "celtic", "cenén", "centeno", "cera",
+    "cerchiaro", "cerquera lópez", "cerrano", "cervantes duarte", "cespedes", "chalá", "chalarca rentería", "chamorro",
+    "chamorro garzón", "chaparro valencia", "charria", "chego", "chegwin", "chequer", "chilo", "chimapira", "chinche",
+    "chinchilla", "chingate", "chiquillo pérez", "chiriví", "chocontá duarte", "chogo", "chucuri", "cifuentes beltrán",
+    "cirolla", "clavero", "clavijo gómez", "clímaco", "cobos", "cobo suárez", "cochero", "coconubo", "cocomá lópez",
+    "coda", "codina", "coello", "coello martínez", "cogollos", "coicue", "colindres", "colmenares torres", "colmenarez",
+    "colocho", "colpas", "combariza", "condia", "coneo", "confaloniere", "congote", "conrado fonseca", "copa", "corchuelo",
+    "cordobés", "correa hoyos", "corredor", "corró", "corro romero", "cortazar", "cortés garcía", "cote", "cotero",
+    "covacho", "cova", "coya", "coy villamarin", "cristancho", "cruzado", "cuadrado torres", "cuadrado mena", "cuartas lópez",
+    "cubela", "cubilla", "cuero", "cuevas", "cumbal", "cunampia", "cundar", "cuni", "cuquejo", "cura", "cure", "currea lópez",
+    "currelí", "cusa", "cuya", "cyrino"
+}
+
+# Normalize name sets for accent-insensitive matching
+COMMON_FIRST_NAMES = {remove_accents(n.lower()) for n in COMMON_FIRST_NAMES}
+COMMON_LAST_NAMES = {remove_accents(n.lower()) for n in COMMON_LAST_NAMES}
+
 # =============================================================================
 # FAQ RESPONSES
 # =============================================================================
@@ -290,42 +496,41 @@ def extract_package(msg):
     return None
 
 def extract_student_name(msg, current_name):
-    """Extract student name from message"""
+    """Extract student name using common first/last name lists"""
     text = msg.strip()
-    lower = text.lower()
-    
-    # Skip if name exists and user not changing it
-    if current_name and not any(k in lower for k in ["cambiar", "otro nombre", "se llama"]):
+    if not text:
         return None
-        
+    lower = text.lower()
+
+    # Skip if name exists and user not changing it
+    if current_name and not any(k in lower for k in ["cambiar", "otro nombre", "se llama", "nombre"]):
+        return None
+
     # Skip greetings
     if lower in ["hola", "buenos dias", "buenas tardes", "buenas noches", "buenas"]:
         return None
 
     # Pattern: "se llama X"
     if "se llama" in lower:
-        # Use flexible split that handles commas and extra spaces
         parts = lower.split("se llama", 1)
         if len(parts) > 1:
             candidate = parts[1].strip()
-            # Remove everything after stop words
-            for stop in ["del", "de", "tiene", "edad", "colegio", "cedula", "su", "para", "quiero", "el", "la", ",", "."]:
+            for stop in ["del", "de", "tiene", "edad", "colegio", "cedula", "su", "para", "el", "la", ",", "."]:
                 if f" {stop}" in candidate:
                     candidate = candidate.split(f" {stop}")[0]
-                elif candidate.startswith(stop):
-                    candidate = ""
                     break
             candidate = candidate.strip().rstrip(".,!?")
             if candidate and len(candidate.split()) >= 2:
                 return candidate.title()
 
     # Pattern: "mi hijo X"
-    m = re.search(r"mi\s+(?:hijo|hiijo|niña|niño|hija)\s+([a-záéíóúñ\s]+?)(?=\s*(?:,|\.|del|de|tiene|edad|colegio|$))", lower)
-    if m:
-        name = m.group(1).strip()
-        name = re.split(r"\s+(?:del|de|tiene|edad|colegio)", name)[0].strip()
-        if name and len(name.split()) >= 2:
-            return name.title()
+    if "mi hijo" in lower or "mi hija" in lower:
+        m = re.search(r"mi\s+(?:hijo|hiijo|hija)\s+([a-záéíóúñ\s]+?)(?=\s*(?:,|\.|del|de|tiene|edad|colegio|$))", lower)
+        if m:
+            name = m.group(1).strip()
+            name = re.split(r"\s+(?:del|de|tiene|edad|colegio)", name)[0].strip()
+            if name and len(name.split()) >= 2:
+                return name.title()
 
     # Pattern: "nombre es X"
     if "nombre" in lower:
@@ -336,32 +541,30 @@ def extract_student_name(msg, current_name):
             if name and len(name.split()) >= 2:
                 return name.title()
 
-    # Multi-line: first line as name (even if lowercase)
-    lines = [line.strip() for line in msg.split("\n") if line.strip()]
-    if len(lines) >= 2:
-        first_line = lines[0]
-        words = first_line.split()
-        if 2 <= len(words) <= 3:
-            clean_words = []
-            for w in words:
-                if re.match(r"^[a-záéíóúñ]+$", w.lower()) and len(w) >= 2:
-                    clean_words.append(w.capitalize())
-                else:
-                    clean_words = []
-                    break
-            if len(clean_words) == len(words):
-                return " ".join(clean_words)
+    # ✅ NEW: Scan for [First] + [Last] with accent normalization
+    words = text.split()
+    for i in range(len(words)):
+        word1_raw = words[i].strip(".,!?")
+        word1_clean = remove_accents(word1_raw.lower())
+        if word1_clean in COMMON_FIRST_NAMES:
+            for j in range(i + 1, min(i + 3, len(words))):
+                word2_raw = words[j].strip(".,!?")
+                word2_clean = remove_accents(word2_raw.lower())
+                if word2_clean in COMMON_LAST_NAMES:
+                    full_name = " ".join(words[i:j+1]).title()
+                    return full_name
 
-    # Fallback: standalone name in single-line message
-    words = lower.split()
-    if 2 <= len(words) <= 4:
-        valid_words = [w for w in words if len(w) >= 2 and re.match(r"^[a-záéíóúñ]+$", w)]
-        if len(valid_words) >= 2:
-            combined = " ".join(valid_words)
-            avoid = ["buenos", "confirmo", "paquete", "colegio", "cita", "hora", "fecha", "mañana", "manana", "para", "tiene"]
-            if not any(k in combined for k in avoid):
-                return " ".join(valid_words).title()
-    
+    # Fallback: try first two words of message if they look like names
+    lines = [line.strip() for line in msg.split("\n") if line.strip()]
+    if lines:
+        first_line = lines[0]
+        name_parts = first_line.split()[:2]
+        if len(name_parts) == 2:
+            w1_norm = remove_accents(name_parts[0].lower())
+            w2_norm = remove_accents(name_parts[1].lower())
+            if w1_norm in COMMON_FIRST_NAMES and w2_norm in COMMON_LAST_NAMES:
+                return f"{name_parts[0]} {name_parts[1]}".title()
+
     return None
 
 def extract_school(msg):
@@ -448,14 +651,14 @@ def extract_age(msg):
     m = re.search(r"\b(\d{1,2})\s*(?:ano|anos)\b", text)
     if m:
         age = int(m.group(1))
-        if 5 <= age <= 25:
+        if 3 <= age <= 25:
             return age
 
     # Pattern: "edad 13", "tiene 13"
     m = re.search(r"\b(?:edad|tiene)\s+(\d{1,2})\b", text)
     if m:
         age = int(m.group(1))
-        if 5 <= age <= 25:
+        if 3 <= age <= 25:
             return age
 
     return None
@@ -666,6 +869,13 @@ def update_session_with_message(msg, session):
 
     # ---------- EXTRACTION (USE RAW MSG FOR NAME, NORMALIZED FOR OTHERS) ----------
     pkg = extract_package(normalized_msg)
+    # Fallback: if no name yet, assume first 2 words are the name (if they look valid)
+    if not session.get("student_name"):
+        words = msg.strip().split()
+        if len(words) >= 2:
+            w1, w2 = words[0].strip(".,!?"), words[1].strip(".,!?")
+            if w1 and w2 and w1[0].isupper() and w2[0].isupper():
+                session["student_name"] = f"{w1} {w2}"
     name = extract_student_name(msg, session.get("student_name"))  # ← Use raw msg
     school = extract_school(normalized_msg)
     age = extract_age(normalized_msg)
@@ -920,7 +1130,7 @@ def process_message(msg, session):
 
     INFO_TRIGGERS = [
         "que contiene", "que incluye", "informacion",
-        "información", "paquetes", "paquete", "examenes", "exámenes"
+        "información", "paquetes", "examenes", "exámenes"
     ]
     is_info = any(p in normalized for p in INFO_TRIGGERS)
 
@@ -932,7 +1142,7 @@ def process_message(msg, session):
 
     # Treat package mentions as booking intent
     PACKAGE_KEYWORDS = ["paquete", "45 mil", "60 mil", "75 mil", "esencial", "activa", "bienestar", "45k", "60k", "75k"]
-    has_package_intent = any(kw in normalized for kw in PACKAGE_KEYWORDS)
+    has_package_intent = any(kw in lower for kw in PACKAGE_KEYWORDS)
 
     # --------------------------------------------------
     # ALWAYS extract data unless it's a pure greeting or info query
