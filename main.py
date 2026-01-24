@@ -40,6 +40,50 @@ def remove_accents(input_str):
     nfkd_form = unicodedata.normalize('NFKD', input_str)
     return ''.join([c for c in nfkd_form if not unicodedata.combining(c)])
 
+def get_greeting_by_time():
+    """Return appropriate greeting based on current local time"""
+    now = datetime.now(LOCAL_TZ)
+    hour = now.hour
+    if 6 <= hour < 12:
+        return "Buenos días"
+    elif 12 <= hour < 18:
+        return "Buenas tardes"
+    else:
+        return "Buenas noches"
+
+def normalize_j_y(name_str):
+    """
+    Normalize common J/Y variations in Colombian first names.
+    Only applies to word-initial 'j' or 'y'.
+    Examples:
+      johana → yohana
+      yenni → yenni (unchanged)
+      jenni → yenni
+    """
+    words = name_str.split()
+    normalized_words = []
+    for word in words:
+        lower_word = word.lower()
+        # Common J→Y mappings (only if word starts with j/y and is likely a name)
+        if lower_word.startswith('j') and len(lower_word) >= 3:
+            # Try converting 'j' to 'y'
+            candidate = 'y' + lower_word[1:]
+            # Only apply if the 'y' version is in our known first names
+            if remove_accents(candidate) in COMMON_FIRST_NAMES:
+                normalized_words.append(candidate)
+            else:
+                normalized_words.append(lower_word)
+        elif lower_word.startswith('y') and len(lower_word) >= 3:
+            # Try converting 'y' to 'j' (less common, but possible)
+            candidate = 'j' + lower_word[1:]
+            if remove_accents(candidate) in COMMON_FIRST_NAMES:
+                normalized_words.append(candidate)
+            else:
+                normalized_words.append(lower_word)
+        else:
+            normalized_words.append(lower_word)
+    return " ".join(normalized_words)
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -332,7 +376,7 @@ COMMON_FIRST_NAMES = {
     "silvia", "sofía", "sonia", "stella", "susana", "tatiana", "teresa", "teresita", "tiffany", "trinidad",
     "valentina", "valeria", "vanessa", "vera", "verónica", "vicenta", "victoria", "vilma", "vivian",
     "viviana", "wendy", "ximena", "xiomara", "yadira", "yamile", "yennifer", "yenny", "yiceth", "yina",
-    "yohana", "yolanda", "yuleidy", "yuliana", "yurani", "zulma"
+    "yohana", "johana", "yolanda", "yuleidy", "yuliana", "yurani", "zulma"
 }
 
 # Common last names in Colombia (Yopal region)
@@ -541,19 +585,17 @@ def extract_student_name(msg, current_name):
             if name and len(name.split()) >= 2:
                 return name.title()
 
-    # ✅ NEW: Scan for [First] + [Last] with accent normalization
+    # ✅ Support [First + Last] and [First + First] (compound names)
     words = text.split()
     for i in range(len(words)):
-        word1_raw = words[i].strip(".,!?")
-        word1_clean = remove_accents(word1_raw.lower())
+        word1_clean = remove_accents(words[i].lower().strip(".,!?"))
         if word1_clean in COMMON_FIRST_NAMES:
             for j in range(i + 1, min(i + 3, len(words))):
-                word2_raw = words[j].strip(".,!?")
-                word2_clean = remove_accents(word2_raw.lower())
-                if word2_clean in COMMON_LAST_NAMES:
+                word2_clean = remove_accents(words[j].lower().strip(".,!?"))
+                if word2_clean in COMMON_FIRST_NAMES or word2_clean in COMMON_LAST_NAMES:
                     full_name = " ".join(words[i:j+1]).title()
                     return full_name
-
+                    
     # Fallback: try first two words of message if they look like names
     lines = [line.strip() for line in msg.split("\n") if line.strip()]
     if lines:
@@ -564,7 +606,7 @@ def extract_student_name(msg, current_name):
             w2_norm = remove_accents(name_parts[1].lower())
             if w1_norm in COMMON_FIRST_NAMES and w2_norm in COMMON_LAST_NAMES:
                 return f"{name_parts[0]} {name_parts[1]}".title()
-
+                
     return None
 
 def extract_school(msg):
@@ -869,13 +911,6 @@ def update_session_with_message(msg, session):
 
     # ---------- EXTRACTION (USE RAW MSG FOR NAME, NORMALIZED FOR OTHERS) ----------
     pkg = extract_package(normalized_msg)
-    # Fallback: if no name yet, assume first 2 words are the name (if they look valid)
-    if not session.get("student_name"):
-        words = msg.strip().split()
-        if len(words) >= 2:
-            w1, w2 = words[0].strip(".,!?"), words[1].strip(".,!?")
-            if w1 and w2 and w1[0].isupper() and w2[0].isupper():
-                session["student_name"] = f"{w1} {w2}"
     name = extract_student_name(msg, session.get("student_name"))  # ← Use raw msg
     school = extract_school(normalized_msg)
     age = extract_age(normalized_msg)
@@ -937,7 +972,7 @@ def get_field_prompt(field):
         "student_name": "Cual es el nombre completo del estudiante?",
         "school": "De que colegio es el estudiante?",
         "age": "Que edad tiene el estudiante?",
-        "cedula": "Cual es el numero de cedula del estudiante?",
+        "cedula": "¿Cuál es el número de documento de identidad del estudiante?",
         "package": (
             "Tenemos 3 paquetes:\n\n"
             "1. Cuidado Esencial - $45.000\n"
@@ -980,7 +1015,7 @@ def build_summary(session):
         f"Fecha: {session['date']}\n"
         f"Hora: {session['time']}\n"
         f"Edad: {session['age']} años\n"
-        f"Cedula: {session['cedula']}\n\n"
+        f"Documento de identidad: {session['cedula']}\n\n"
         "Deseas confirmar esta cita? Responde CONFIRMO para agendar."
     )
     
@@ -1157,14 +1192,15 @@ def process_message(msg, session):
             return "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
         if update_result == "INVALID_TIME":
             return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora."
-
+            
     # --------------------------------------------------
     # 1. GREETING (ONLY IF MESSAGE IS JUST A GREETING)
     # --------------------------------------------------
     if is_greeting and not session.get("booking_started"):
         session["greeted"] = True
         save_session(session)
-        return "Buenos días, estás comunicado con Oriental IPS. ¿En qué te puedo ayudar?"
+        greeting = get_greeting_by_time()
+        return f"{greeting}, estás comunicado con Oriental IPS. ¿En qué te puedo ayudar?"
 
     # --------------------------------------------------
     # 2. INFO QUESTIONS (ALLOWED ANYTIME, BUT NO ACTION)
@@ -1238,7 +1274,7 @@ def process_message(msg, session):
                 "- Paquete\n"
                 "- Fecha y hora\n"
                 "- Edad\n"
-                "- Cédula\n\n"
+                "- Documento de identidad (Tarjeta de Identidad o Cédula)\n\n"
                 "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
             )
 
