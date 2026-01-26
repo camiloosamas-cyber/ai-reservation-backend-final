@@ -510,11 +510,12 @@ COMMON_LAST_NAMES = {remove_accents(n.lower()) for n in COMMON_LAST_NAMES}
 # =============================================================================
 
 FAQ = {
-    "ubicacion": "Estamos ubicados en Calle 31 #29-61, Yopal.",
+    "ubicacion": "Estamos ubicados en Calle 17 #16-53, Yopal, frente al Hospital San José.",
     "pago": "Aceptamos Nequi y efectivo.",
-    "duracion": "El examen dura entre 30 y 45 minutos.",
-    "llevar": "Debes traer el documento de identidad del estudiante.",
-    "horario": "Atendemos de lunes a domingo de 7am a 5pm."
+    "duracion": "Los exámenes médicos escolares toman aproximadamente 30 minutos por estudiante.",
+    "llevar": "Debes traer el documento de identidad del estudiante (Tarjeta de Identidad o Cédula).",
+    "horario": "Atendemos de lunes a viernes de 7:00 AM a 5:00 PM.",
+    "agendar": "Sí, es necesario agendar cita para los exámenes médicos escolares. Puedo ayudarte a hacerlo ahora mismo si deseas."
 }
 
 # =============================================================================
@@ -1100,6 +1101,11 @@ def check_faq(msg):
     
     if any(k in text for k in ["horario", "atienden", "abren", "cierran"]):
         return FAQ["horario"]
+
+    # Handle: "¿Tengo que agendar cita?", "¿Debo reservar?", etc.
+    if any(k in text for k in ["tengo que", "debo", "necesito", "obligado"]):
+        if any(p in text for p in ["agendar", "cita", "reservar", "turno"]):
+            return FAQ["agendar"]
     
     return None
 
@@ -1237,35 +1243,62 @@ def process_message(msg, session):
         save_session(session)
         
     # --------------------------------------------------
-    # 5. SHOW INTRO OR CONTINUE
+    # 5. SHOW DYNAMIC INTRO (ADAPTIVE TO WHAT'S ALREADY PROVIDED)
     # --------------------------------------------------
     if session.get("booking_started") and not session.get("booking_intro_shown"):
         session["booking_intro_shown"] = True
         save_session(session)
-        if any([
-            session.get("student_name"),
-            session.get("school"),
-            session.get("package"),
-            session.get("date"),
-            session.get("time"),
-            session.get("age"),
-            session.get("cedula"),
-        ]):
-            missing = get_missing_fields(session)
-            if missing:
-                return get_field_prompt(missing[0])
-            return build_summary(session)
+        
+        # Count how many fields are already filled
+        filled_fields = sum(1 for f in ["student_name", "school", "package", "date", "time", "age", "cedula"] if session.get(f))
+        
+        # Always show a friendly intro that adapts to what's known
+        known = []
+        missing_list = []
+        
+        if session.get("student_name"):
+            known.append("nombre")
         else:
-            return (
-                "Perfecto 😊 Para agendar la cita solo necesito la siguiente información:\n\n"
-                "- Nombre completo del estudiante\n"
-                "- Colegio\n"
-                "- Paquete\n"
-                "- Fecha y hora\n"
-                "- Edad\n"
-                "- Documento de identidad (Tarjeta de Identidad o Cédula)\n\n"
-                "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
-            )
+            missing_list.append("Nombre completo del estudiante")
+            
+        if session.get("school"):
+            known.append("colegio")
+        else:
+            missing_list.append("Colegio")
+            
+        if session.get("package"):
+            known.append("paquete")
+        else:
+            missing_list.append("Paquete")
+            
+        if session.get("date") and session.get("time"):
+            known.append("fecha y hora")
+        elif session.get("date") or session.get("time"):
+            missing_list.append("Fecha y hora completas")
+        else:
+            missing_list.append("Fecha y hora")
+            
+        if session.get("age"):
+            known.append("edad")
+        else:
+            missing_list.append("Edad")
+            
+        if session.get("cedula"):
+            known.append("documento")
+        else:
+            missing_list.append("Documento de identidad (Tarjeta de Identidad o Cédula)")
+    
+        if known:
+            intro = "¡Genial! Ya tengo: " + ", ".join(known) + ".\n"
+            intro += "Para completar tu cita, solo necesito:\n"
+        else:
+            intro = "Perfecto 😊 Para agendar la cita, necesito la siguiente información:\n"
+    
+        for item in missing_list:
+            intro += f"- {item}\n"
+    
+        intro += "\nPuedes enviarme los datos poco a poco o todos en un solo mensaje."
+        return intro
 
     # --------------------------------------------------
     # 6. ASK NEXT MISSING FIELD
