@@ -526,15 +526,15 @@ def extract_package(msg):
     text = msg.lower()
     
     # Esencial
-    if any(k in text for k in ["esencial", "verde", "45k", "45000", "45.000", "45 mil"]):
+    if any(k in text for k in ["esencial", "verde", "45k", "45000", "45.000", "45,000", "45 mil"]):
         return "Paquete Cuidado Esencial"
     
     # Activa
-    if any(k in text for k in ["activa", "salud activa", "azul", "psico", "psicologia", "60k", "60000", "60.000", "60 mil"]):
+    if any(k in text for k in ["activa", "salud activa", "azul", "psico", "psicologia", "60k", "60000", "60.000", "60,000", "60 mil"]):
         return "Paquete Salud Activa"
     
     # Bienestar
-    if any(k in text for k in ["bienestar", "total", "amarillo", "completo", "odonto", "75k", "75000", "75.000", "75 mil"]):
+    if any(k in text for k in ["bienestar", "total", "amarillo", "completo", "odonto", "75k", "75000", "75.000", "75,000", "75 mil"]):
         return "Paquete Bienestar Total"
     
     return None
@@ -612,67 +612,53 @@ def extract_student_name(msg, current_name):
 def extract_school(msg):
     """Extract school name from message using known schools list"""
     text = msg.lower().strip()
-    
-    # Normalize common accent variations for matching
+    # Normalize accents
     normalized_text = (
         text.replace("á", "a")
-             .replace("é", "e")
-             .replace("í", "i")
-             .replace("ó", "o")
-             .replace("ú", "u")
-             .replace("ñ", "n")
-             .replace("ü", "u")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+        .replace("ñ", "n")
+        .replace("ü", "u")
     )
 
-    # First: try patterns with explicit keywords (original logic)
-    patterns = [
-        r"(?:colegio|gimnasio|liceo|instituto|escuela|jardín|jardin)\s+([a-z0-9\s]+)",
-        r"(?:del\s+(?:colegio|gimnasio|liceo|instituto|escuela)|de\s+la\s+(?:escuela|institución))\s+([a-z0-9\s]+)",
-    ]
-    
-    for pattern in patterns:
-        m = re.search(pattern, normalized_text)
-        if m:
-            school_name = m.group(1).strip()
-            # Clean up trailing context
-            school_name = re.split(r"[.,!?]|\s+(?:tiene|anos?|edad|cédula|cedula)", school_name)[0].strip()
-            if len(school_name) > 2:
-                return school_name.title()
-
-    # Second: match against known schools (even without keywords)
+    # Step 1: Try exact match from KNOWN_SCHOOLS first (most reliable)
     for school in KNOWN_SCHOOLS:
-        # Normalize school name too
         norm_school = (
             school.lower()
-                 .replace("á", "a")
-                 .replace("é", "e")
-                 .replace("í", "i")
-                 .replace("ó", "o")
-                 .replace("ú", "u")
-                 .replace("ñ", "n")
+            .replace("á", "a")
+            .replace("é", "e")
+            .replace("í", "i")
+            .replace("ó", "o")
+            .replace("ú", "u")
+            .replace("ñ", "n")
         )
-        
         if norm_school in normalized_text:
-            # Extract full match and clean
-            start = normalized_text.find(norm_school)
-            end = start + len(norm_school)
-            
-            # Try to capture up to 3 extra words (for full names)
-            remaining = normalized_text[end:].split()[:3]
-            full_match = norm_school + " " + " ".join(remaining)
-            full_match = re.split(r"[.,!?]", full_match)[0].strip()
-            
-            if len(full_match) > 3:
-                # Restore original capitalization from KNOWN_SCHOOLS
-                return school.title()
+            return school.title()  # Return original capitalization
 
-    # Fallback: if any school-related keyword exists, take next words
-    if any(kw in normalized_text for kw in ["gimnasio", "colegio", "instituto", "liceo", "comfacasanare"]):
-        words = msg.strip().split()
-        school_words = [w for w in words if len(w) >= 3]
-        if school_words:
-            return " ".join(school_words[:4]).title()
-    
+    # Step 2: Use keyword-based extraction (fallback)
+    # Match the WHOLE phrase after the keyword
+    keyword_pattern = r"(colegio|gimnasio|liceo|instituto|escuela|jard[íi]n)\s+([a-záéíóúñ\s]+)"
+    m = re.search(keyword_pattern, text)
+    if m:
+        school_phrase = m.group(2).strip()
+        # Clean up: remove trailing numbers, prices, or field markers
+        # Stop at: digits, "paquete", "para", "el", "la", "edad", "años", etc.
+        cleaned = re.split(
+            r"\s+(?:\d|paquete|para|el|la|edad|años|anos|cedula|documento|tiene|del|de\s+(?:colegio|gimnasio))",
+            school_phrase,
+            maxsplit=1
+        )[0].strip()
+        if len(cleaned) > 3:
+            return cleaned.title()
+
+    # Step 3: Fallback — look for any known school fragment
+    for school in KNOWN_SCHOOLS:
+        simple = re.sub(r"[^a-z0-9\s]", "", school.lower())
+        if simple in normalized_text:
+            return school.title()
+
     return None
 
 def extract_age(msg):
@@ -1175,9 +1161,13 @@ def process_message(msg, session):
     ]
     has_context = any(w in normalized for w in SCHOOL_CONTEXT)
 
-    # Treat package mentions as booking intent
+    # Treat package mentions OR price patterns as booking intent
     PACKAGE_KEYWORDS = ["paquete", "45 mil", "60 mil", "75 mil", "esencial", "activa", "bienestar", "45k", "60k", "75k"]
-    has_package_intent = any(kw in lower for kw in PACKAGE_KEYWORDS)
+    
+    # Detect price-like numbers (e.g., 45000, 45.000, 45,000, 60000, etc.)
+    has_price_pattern = bool(re.search(r"\b(?:45|60|75)[\.,]?\d{3}\b", lower))
+    
+    has_package_intent = any(kw in lower for kw in PACKAGE_KEYWORDS) or has_price_pattern
 
     # --------------------------------------------------
     # ALWAYS extract data unless it's a pure greeting or info query
@@ -1226,12 +1216,11 @@ def process_message(msg, session):
         )
 
     # --------------------------------------------------
-    # 3. FAQ (ONLY BEFORE BOOKING STARTS)
+    # 3. FAQ (ALLOWED AT ANY TIME)
     # --------------------------------------------------
-    if not session.get("booking_started"):
-        faq_answer = check_faq(text)
-        if faq_answer:
-            return faq_answer
+    faq_answer = check_faq(text)
+    if faq_answer:
+        return faq_answer
 
     # --------------------------------------------------
     # 4. START BOOKING (ONCE)
