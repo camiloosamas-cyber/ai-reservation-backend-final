@@ -138,11 +138,6 @@ if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_SERVICE_ROLE:
 else:
     print("WARNING: Supabase credentials missing")
 
-# Business configuration
-RESERVATION_TABLE = "reservations"
-SESSION_TABLE = "sessions"
-BUSINESS_ID = 2
-TABLE_LIMIT = 10
 
 # =============================================================================
 # IN-MEMORY SESSION STORE (Fallback)
@@ -1015,29 +1010,6 @@ def build_summary(session):
 # DATABASE OPERATIONS
 # =============================================================================
 
-def assign_table_number(dt_iso):
-    """Assign next available table for given datetime"""
-    if not supabase:
-        return "T1"
-    
-    try:
-        # Get all reservations for this datetime
-        result = supabase.table(RESERVATION_TABLE).select("table_number").eq("datetime", dt_iso).execute()
-        
-        taken_tables = {r["table_number"] for r in (result.data or [])}
-        
-        # Find first available table
-        for i in range(1, TABLE_LIMIT + 1):
-            table = f"T{i}"
-            if table not in taken_tables:
-                return table
-        
-        return None  # No tables available
-        
-    except Exception as e:
-        print(f"Error assigning table: {e}")
-        return "T1"
-
 def get_available_times_for_date(target_date: str, limit: int = 5) -> list[str]:
     """
     Given a date (YYYY-MM-DD), return up to `limit` available time slots
@@ -1077,11 +1049,6 @@ def get_available_times_for_date(target_date: str, limit: int = 5) -> list[str]:
         print(f"Error checking availability: {e}")
         # Safe fallback
         return [f"{h:02d}:00" for h in range(7, 18)]
-
-def insert_reservation(phone, session):
-    """Insert confirmed reservation into database"""
-    if not supabase:
-        return True, "T1"
     
     try:
         # Build datetime
@@ -1102,7 +1069,6 @@ def insert_reservation(phone, session):
             "customer_name": session["student_name"],
             "contact_phone": phone,
             "datetime": dt_iso,
-            "table_number": table,
             "status": "confirmado",
             "business_id": BUSINESS_ID,
             "package": session["package"],
