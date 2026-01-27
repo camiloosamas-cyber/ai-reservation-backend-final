@@ -1038,6 +1038,46 @@ def assign_table_number(dt_iso):
         print(f"Error assigning table: {e}")
         return "T1"
 
+def get_available_times_for_date(target_date: str, limit: int = 5) -> list[str]:
+    """
+    Given a date (YYYY-MM-DD), return up to `limit` available time slots
+    between 7:00 and 17:00 in 30-minute intervals, excluding already booked ones.
+    Returns list like ["07:00", "07:30", ..., "17:00"]
+    """
+    if not supabase:
+        # Fallback: assume all times available
+        return [f"{h:02d}:00" for h in range(7, 18)]
+
+    try:
+        # Fetch all reservations for this date
+        start_of_day = f"{target_date}T00:00:00"
+        end_of_day = f"{target_date}T23:59:59"
+        result = supabase.table(RESERVATION_TABLE).select("datetime").eq("business_id", BUSINESS_ID).gte("datetime", start_of_day).lte("datetime", end_of_day).execute()
+        
+        # Extract booked times as set of "HH:MM"
+        booked_times = set()
+        for row in (result.data or []):
+            dt = datetime.fromisoformat(row["datetime"].replace("Z", "+00:00"))
+            local_dt = dt.astimezone(LOCAL_TZ)
+            if local_dt.date().strftime("%Y-%m-%d") == target_date:
+                booked_times.add(local_dt.strftime("%H:%M"))
+
+        # Generate all possible slots (30-min intervals from 7am to 5pm)
+        all_slots = []
+        for hour in range(7, 18):  # 7 to 17 inclusive
+            all_slots.append(f"{hour:02d}:00")
+            if hour < 17:
+                all_slots.append(f"{hour:02d}:30")
+
+        # Filter out booked ones
+        available = [slot for slot in all_slots if slot not in booked_times]
+        return available[:limit]
+
+    except Exception as e:
+        print(f"Error checking availability: {e}")
+        # Safe fallback
+        return [f"{h:02d}:00" for h in range(7, 18)]
+
 def insert_reservation(phone, session):
     """Insert confirmed reservation into database"""
     if not supabase:
@@ -1301,10 +1341,35 @@ def process_message(msg, session):
         return intro
 
     # --------------------------------------------------
-    # 6. ASK NEXT MISSING FIELD
+    # 6. VALIDATE TIME AVAILABILITY & SUGGEST ALTERNATIVES
     # --------------------------------------------------
     if session.get("booking_started"):
         missing = get_missing_fields(session)
+        
+        # Special handling when date AND time are provided
+        if not missing or ("date" not in missing and "time" not in missing):
+            # Both date and time are filled → check availability
+            date_val = session["date"]
+            time_val = session["time"]
+            
+            # Normalize time to HH:MM (ensure format)
+            if ":" not in time_val:
+                time_val = f"{int(time_val):02d}:00"
+            
+            available_times = get_available_times_for_date(date_val)
+            if time_val not in available_times:
+                # Time is NOT available → suggest alternatives
+                if available_times:
+                    suggestions = ", ".join(available_times[:3])  # Show up to 3
+                    return (
+                        f"Lo siento, ya no hay cupo disponible el {date_val} a las {time_val}. "
+                        f"¿Te funcionaría alguno de estos horarios? {suggestions}"
+                    )
+                else:
+                    return f"No hay horarios disponibles el {date_val}. ¿Podrías elegir otra fecha?"
+            # If time IS available, proceed normally (will show summary next)
+        
+        # If still missing fields, ask for the first one
         if missing:
             return get_field_prompt(missing[0])
 
