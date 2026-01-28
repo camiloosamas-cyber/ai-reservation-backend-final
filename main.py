@@ -143,6 +143,7 @@ RESERVATION_TABLE = "reservations"
 SESSION_TABLE = "sessions"
 BUSINESS_ID = 2
 
+
 # =============================================================================
 # IN-MEMORY SESSION STORE (Fallback)
 # =============================================================================
@@ -1084,6 +1085,35 @@ def insert_reservation(phone, session):
         missing = [f for f in required if not session.get(f)]
         if missing:
             return False, f"Missing fields: {missing}"
+
+        # Build datetime
+        dt = datetime.strptime(
+            f"{session['date']} {session['time']}",
+            "%Y-%m-%d %H:%M"
+        )
+        dt_local = dt.replace(tzinfo=LOCAL_TZ)
+        dt_iso = dt_local.isoformat()
+
+        # Insert reservation (no table_number needed for school exams!)
+        result = supabase.table(RESERVATION_TABLE).insert({
+            "customer_name": session["student_name"],
+            "contact_phone": phone,
+            "datetime": dt_iso,
+            "status": "confirmado",
+            "business_id": BUSINESS_ID,
+            "package": session["package"],
+            "school_name": session["school"],
+            "age": session["age"],
+            "cedula": session["cedula"]
+        }).execute()
+
+        return True, "CONFIRMED"
+
+    except Exception as e:
+        print(f"❌ INSERT RESERVATION FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False, str(e)[:100]
 
 # =============================================================================
 # FAQ HANDLER
