@@ -138,11 +138,6 @@ if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_SERVICE_ROLE:
 else:
     print("WARNING: Supabase credentials missing")
 
-# Business configuration
-RESERVATION_TABLE = "reservations"
-SESSION_TABLE = "sessions"
-BUSINESS_ID = 2
-
 
 # =============================================================================
 # IN-MEMORY SESSION STORE (Fallback)
