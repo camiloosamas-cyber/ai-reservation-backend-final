@@ -1038,25 +1038,37 @@ def build_summary(session):
 # =============================================================================
 
 def get_available_times_for_date(target_date: str, limit: int = 5) -> list[str]:
+    """
+    Given a date (YYYY-MM-DD), return up to `limit` available time slots
+    between 7:00 and 17:00 in 30-minute intervals.
+    Assumes Supabase 'datetime' column is TEXT in format 'YYYY-MM-DD HH:MM'
+    """
     if not supabase:
-        return [f"{h:02d}:00" for h in range(7, 18)]
-    try:
-        # Parse target_date and localize to Bogotá
-        date_obj = datetime.strptime(target_date, "%Y-%m-%d").replace(tzinfo=LOCAL_TZ)
-        start_of_day = date_obj.isoformat()
-        end_of_day = (date_obj + timedelta(days=1)).isoformat()
+        # Fallback: assume all times available
+        all_slots = []
+        for hour in range(7, 18):
+            all_slots.append(f"{hour:02d}:00")
+            if hour < 17:
+                all_slots.append(f"{hour:02d}:30")
+        return all_slots[:limit]
 
-        result = supabase.table(RESERVATION_TABLE).select("datetime").eq("business_id", BUSINESS_ID).gte("datetime", start_of_day).lt("datetime", end_of_day).execute()
+    try:
+        # Query reservations where date part matches target_date
+        # Since 'datetime' is TEXT, use LIKE or substring
+        result = supabase.table(RESERVATION_TABLE).select("datetime").eq("business_id", BUSINESS_ID).like("datetime", f"{target_date}%").execute()
 
         booked_times = set()
         for row in (result.data or []):
-            dt = datetime.fromisoformat(row["datetime"])
-            # Ensure dt is timezone-aware; if naive, assume UTC and convert
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=ZoneInfo("UTC"))
-            dt_local = dt.astimezone(LOCAL_TZ)
-            if dt_local.date().strftime("%Y-%m-%d") == target_date:
-                booked_times.add(dt_local.strftime("%H:%M"))
+            dt_text = row["datetime"]
+            # Expected format: "2026-02-20 15:00"
+            if " " in dt_text:
+                time_part = dt_text.split(" ", 1)[1]
+                # Normalize to HH:MM
+                if len(time_part) == 4:  # "9:00" → "09:00"
+                    time_part = "0" + time_part
+                if ":" in time_part and len(time_part) >= 5:
+                    hh_mm = time_part[:5]
+                    booked_times.add(hh_mm)
 
         # Generate all possible slots (30-min intervals from 7am to 5pm)
         all_slots = []
@@ -1071,7 +1083,7 @@ def get_available_times_for_date(target_date: str, limit: int = 5) -> list[str]:
 
     except Exception as e:
         print(f"Error checking availability: {e}")
-        # Safe fallback
+        # Safe fallback: hourly slots
         return [f"{h:02d}:00" for h in range(7, 18)]
 
 def insert_reservation(phone, session):
@@ -1090,7 +1102,7 @@ def insert_reservation(phone, session):
             return False, f"Invalid datetime format: '{dt_str}' → {ve}"
 
         dt_local = dt.replace(tzinfo=LOCAL_TZ)
-        dt_iso = dt_local.isoformat()
+        dt_text = dt_local.strftime("%Y-%m-%d %H:%M")  # ✅ "2026-02-20 15:00"
 
         # Insert reservation
         result = supabase.table(RESERVATION_TABLE).insert({
@@ -1319,42 +1331,6 @@ def process_message(msg, session):
         return intro
 
     # --------------------------------------------------
-    # 6. VALIDATE TIME AVAILABILITY & SUGGEST ALTERNATIVES
-    # --------------------------------------------------
-    if session.get("booking_started"):
-        # NEW: Check if user is trying to exit booking
-        exit_phrases = ["otra cosa", "ayudar con otra", "no quiero agendar", "cancelar", "salir", "hablar con alguien", "atención humana"]
-        if any(phrase in normalized for phrase in exit_phrases):
-            # Reset booking state silently
-            session["booking_started"] = False
-            session["booking_intro_shown"] = False
-            session["awaiting_confirmation"] = False
-            save_session(session)
-            return None  # Silent fallback
-    
-        missing = get_missing_fields(session)
-        # Special handling when date AND time are provided
-        if not missing or ("date" not in missing and "time" not in missing):
-            # Both date and time are filled → check availability
-            date_val = session["date"]
-            time_val = session["time"]
-            if ":" not in time_val:
-                time_val = f"{int(time_val):02d}:00"
-            available_times = get_available_times_for_date(date_val)
-            if time_val not in available_times:
-                if available_times:
-                    suggestions = ", ".join(available_times[:3])
-                    return (
-                        f"Lo siento, ya no hay cupo disponible el {date_val} a las {time_val}. "
-                        f"¿Te funcionaría alguno de estos horarios? {suggestions}"
-                    )
-                else:
-                    return f"No hay horarios disponibles el {date_val}. ¿Podrías elegir otra fecha?"
-        # If still missing fields, ask for the first one
-        if missing:
-            return get_field_prompt(missing[0])
-
-    # --------------------------------------------------
     # 7. SUMMARY + CONFIRMATION
     # --------------------------------------------------
     if session.get("booking_started") and not session.get("awaiting_confirmation"):
@@ -1375,12 +1351,6 @@ def process_message(msg, session):
                 "🪪 Recuerda traer el documento de identidad del estudiante.\n\n"
                 "¡Te estaremos esperando!"
             )
-            phone = session["phone"]
-            session.clear()
-            session.update(create_new_session(phone))
-            save_session(session)
-            return confirmation_message
-        return "❌ No pudimos completar la reserva. Intenta nuevamente."
 
     # --------------------------------------------------
     # 8. SILENT FALLBACK (do not reply)
