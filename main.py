@@ -1,5 +1,8 @@
 print(">>> STARTING ORIENTAL IPS BOT v3.4.0 ✅")
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import re
 from datetime import datetime, timedelta
