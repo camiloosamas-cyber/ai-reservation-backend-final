@@ -1038,28 +1038,25 @@ def build_summary(session):
 # =============================================================================
 
 def get_available_times_for_date(target_date: str, limit: int = 5) -> list[str]:
-    """
-    Given a date (YYYY-MM-DD), return up to `limit` available time slots
-    between 7:00 and 17:00 in 30-minute intervals, excluding already booked ones.
-    Returns list like ["07:00", "07:30", ..., "17:00"]
-    """
     if not supabase:
-        # Fallback: assume all times available
         return [f"{h:02d}:00" for h in range(7, 18)]
-
     try:
-        # Fetch all reservations for this date
-        start_of_day = f"{target_date}T00:00:00"
-        end_of_day = f"{target_date}T23:59:59"
-        result = supabase.table(RESERVATION_TABLE).select("datetime").eq("business_id", BUSINESS_ID).gte("datetime", start_of_day).lte("datetime", end_of_day).execute()
-        
-        # Extract booked times as set of "HH:MM"
+        # Parse target_date and localize to Bogotá
+        date_obj = datetime.strptime(target_date, "%Y-%m-%d").replace(tzinfo=LOCAL_TZ)
+        start_of_day = date_obj.isoformat()
+        end_of_day = (date_obj + timedelta(days=1)).isoformat()
+
+        result = supabase.table(RESERVATION_TABLE).select("datetime").eq("business_id", BUSINESS_ID).gte("datetime", start_of_day).lt("datetime", end_of_day).execute()
+
         booked_times = set()
         for row in (result.data or []):
-            dt = datetime.fromisoformat(row["datetime"].replace("Z", "+00:00"))
-            local_dt = dt.astimezone(LOCAL_TZ)
-            if local_dt.date().strftime("%Y-%m-%d") == target_date:
-                booked_times.add(local_dt.strftime("%H:%M"))
+            dt = datetime.fromisoformat(row["datetime"])
+            # Ensure dt is timezone-aware; if naive, assume UTC and convert
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+            dt_local = dt.astimezone(LOCAL_TZ)
+            if dt_local.date().strftime("%Y-%m-%d") == target_date:
+                booked_times.add(dt_local.strftime("%H:%M"))
 
         # Generate all possible slots (30-min intervals from 7am to 5pm)
         all_slots = []
