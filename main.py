@@ -1333,26 +1333,30 @@ def process_message(msg, session):
     # --------------------------------------------------
     # 7. SUMMARY + CONFIRMATION
     # --------------------------------------------------
-    # FIRST: Check if we're awaiting confirmation and user says "CONFIRMO"
+    if session.get("booking_started") and not session.get("awaiting_confirmation"):
+        if not get_missing_fields(session):
+            return build_summary(session)
+
     if session.get("awaiting_confirmation") and "confirmo" in normalized:
         ok, table = insert_reservation(session["phone"], session)
         if ok:
             date = session.get("date")
             time = session.get("time")
             confirmation_message = (
-                "✅ *Cita confirmada*\n"
+                "✅ *Cita confirmada*\n\n"
                 f"📅 Fecha: {date}\n"
-                f"⏰ Hora: {time}\n"
+                f"⏰ Hora: {time}\n\n"
                 "📍 *Oriental IPS*\n"
-                "Calle 31 #29-61, Yopal\n"
-                "🪪 Recuerda traer el documento de identidad del estudiante.\n"
+                "Calle 31 #29-61, Yopal\n\n"
+                "🪪 Recuerda traer el documento de identidad del estudiante.\n\n"
                 "¡Te estaremos esperando!"
             )
-            return confirmation_message  # THIS RETURN IS CRITICAL
-    
-    # SECOND: If we're in booking mode and not awaiting confirmation, and all fields are filled
-    if session.get("booking_started") and not session.get("awaiting_confirmation") and not get_missing_fields(session):
-        return build_summary(session)
+            phone = session["phone"]
+            session.clear()
+            session.update(create_new_session(phone))
+            save_session(session)
+            return confirmation_message
+        return "❌ No pudimos completar la reserva. Intenta nuevamente."
 
     # --------------------------------------------------
     # 8. SILENT FALLBACK (do not reply)
