@@ -1108,7 +1108,7 @@ def insert_reservation(phone, session):
         result = supabase.table(RESERVATION_TABLE).insert({
             "customer_name": session["student_name"],
             "contact_phone": phone,
-            "datetime": dt_iso,
+            "datetime": dt_text,
             "status": "confirmado",
             "business_id": BUSINESS_ID,  # ← must be defined!
             "package": session["package"],
@@ -1333,24 +1333,26 @@ def process_message(msg, session):
     # --------------------------------------------------
     # 7. SUMMARY + CONFIRMATION
     # --------------------------------------------------
-    if session.get("booking_started") and not session.get("awaiting_confirmation"):
-        if not get_missing_fields(session):
-            return build_summary(session)
-
+    # FIRST: Check if we're awaiting confirmation and user says "CONFIRMO"
     if session.get("awaiting_confirmation") and "confirmo" in normalized:
         ok, table = insert_reservation(session["phone"], session)
         if ok:
             date = session.get("date")
             time = session.get("time")
             confirmation_message = (
-                "✅ *Cita confirmada*\n\n"
+                "✅ *Cita confirmada*\n"
                 f"📅 Fecha: {date}\n"
-                f"⏰ Hora: {time}\n\n"
+                f"⏰ Hora: {time}\n"
                 "📍 *Oriental IPS*\n"
-                "Calle 31 #29-61, Yopal\n\n"
-                "🪪 Recuerda traer el documento de identidad del estudiante.\n\n"
+                "Calle 31 #29-61, Yopal\n"
+                "🪪 Recuerda traer el documento de identidad del estudiante.\n"
                 "¡Te estaremos esperando!"
             )
+            return confirmation_message  # THIS RETURN IS CRITICAL
+    
+    # SECOND: If we're in booking mode and not awaiting confirmation, and all fields are filled
+    if session.get("booking_started") and not session.get("awaiting_confirmation") and not get_missing_fields(session):
+        return build_summary(session)
 
     # --------------------------------------------------
     # 8. SILENT FALLBACK (do not reply)
