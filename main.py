@@ -1,5 +1,8 @@
 print(">>> STARTING ORIENTAL IPS BOT v3.4.0 ✅")
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import re
 from datetime import datetime, timedelta
@@ -138,11 +141,11 @@ if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_SERVICE_ROLE:
 else:
     print("WARNING: Supabase credentials missing")
 
-# Business configuration
+# Business configuration — MUST BE DEFINED
 RESERVATION_TABLE = "reservations"
 SESSION_TABLE = "sessions"
 BUSINESS_ID = 2
-TABLE_LIMIT = 10
+
 
 # =============================================================================
 # IN-MEMORY SESSION STORE (Fallback)
@@ -305,6 +308,9 @@ KNOWN_SCHOOLS = [
     "camilo torres",
     "antonio narino",
 ]
+
+# Sort schools by length (longest first) for accurate matching
+KNOWN_SCHOOLS = sorted(KNOWN_SCHOOLS, key=len, reverse=True)
 
 # Common first names in Colombia (Yopal region)
 COMMON_FIRST_NAMES = {
@@ -510,11 +516,12 @@ COMMON_LAST_NAMES = {remove_accents(n.lower()) for n in COMMON_LAST_NAMES}
 # =============================================================================
 
 FAQ = {
-    "ubicacion": "Estamos ubicados en Calle 31 #29-61, Yopal.",
+    "ubicacion": "Estamos ubicados en Calle 17 #16-53, Yopal, frente al Hospital San José.",
     "pago": "Aceptamos Nequi y efectivo.",
-    "duracion": "El examen dura entre 30 y 45 minutos.",
-    "llevar": "Debes traer el documento de identidad del estudiante.",
-    "horario": "Atendemos de lunes a domingo de 7am a 5pm."
+    "duracion": "Los exámenes médicos escolares toman aproximadamente 30 minutos por estudiante.",
+    "llevar": "Debes traer el documento de identidad del estudiante (Tarjeta de Identidad o Cédula).",
+    "horario": "Atendemos de lunes a viernes de 7:00 AM a 5:00 PM.",
+    "agendar": "Sí, es necesario agendar cita para los exámenes médicos escolares. Puedo ayudarte a hacerlo ahora mismo si deseas."
 }
 
 # =============================================================================
@@ -610,11 +617,12 @@ def extract_student_name(msg, current_name):
     return None
 
 def extract_school(msg):
-    """Extract school name from message using known schools list"""
+    """Extract school name from message using known schools list — prioritizing longest exact match"""
     text = msg.lower().strip()
-    # Normalize accents
+    # Normalize accents for matching (but keep original for return)
     normalized_text = (
-        text.replace("á", "a")
+        text
+        .replace("á", "a")
         .replace("é", "e")
         .replace("í", "i")
         .replace("ó", "o")
@@ -623,8 +631,11 @@ def extract_school(msg):
         .replace("ü", "u")
     )
 
-    # Step 1: Try exact match from KNOWN_SCHOOLS first (most reliable)
-    for school in KNOWN_SCHOOLS:
+    # ✅ Critical: Sort KNOWN_SCHOOLS by length DESC *inside* the function (in case outer sort fails)
+    candidates = sorted(KNOWN_SCHOOLS, key=lambda s: len(s), reverse=True)
+
+    # Step 1: Exact phrase match (longest first) — use raw normalized school vs normalized text
+    for school in candidates:
         norm_school = (
             school.lower()
             .replace("á", "a")
@@ -634,27 +645,39 @@ def extract_school(msg):
             .replace("ú", "u")
             .replace("ñ", "n")
         )
-        if norm_school in normalized_text:
-            return school.title()  # Return original capitalization
+        # Use `in` but only if the match is *not* a substring of a longer word (e.g., "llanos" inside "gimnasio" is OK, but we want full phrase priority)
+        # Better: require that the match is a standalone word or phrase — but simplest fix: check if norm_school appears as a *whole word* via regex
+        if re.search(rf"\b{re.escape(norm_school)}\b", normalized_text):
+            return school.title()
 
-    # Step 2: Use keyword-based extraction (fallback)
-    # Match the WHOLE phrase after the keyword
+    # Step 2: Keyword-based fallback (as before)
     keyword_pattern = r"(colegio|gimnasio|liceo|instituto|escuela|jard[íi]n)\s+([a-záéíóúñ\s]+)"
     m = re.search(keyword_pattern, text)
     if m:
         school_phrase = m.group(2).strip()
-        # Clean up: remove trailing numbers, prices, or field markers
-        # Stop at: digits, "paquete", "para", "el", "la", "edad", "años", etc.
         cleaned = re.split(
             r"\s+(?:\d|paquete|para|el|la|edad|años|anos|cedula|documento|tiene|del|de\s+(?:colegio|gimnasio))",
             school_phrase,
             maxsplit=1
         )[0].strip()
         if len(cleaned) > 3:
+            # Try to match cleaned phrase against KNOWN_SCHOOLS (again, longest first)
+            for school in candidates:
+                norm_school = (
+                    school.lower()
+                    .replace("á", "a")
+                    .replace("é", "e")
+                    .replace("í", "i")
+                    .replace("ó", "o")
+                    .replace("ú", "u")
+                    .replace("ñ", "n")
+                )
+                if re.search(rf"\b{re.escape(norm_school)}\b", cleaned.lower()):
+                    return school.title()
             return cleaned.title()
 
-    # Step 3: Fallback — look for any known school fragment
-    for school in KNOWN_SCHOOLS:
+    # Step 3: Fallback — look for any known school fragment (least reliable)
+    for school in candidates:
         simple = re.sub(r"[^a-z0-9\s]", "", school.lower())
         if simple in normalized_text:
             return school.title()
@@ -1014,69 +1037,93 @@ def build_summary(session):
 # DATABASE OPERATIONS
 # =============================================================================
 
-def assign_table_number(dt_iso):
-    """Assign next available table for given datetime"""
+def get_available_times_for_date(target_date: str, limit: int = 5) -> list[str]:
+    """
+    Given a date (YYYY-MM-DD), return up to `limit` available time slots
+    between 7:00 and 17:00 in 30-minute intervals.
+    Assumes Supabase 'datetime' column is TEXT in format 'YYYY-MM-DD HH:MM'
+    """
     if not supabase:
-        return "T1"
-    
+        # Fallback: assume all times available
+        all_slots = []
+        for hour in range(7, 18):
+            all_slots.append(f"{hour:02d}:00")
+            if hour < 17:
+                all_slots.append(f"{hour:02d}:30")
+        return all_slots[:limit]
+
     try:
-        # Get all reservations for this datetime
-        result = supabase.table(RESERVATION_TABLE).select("table_number").eq("datetime", dt_iso).execute()
-        
-        taken_tables = {r["table_number"] for r in (result.data or [])}
-        
-        # Find first available table
-        for i in range(1, TABLE_LIMIT + 1):
-            table = f"T{i}"
-            if table not in taken_tables:
-                return table
-        
-        return None  # No tables available
-        
+        # Query reservations where date part matches target_date
+        # Since 'datetime' is TEXT, use LIKE or substring
+        result = supabase.table(RESERVATION_TABLE).select("datetime").eq("business_id", BUSINESS_ID).like("datetime", f"{target_date}%").execute()
+
+        booked_times = set()
+        for row in (result.data or []):
+            dt_text = row["datetime"]
+            # Expected format: "2026-02-20 15:00"
+            if " " in dt_text:
+                time_part = dt_text.split(" ", 1)[1]
+                # Normalize to HH:MM
+                if len(time_part) == 4:  # "9:00" → "09:00"
+                    time_part = "0" + time_part
+                if ":" in time_part and len(time_part) >= 5:
+                    hh_mm = time_part[:5]
+                    booked_times.add(hh_mm)
+
+        # Generate all possible slots (30-min intervals from 7am to 5pm)
+        all_slots = []
+        for hour in range(7, 18):  # 7 to 17 inclusive
+            all_slots.append(f"{hour:02d}:00")
+            if hour < 17:
+                all_slots.append(f"{hour:02d}:30")
+
+        # Filter out booked ones
+        available = [slot for slot in all_slots if slot not in booked_times]
+        return available[:limit]
+
     except Exception as e:
-        print(f"Error assigning table: {e}")
-        return "T1"
+        print(f"Error checking availability: {e}")
+        # Safe fallback: hourly slots
+        return [f"{h:02d}:00" for h in range(7, 18)]
 
 def insert_reservation(phone, session):
-    """Insert confirmed reservation into database"""
-    if not supabase:
-        return True, "T1"
-    
     try:
+        # Validate required fields
+        required = ["student_name", "school", "package", "date", "time", "age", "cedula"]
+        missing = [f for f in required if not session.get(f)]
+        if missing:
+            return False, f"Missing fields: {missing}"
+
         # Build datetime
-        dt = datetime.strptime(
-            f"{session['date']} {session['time']}",
-            "%Y-%m-%d %H:%M"
-        )
+        dt_str = f"{session['date']} {session['time']}"
+        try:
+            dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+        except ValueError as ve:
+            return False, f"Invalid datetime format: '{dt_str}' → {ve}"
+
         dt_local = dt.replace(tzinfo=LOCAL_TZ)
-        dt_iso = dt_local.isoformat()
-        
-        # Assign table
-        table = assign_table_number(dt_iso)
-        if not table:
-            return False, "No hay cupos disponibles para ese horario"
-        
+        dt_text = dt_local.strftime("%Y-%m-%d %H:%M")  # ✅ "2026-02-20 15:00"
+
         # Insert reservation
-        supabase.table(RESERVATION_TABLE).insert({
-            "customer_name": session["student_name"],
-            "contact_phone": phone,
-            "datetime": dt_iso,
-            "table_number": table,
-            "status": "confirmado",
-            "business_id": BUSINESS_ID,
-            "package": session["package"],
-            "school_name": session["school"],
-            "age": session["age"],
-            "cedula": session["cedula"]
+        result = supabase.table(RESERVATION_TABLE).insert({
+          "customer_name": session["student_name"],
+          "contact_phone": phone,
+          "datetime": dt_text,
+          "status": "confirmado",          # ← now exists ✅
+          "business_id": BUSINESS_ID,      # ← now exists ✅
+          "package": session["package"],
+          "school_name": session["school"],
+          "age": session["age"],
+          "cedula": session["cedula"]
         }).execute()
-        
-        return True, table
-        
+
+        return True, "CONFIRMED"
+
     except Exception as e:
-        print("❌ INSERT RESERVATION FAILED")
-        print("ERROR:", repr(e))
-        print("SESSION DATA:", session)
-        return False, repr(e)
+        print("❌ INSERT RESERVATION FAILED:", repr(e))
+        import traceback
+        traceback.print_exc()  # ← This will show exact error in logs
+        return False, str(e)[:200]
 
 # =============================================================================
 # FAQ HANDLER
@@ -1100,6 +1147,11 @@ def check_faq(msg):
     
     if any(k in text for k in ["horario", "atienden", "abren", "cierran"]):
         return FAQ["horario"]
+
+    # Handle: "¿Tengo que agendar cita?", "¿Debo reservar?", etc.
+    if any(k in text for k in ["tengo que", "debo", "necesito", "obligado"]):
+        if any(p in text for p in ["agendar", "cita", "reservar", "turno"]):
+            return FAQ["agendar"]
     
     return None
 
@@ -1161,9 +1213,13 @@ def process_message(msg, session):
     ]
     has_context = any(w in normalized for w in SCHOOL_CONTEXT)
 
-    # Treat package mentions as booking intent
+    # Treat package mentions OR price patterns as booking intent
     PACKAGE_KEYWORDS = ["paquete", "45 mil", "60 mil", "75 mil", "esencial", "activa", "bienestar", "45k", "60k", "75k"]
-    has_package_intent = any(kw in lower for kw in PACKAGE_KEYWORDS)
+    
+    # Detect price-like numbers (e.g., 45000, 45.000, 45,000, 60000, etc.)
+    has_price_pattern = bool(re.search(r"\b(?:45|60|75)[\.,]?\d{3}\b", lower))
+    
+    has_package_intent = any(kw in lower for kw in PACKAGE_KEYWORDS) or has_price_pattern
 
     # --------------------------------------------------
     # ALWAYS extract data unless it's a pure greeting or info query
@@ -1212,12 +1268,11 @@ def process_message(msg, session):
         )
 
     # --------------------------------------------------
-    # 3. FAQ (ONLY BEFORE BOOKING STARTS)
+    # 3. FAQ (ALLOWED AT ANY TIME)
     # --------------------------------------------------
-    if not session.get("booking_started"):
-        faq_answer = check_faq(text)
-        if faq_answer:
-            return faq_answer
+    faq_answer = check_faq(text)
+    if faq_answer:
+        return faq_answer
 
     # --------------------------------------------------
     # 4. START BOOKING (ONCE)
@@ -1234,43 +1289,46 @@ def process_message(msg, session):
         save_session(session)
         
     # --------------------------------------------------
-    # 5. SHOW INTRO OR CONTINUE
+    # 5. SHOW DYNAMIC INTRO OR SUMMARY (IF ALL FIELDS PRESENT)
     # --------------------------------------------------
     if session.get("booking_started") and not session.get("booking_intro_shown"):
         session["booking_intro_shown"] = True
         save_session(session)
-        if any([
-            session.get("student_name"),
-            session.get("school"),
-            session.get("package"),
-            session.get("date"),
-            session.get("time"),
-            session.get("age"),
-            session.get("cedula"),
-        ]):
-            missing = get_missing_fields(session)
-            if missing:
-                return get_field_prompt(missing[0])
-            return build_summary(session)
-        else:
-            return (
-                "Perfecto 😊 Para agendar la cita solo necesito la siguiente información:\n\n"
-                "- Nombre completo del estudiante\n"
-                "- Colegio\n"
-                "- Paquete\n"
-                "- Fecha y hora\n"
-                "- Edad\n"
-                "- Documento de identidad (Tarjeta de Identidad o Cédula)\n\n"
-                "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
-            )
-
-    # --------------------------------------------------
-    # 6. ASK NEXT MISSING FIELD
-    # --------------------------------------------------
-    if session.get("booking_started"):
+    
+        # Check missing fields
         missing = get_missing_fields(session)
-        if missing:
-            return get_field_prompt(missing[0])
+        
+        # If NOTHING is missing → skip intro, go straight to summary
+        if not missing:
+            return build_summary(session)
+    
+        # Otherwise, build adaptive intro
+        known = []
+        missing_list = []
+        if session.get("student_name"): known.append("nombre")
+        else: missing_list.append("Nombre completo del estudiante")
+        if session.get("school"): known.append("colegio")
+        else: missing_list.append("Colegio")
+        if session.get("package"): known.append("paquete")
+        else: missing_list.append("Paquete")
+        if session.get("date") and session.get("time"): known.append("fecha y hora")
+        elif session.get("date") or session.get("time"): missing_list.append("Fecha y hora completas")
+        else: missing_list.append("Fecha y hora")
+        if session.get("age"): known.append("edad")
+        else: missing_list.append("Edad")
+        if session.get("cedula"): known.append("documento")
+        else: missing_list.append("Documento de identidad (Tarjeta de Identidad o Cédula)")
+    
+        if known:
+            intro = "¡Genial! Ya tengo: " + ", ".join(known) + ".\n"
+            intro += "Para completar tu cita, solo necesito:\n"
+        else:
+            intro = "Perfecto 😊 Para agendar la cita, necesito la siguiente información:\n"
+        
+        for item in missing_list:
+            intro += f"- {item}\n"
+        intro += "\nPuedes enviarme los datos poco a poco o todos en un solo mensaje."
+        return intro
 
     # --------------------------------------------------
     # 7. SUMMARY + CONFIRMATION
