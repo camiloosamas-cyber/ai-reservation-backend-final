@@ -141,6 +141,11 @@ if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_SERVICE_ROLE:
 else:
     print("WARNING: Supabase credentials missing")
 
+# Business configuration — MUST BE DEFINED
+RESERVATION_TABLE = "reservations"
+SESSION_TABLE = "sessions"
+BUSINESS_ID = 2
+
 
 # =============================================================================
 # IN-MEMORY SESSION STORE (Fallback)
@@ -1073,10 +1078,6 @@ def get_available_times_for_date(target_date: str, limit: int = 5) -> list[str]:
         return [f"{h:02d}:00" for h in range(7, 18)]
 
 def insert_reservation(phone, session):
-    """Insert confirmed reservation into database"""
-    if not supabase:
-        return True, "MOCK_TABLE"
-    
     try:
         # Validate required fields
         required = ["student_name", "school", "package", "date", "time", "age", "cedula"]
@@ -1085,20 +1086,22 @@ def insert_reservation(phone, session):
             return False, f"Missing fields: {missing}"
 
         # Build datetime
-        dt = datetime.strptime(
-            f"{session['date']} {session['time']}",
-            "%Y-%m-%d %H:%M"
-        )
+        dt_str = f"{session['date']} {session['time']}"
+        try:
+            dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+        except ValueError as ve:
+            return False, f"Invalid datetime format: '{dt_str}' → {ve}"
+
         dt_local = dt.replace(tzinfo=LOCAL_TZ)
         dt_iso = dt_local.isoformat()
 
-        # Insert reservation (no table_number needed for school exams!)
+        # Insert reservation
         result = supabase.table(RESERVATION_TABLE).insert({
             "customer_name": session["student_name"],
             "contact_phone": phone,
             "datetime": dt_iso,
             "status": "confirmado",
-            "business_id": BUSINESS_ID,
+            "business_id": BUSINESS_ID,  # ← must be defined!
             "package": session["package"],
             "school_name": session["school"],
             "age": session["age"],
@@ -1108,10 +1111,10 @@ def insert_reservation(phone, session):
         return True, "CONFIRMED"
 
     except Exception as e:
-        print(f"❌ INSERT RESERVATION FAILED: {type(e).__name__}: {e}")
+        print("❌ INSERT RESERVATION FAILED:", repr(e))
         import traceback
-        traceback.print_exc()
-        return False, str(e)[:100]
+        traceback.print_exc()  # ← This will show exact error in logs
+        return False, str(e)[:200]
 
 # =============================================================================
 # FAQ HANDLER
