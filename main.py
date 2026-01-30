@@ -1295,40 +1295,68 @@ def process_message(msg, session):
         session["booking_intro_shown"] = True
         save_session(session)
     
-        # Check missing fields
         missing = get_missing_fields(session)
-        
-        # If NOTHING is missing → skip intro, go straight to summary
+    
+        # If NOTHING is missing → go straight to summary
         if not missing:
             return build_summary(session)
     
-        # Otherwise, build adaptive intro
+        # If SOME fields already exist → follow old logic:
+        # → ask for the next missing field instead of showing full intro
+        if any([
+            session.get("student_name"),
+            session.get("school"),
+            session.get("package"),
+            session.get("date"),
+            session.get("time"),
+            session.get("age"),
+            session.get("cedula"),
+        ]):
+            # Respect old behavior
+            return get_field_prompt(missing[0])
+    
+        # Otherwise → NEW adaptive intro (only when the user has given *nothing*)
         known = []
         missing_list = []
+    
         if session.get("student_name"): known.append("nombre")
         else: missing_list.append("Nombre completo del estudiante")
+    
         if session.get("school"): known.append("colegio")
         else: missing_list.append("Colegio")
+    
         if session.get("package"): known.append("paquete")
         else: missing_list.append("Paquete")
-        if session.get("date") and session.get("time"): known.append("fecha y hora")
-        elif session.get("date") or session.get("time"): missing_list.append("Fecha y hora completas")
-        else: missing_list.append("Fecha y hora")
+    
+        if session.get("date") and session.get("time"):
+            known.append("fecha y hora")
+        elif session.get("date") or session.get("time"):
+            missing_list.append("Fecha y hora completas")
+        else:
+            missing_list.append("Fecha y hora")
+    
         if session.get("age"): known.append("edad")
         else: missing_list.append("Edad")
+    
         if session.get("cedula"): known.append("documento")
         else: missing_list.append("Documento de identidad (Tarjeta de Identidad o Cédula)")
     
-        if known:
-            intro = "¡Genial! Ya tengo: " + ", ".join(known) + ".\n"
-            intro += "Para completar tu cita, solo necesito:\n"
-        else:
-            intro = "Perfecto 😊 Para agendar la cita, necesito la siguiente información:\n"
-        
+        # Build intro
+        intro = "Perfecto 😊 Para agendar la cita solo necesito la siguiente información:\n\n"
         for item in missing_list:
             intro += f"- {item}\n"
         intro += "\nPuedes enviarme los datos poco a poco o todos en un solo mensaje."
+    
         return intro
+
+    # --------------------------------------------------
+    # 6. ASK NEXT MISSING FIELD  ← 🔥 THIS WAS MISSING
+    # --------------------------------------------------
+    if session.get("booking_started"):
+        missing = get_missing_fields(session)
+        if missing:
+            return get_field_prompt(missing[0])
+
 
     # --------------------------------------------------
     # 7. SUMMARY + CONFIRMATION
