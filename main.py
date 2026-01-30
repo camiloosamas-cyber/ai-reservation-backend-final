@@ -566,7 +566,7 @@ def extract_student_name(msg, current_name):
         parts = lower.split("se llama", 1)
         if len(parts) > 1:
             candidate = parts[1].strip()
-            for stop in ["del", "de", "tiene", "edad", "colegio", "cedula", "su", "para", "el", "la", ",", "."]:
+            for stop in ["del", "de", "tiene", "edad", "colegio", "cedula", "su", "el", "la", ",", "."]:
                 if f" {stop}" in candidate:
                     candidate = candidate.split(f" {stop}")[0]
                     break
@@ -574,14 +574,28 @@ def extract_student_name(msg, current_name):
             if candidate and len(candidate.split()) >= 2:
                 return candidate.title()
 
-    # Pattern: "mi hijo X"
+    # Pattern: "mi hijo/mi hija [Full Name]"
     if "mi hijo" in lower or "mi hija" in lower:
-        m = re.search(r"mi\s+(?:hijo|hiijo|hija)\s+([a-záéíóúñ\s]+?)(?=\s*(?:,|\.|del|de|tiene|edad|colegio|$))", lower)
+        # Match everything after "mi hijo/hija" up to a stop word or end
+        m = re.search(r"mi\s+(?:hijo|hiijo|hija)\s+((?:[a-záéíóúñ]+\s*)+?)(?=\s*(?:del|de|tiene|edad|colegio|paquete|documento|id|cita|$))", lower)
         if m:
-            name = m.group(1).strip()
-            name = re.split(r"\s+(?:del|de|tiene|edad|colegio)", name)[0].strip()
-            if name and len(name.split()) >= 2:
-                return name.title()
+            full_candidate = m.group(1).strip()
+            # Split into words and validate from left to right
+            words = full_candidate.split()
+            valid_name_parts = []
+            for word in words:
+                clean_word = remove_accents(word.lower())
+                # Accept if it's a known first name, last name, or looks like a name (starts with letter, not too short)
+                if (clean_word in COMMON_FIRST_NAMES or 
+                    clean_word in COMMON_LAST_NAMES or 
+                    (len(clean_word) >= 2 and clean_word.isalpha())):
+                    valid_name_parts.append(word)
+                else:
+                    break  # Stop at first non-name word
+            if valid_name_parts:
+                # Require at least one known first name in the sequence
+                if any(remove_accents(w.lower()) in COMMON_FIRST_NAMES for w in valid_name_parts):
+                    return " ".join(valid_name_parts).title()
 
     # Pattern: "nombre es X"
     if "nombre" in lower:
@@ -602,6 +616,13 @@ def extract_student_name(msg, current_name):
                 if word2_clean in COMMON_FIRST_NAMES or word2_clean in COMMON_LAST_NAMES:
                     full_name = " ".join(words[i:j+1]).title()
                     return full_name
+
+    # Fallback: single first name anywhere in message
+    words = text.split()
+    for word in words:
+        clean = remove_accents(word.lower().strip(".,!?"))
+        if clean in COMMON_FIRST_NAMES:
+            return word.title()
                     
     # Fallback: try first two words of message if they look like names
     lines = [line.strip() for line in msg.split("\n") if line.strip()]
