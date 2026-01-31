@@ -511,6 +511,9 @@ COMMON_LAST_NAMES = {
 COMMON_FIRST_NAMES = {remove_accents(n.lower()) for n in COMMON_FIRST_NAMES}
 COMMON_LAST_NAMES = {remove_accents(n.lower()) for n in COMMON_LAST_NAMES}
 
+# Session storage: remembers partial booking data per WhatsApp user
+user_sessions = {}
+
 # =============================================================================
 # FAQ RESPONSES
 # =============================================================================
@@ -638,9 +641,8 @@ def extract_student_name(msg, current_name):
     return None
 
 def extract_school(msg):
-    """Extract school name from message using known schools list — prioritizing longest exact match"""
+    """Extract school name using KNOWN_SCHOOLS with flexible partial matching"""
     text = msg.lower().strip()
-    # Normalize accents for matching (but keep original for return)
     normalized_text = (
         text
         .replace("á", "a")
@@ -652,12 +654,10 @@ def extract_school(msg):
         .replace("ü", "u")
     )
 
-    # ✅ Critical: Sort KNOWN_SCHOOLS by length DESC *inside* the function (in case outer sort fails)
-    candidates = sorted(KNOWN_SCHOOLS, key=lambda s: len(s), reverse=True)
-
-    # Step 1: Exact phrase match (longest first) — use raw normalized school vs normalized text
-    for school in candidates:
-        norm_school = (
+    # Normalize all known schools once
+    normalized_schools = []
+    for school in KNOWN_SCHOOLS:
+        norm = (
             school.lower()
             .replace("á", "a")
             .replace("é", "e")
@@ -666,12 +666,26 @@ def extract_school(msg):
             .replace("ú", "u")
             .replace("ñ", "n")
         )
-        # Use `in` but only if the match is *not* a substring of a longer word (e.g., "llanos" inside "gimnasio" is OK, but we want full phrase priority)
-        # Better: require that the match is a standalone word or phrase — but simplest fix: check if norm_school appears as a *whole word* via regex
-        if re.search(rf"\b{re.escape(norm_school)}\b", normalized_text):
-            return school.title()
+        normalized_schools.append((school, norm))
 
-    # Step 2: Keyword-based fallback (as before)
+    # 1. Try exact phrase match (longest first)
+    for original, norm_school in normalized_schools:
+        if re.search(rf"\b{re.escape(norm_school)}\b", normalized_text):
+            return original.title()
+
+    # 2. Try: does user input appear *inside* a known school?
+    # e.g., user says "alianza pedagogica" → matches "colegio alianza pedagogica"
+    for original, norm_school in normalized_schools:
+        if normalized_text in norm_school:
+            return original.title()
+
+    # 3. Try: does a known school appear *inside* user input?
+    # (less likely, but safe)
+    for original, norm_school in normalized_schools:
+        if norm_school in normalized_text:
+            return original.title()
+
+    # 4. Keyword-based fallback (your existing logic)
     keyword_pattern = r"(colegio|gimnasio|liceo|instituto|escuela|jard[íi]n)\s+([a-záéíóúñ\s]+)"
     m = re.search(keyword_pattern, text)
     if m:
@@ -682,28 +696,27 @@ def extract_school(msg):
             maxsplit=1
         )[0].strip()
         if len(cleaned) > 3:
-            # Try to match cleaned phrase against KNOWN_SCHOOLS (again, longest first)
-            for school in candidates:
-                norm_school = (
-                    school.lower()
-                    .replace("á", "a")
-                    .replace("é", "e")
-                    .replace("í", "i")
-                    .replace("ó", "o")
-                    .replace("ú", "u")
-                    .replace("ñ", "n")
-                )
-                if re.search(rf"\b{re.escape(norm_school)}\b", cleaned.lower()):
-                    return school.title()
+            clean_norm = (
+                cleaned.lower()
+                .replace("á", "a")
+                .replace("é", "e")
+                .replace("í", "i")
+                .replace("ó", "o")
+                .replace("ú", "u")
+                .replace("ñ", "n")
+            )
+            for original, norm_school in normalized_schools:
+                if clean_norm in norm_school or norm_school in clean_norm:
+                    return original.title()
             return cleaned.title()
 
-    # Step 3: Fallback — look for any known school fragment (least reliable)
-    for school in candidates:
-        simple = re.sub(r"[^a-z0-9\s]", "", school.lower())
-        if simple in normalized_text:
-            return school.title()
-
     return None
+
+def clean_school_display_name(school: str) -> str:
+    school = school.strip()
+    if school.lower().startswith("colegio "):
+        return school[8:].strip()
+    return school
 
 def extract_age(msg):
     """Extract age from message ONLY if explicitly stated"""
@@ -974,13 +987,18 @@ def update_session_with_message(msg, session):
     if date == "PAST_DATE":
         return "PAST_DATE"
 
-    if date:
+    if date == "PAST_DATE":
+        session.pop("date", None)
+        return "PAST_DATE"
+    elif date:
         session["date"] = date
         updated.append("date")
 
-    if time:
-        if time == "INVALID_TIME":
-            return "INVALID_TIME"
+    if time == "INVALID_TIME":
+        # Clear the invalid time so session isn't considered "complete"
+        session.pop("time", None)
+        return "INVALID_TIME"
+    elif time:
         session["time"] = time
         updated.append("time")
 
@@ -1037,10 +1055,15 @@ def build_summary(session):
     
     pkg_data = PACKAGES[pkg_key]
     
+    # Clean school name for display
+    school_raw = session.get("school", "")
+    school_clean = clean_school_display_name(school_raw)
+    
+    # Build the summary string
     summary = (
         "Ya tengo toda la informacion:\n\n"
         f"Estudiante: {session['student_name']}\n"
-        f"Colegio: {session['school']}\n"
+        f"Colegio: {school_clean}\n"
         f"Paquete: {pkg_data['name']} (${pkg_data['price']})\n"
         f"Fecha: {session['date']}\n"
         f"Hora: {session['time']}\n"
@@ -1421,24 +1444,38 @@ async def whatsapp_webhook(request: Request, WaId: str = Form(...), Body: str = 
     phone = WaId.split(":")[-1].strip()
     user_msg = Body.strip()
     
-    session = get_session(phone)
-    response_text = process_message(user_msg, session)
+    # --- LOAD SESSION ---
+    session_data = user_sessions.get(phone, {})
+    session_data["phone"] = phone  # ensure phone is in session
+
+    # --- UPDATE SESSION WITH NEW MESSAGE (using your existing logic) ---
+    result = update_session_with_message(user_msg, session_data)
     
+    # Handle special return values from update_session_with_message
+    if result == "PAST_DATE":
+        response_text = "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
+    elif result == "INVALID_TIME":
+        response_text = "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora."
+    else:
+        # Normal flow
+        response_text = process_message(user_msg, session_data)
+    
+    # Save session after processing
+    user_sessions[phone] = session_data
+
     # Test mode - return plain text
     if TEST_MODE:
         return Response(content=response_text or "", media_type="text/plain")
     
     # Production mode - return Twilio XML
     if TWILIO_AVAILABLE:
-        if response_text:  # Only reply if there's a message
+        if response_text:
             twiml = MessagingResponse()
             twiml.message(response_text)
             return Response(content=str(twiml), media_type="application/xml")
         else:
-            # Return empty response → no WhatsApp reply
             return Response(content="", media_type="text/plain")
     
-    # Fallback - plain text
     return Response(content=response_text or "", media_type="text/plain")
 
 # =============================================================================
