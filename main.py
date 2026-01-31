@@ -286,6 +286,8 @@ KNOWN_SCHOOLS = [
     # Early Childhood
     "jardín infantil castillo de la alegría",
     "jardín infantil carrusel mágico",
+    "jardin Infantil Soles y Lunas",
+    "Soles y Lunas",
     
     # COMMON SHORT FORMS & TYPING VARIANTS (no accents, partial names)
     "gimnasio los llanos",
@@ -524,7 +526,7 @@ FAQ = {
     "duracion": "Los exámenes médicos escolares toman aproximadamente 30 minutos por estudiante.",
     "llevar": "Debes traer el documento de identidad del estudiante (Tarjeta de Identidad o Cédula).",
     "horario": "Atendemos de lunes a viernes de 7:00 AM a 5:00 PM.",
-    "agendar": "Sí, es necesario agendar cita para los exámenes médicos escolares. Puedo ayudarte a hacerlo ahora mismo si deseas."
+    "agendar": "Para garantizar una atención rápida y organizada, es necesario agendar la cita previamente. Si quieres, puedo ayudarte a reservarla ahora mismo 😊"
 }
 
 # =============================================================================
@@ -736,7 +738,7 @@ def extract_age(msg):
     m = re.search(r"\b(\d{1,2})\s*(?:ano|anos)\b", text)
     if m:
         age = int(m.group(1))
-        if 3 <= age <= 25:
+        if 1 <= age <= 25:
             return age
 
     # Pattern: "edad 13", "tiene 13"
@@ -1017,22 +1019,35 @@ def get_missing_fields(session):
 def get_field_prompt(field):
     """Get prompt for specific missing field"""
     prompts = {
-        "student_name": "Cual es el nombre completo del estudiante?",
-        "school": "De que colegio es el estudiante?",
-        "age": "Que edad tiene el estudiante?",
-        "cedula": "¿Cuál es el número de documento de identidad del estudiante?",
+        "student_name": "Por favor, ¿me compartes el nombre completo del estudiante?",
+        
+        "school": "¿De qué colegio viene el estudiante, por favor?",
+        
+        "age": "Perfecto, ¿Qué edad tiene el estudiante?",
+        
+        "cedula": "Por favor, me compartes el número de documento del estudiante (TI o Cédula)? Gracias",
+        
         "package": (
-            "Tenemos 3 paquetes:\n\n"
-            "1. Cuidado Esencial - $45.000\n"
-            "   (Medicina General, Optometria, Audiometria)\n\n"
-            "2. Salud Activa - $60.000\n"
-            "   (Esencial + Psicologia)\n\n"
-            "3. Bienestar Total - $75.000\n"
-            "   (Activa + Odontologia)\n\n"
-            "Cual paquete deseas?"
+            "Con gusto te comparto nuestros tres paquetes disponibles para que elijas el que mejor se ajuste a tu necesidad:\n\n"
+            "1. Cuidado Esencial – $45.000\n"
+            "   Medicina General, Optometría y Audiometría\n\n"
+            "2. Salud Activa – $60.000\n"
+            "   Esencial + Psicología\n\n"
+            "3. Bienestar Total – $75.000\n"
+            "   Salud Activa + Odontología\n\n"
+            "Por favor, indícame cuál paquete deseas elegir. Muchas gracias 😊"
         ),
-        "date": "Para que fecha deseas la cita? (ejemplo: mañana, 15 de enero)",
-        "time": "A que hora prefieres? Atendemos de 7am a 5pm (ejemplo: 10am o 3pm)",
+        
+        "date": (
+            "¿Para qué fecha te gustaría agendar la cita, por favor?\n"
+            "Puedes decirme “mañana”, “este viernes” o una fecha exacta como “15 de enero” 😊"
+        ),
+        
+        "time": (
+            "¿A qué hora prefieres la cita?\n"
+            "Nuestro horario de atención es de 7:00 a.m. a 5:00 p.m.\n"
+            "(Ejemplo: 10:00 a.m. o 3:00 p.m.)"
+        ),
     }
     return prompts.get(field, "")
 
@@ -1061,16 +1076,18 @@ def build_summary(session):
     
     # Build the summary string
     summary = (
-        "Ya tengo toda la informacion:\n\n"
-        f"Estudiante: {session['student_name']}\n"
-        f"Colegio: {school_clean}\n"
-        f"Paquete: {pkg_data['name']} (${pkg_data['price']})\n"
-        f"Fecha: {session['date']}\n"
-        f"Hora: {session['time']}\n"
-        f"Edad: {session['age']} años\n"
-        f"Documento de identidad: {session['cedula']}\n\n"
-        "Deseas confirmar esta cita? Responde CONFIRMO para agendar."
+        "Perfecto, muchas gracias por enviarme toda la información.\n"
+        "Este es el resumen de los datos que recibí:\n\n"
+        f"👤 Estudiante: {session['student_name']}\n"
+        f"🏫 Colegio: {school_clean}\n"
+        f"📦 Paquete: {pkg_data['name']} (${pkg_data['price']})\n"
+        f"📅 Fecha: {session['date']}\n"
+        f"⏰ Hora: {session['time']}\n"
+        f"🎂 Edad: {session['age']} años\n"
+        f"🪪 Documento: {session['cedula']}\n\n"
+        "Si todo está correcto, por favor escribe *CONFIRMO* para continuar con la reserva."
     )
+
     
     session["awaiting_confirmation"] = True
     save_session(session)
@@ -1169,6 +1186,45 @@ def insert_reservation(phone, session):
         traceback.print_exc()  # ← This will show exact error in logs
         return False, str(e)[:200]
 
+# List of all ways users ask if they need to schedule an appointment
+APPOINTMENT_NEED_PATTERNS = [
+    # Direct questions
+    "tengo que agendar", "debo agendar", "necesito agendar", "es necesario agendar",
+    "tengo que reservar", "debo reservar", "necesito reservar",
+    "hay que reservar", "hay que sacar cita", "hay que sacar turno",
+    "toca agendar", "toca reservar", "toca pedir cita", "toca pedir turno",
+    "es obligatorio agendar", "es obligatorio reservar",
+
+    # Short / colloquial (but not too generic)
+    "toca cita", "cita obligatoria", "es con cita",
+    "atienden sin cita", "atienden sin agendar",
+    "con cita previa", "agenda previa",
+    "orden de llegada",
+
+    # Indirect forms
+    "puedo ir sin avisar", "puedo llegar directo",
+    "puedo ir asi no mas", "puedo ir así no más",
+    "puedo ir sin cita", "puedo ir en cualquier momento",
+
+    # Negations
+    "no toca agendar", "no hay que agendar",
+    "no toca pedir cita", "no toca reservar",
+
+    # Doubt / soft questions
+    "sera que toca agendar", "será que toca agendar",
+    "me toca pedir cita", "se debe pedir cita", "creo que se necesita cita",
+
+    # Misspellings
+    "ajendar", "ajendar cita", "nesecito cita",
+    "tengo q agendar", "tengo k agendar",
+    "sin cita previa",
+
+    # Contextual
+    "atienden con cita",
+    "funciona con cita",
+    "manejan cita previa"
+]
+
 # =============================================================================
 # FAQ HANDLER
 # =============================================================================
@@ -1176,7 +1232,13 @@ def insert_reservation(phone, session):
 def check_faq(msg):
     """Check if message is asking an FAQ question"""
     text = msg.lower()
+
+    # Appointment requirement FAQ
+    for pattern in APPOINTMENT_NEED_PATTERNS:
+        if pattern in text:
+            return "Para garantizar una atención rápida y organizada, es necesario agendar la cita previamente. Si quieres, puedo ayudarte a reservarla ahora mismo 😊"
     
+    # Other FAQs
     if any(k in text for k in ["ubicad", "direcc", "donde", "dónde"]):
         return FAQ["ubicacion"]
     
@@ -1192,11 +1254,6 @@ def check_faq(msg):
     if any(k in text for k in ["horario", "atienden", "abren", "cierran"]):
         return FAQ["horario"]
 
-    # Handle: "¿Tengo que agendar cita?", "¿Debo reservar?", etc.
-    if any(k in text for k in ["tengo que", "debo", "necesito", "obligado"]):
-        if any(p in text for p in ["agendar", "cita", "reservar", "turno"]):
-            return FAQ["agendar"]
-    
     return None
 
 # =============================================================================
@@ -1286,7 +1343,7 @@ def process_message(msg, session):
         session["greeted"] = True
         save_session(session)
         greeting = get_greeting_by_time()
-        return f"{greeting}, estás comunicado con Oriental IPS. ¿En qué te puedo ayudar?"
+        return f"{greeting}, 😊 Gracias por escribir a Oriental IPS. ¿En qué te puedo ayudar hoy?"
 
     # --------------------------------------------------
     # 2. INFO QUESTIONS (ALLOWED ANYTIME, BUT NO ACTION)
@@ -1386,7 +1443,7 @@ def process_message(msg, session):
         else: missing_list.append("Documento de identidad (Tarjeta de Identidad o Cédula)")
     
         # Build intro
-        intro = "Perfecto 😊 Para agendar la cita solo necesito la siguiente información:\n\n"
+        intro = "¡Perfecto, muchas gracias! 😊 Para ayudarte a agendar la cita, por favor compárteme la siguiente información:\n\n"
         for item in missing_list:
             intro += f"- {item}\n"
         intro += "\nPuedes enviarme los datos poco a poco o todos en un solo mensaje."
@@ -1410,25 +1467,25 @@ def process_message(msg, session):
             return build_summary(session)
 
     if session.get("awaiting_confirmation") and "confirmo" in normalized:
-        ok, table = insert_reservation(session["phone"], session)
-        if ok:
-            date = session.get("date")
-            time = session.get("time")
-            confirmation_message = (
-                "✅ *Cita confirmada*\n\n"
-                f"📅 Fecha: {date}\n"
-                f"⏰ Hora: {time}\n\n"
-                "📍 *Oriental IPS*\n"
-                "Calle 31 #29-61, Yopal\n\n"
-                "🪪 Recuerda traer el documento de identidad del estudiante.\n\n"
-                "¡Te estaremos esperando!"
-            )
-            phone = session["phone"]
-            session.clear()
-            session.update(create_new_session(phone))
-            save_session(session)
-            return confirmation_message
-        return "❌ No pudimos completar la reserva. Intenta nuevamente."
+            ok, table = insert_reservation(session["phone"], session)
+            if ok:
+                date = session.get("date")
+                time = session.get("time")
+                confirmation_message = (
+                    "¡Gracias por agendar con nosotros! 🤗\n"
+                    "Tu cita quedó confirmada:\n\n"
+                    f"📅 Fecha: {date}\n"
+                    f"⏰ Hora: {time}\n"
+                    "📍 Oriental IPS – Calle 31 #29-61, Yopal\n\n"
+                    "Por favor trae el documento del estudiante para una atención más rápida.\n"
+                    "¡Será un gusto atenderte! 🙏✨"
+                )
+                phone = session["phone"]
+                session.clear()
+                session.update(create_new_session(phone))
+                save_session(session)
+                return confirmation_message
+            return "❌ No pudimos completar la reserva. Intenta nuevamente."
 
     # --------------------------------------------------
     # 8. SILENT FALLBACK (do not reply)
