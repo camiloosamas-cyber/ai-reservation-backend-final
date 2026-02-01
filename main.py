@@ -1441,23 +1441,19 @@ def process_message(msg, session):
     # ALWAYS extract data unless it's a pure greeting or info query
     # --------------------------------------------------
 
-    # If user mentions school/exam context, treat as booking intent
-    force_booking_intent = has_action or has_context or has_package_intent
+    force_booking_intent = False
+    update_result = None
+
+    update_result = None   # ← ← ← ADD THIS LINE
     
-    # Do NOT extract data when the message is ONLY a FAQ question
     if not check_faq(text):
         if force_booking_intent or not (is_greeting and not session.get("booking_started")):
             update_result = update_session_with_message(text, session)
     
-            if first:
-                session["first_user_message_processed"] = True
-                save_session(session)
-
-        # Mark first user message as processed
         if first:
             session["first_user_message_processed"] = True
             save_session(session)
-
+    
         if update_result == "PAST_DATE":
             return "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
         if update_result == "INVALID_TIME":
