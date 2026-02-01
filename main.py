@@ -20,7 +20,55 @@ try:
     DATEPARSER_AVAILABLE = True
 except ImportError:
     DATEPARSER_AVAILABLE = False
-    print("WARNING: dateparser not available")
+
+# ============================
+# NUMBER WORD PARSER (1–31)
+# ============================
+
+NUM_WORDS = {
+    "uno": 1, "una": 1,
+    "dos": 2,
+    "tres": 3,
+    "cuatro": 4,
+    "cinco": 5,
+    "seis": 6,
+    "siete": 7,
+    "ocho": 8,
+    "nueve": 9,
+    "diez": 10,
+    "once": 11,
+    "doce": 12,
+    "trece": 13,
+    "catorce": 14,
+    "quince": 15,
+    "dieciseis": 16, "dieciséis": 16,
+    "diecisiete": 17,
+    "dieciocho": 18,
+    "diecinueve": 19,
+    "veinte": 20,
+    "veintiuno": 21, "veinte y uno": 21,
+    "veintidos": 22, "veintidós": 22, "veinte y dos": 22,
+    "veintitres": 23, "veintitrés": 23, "veinte y tres": 23,
+    "veinticuatro": 24, "veinte y cuatro": 24,
+    "veinticinco": 25, "veinte y cinco": 25,
+    "veintiseis": 26, "veintiséis": 26, "veinte y seis": 26,
+    "veintisiete": 27, "veinte y siete": 27,
+    "veintiocho": 28, "veinte y ocho": 28,
+    "veintinueve": 29, "veinte y nueve": 29,
+    "treinta": 30,
+    "treinta y uno": 31, "treintaiuno": 31,
+}
+
+def words_to_number(text):
+    t = text.lower().strip()
+    t = (
+        t.replace("á","a")
+         .replace("é","e")
+         .replace("í","i")
+         .replace("ó","o")
+         .replace("ú","u")
+    )
+    return NUM_WORDS.get(t)
 
 try:
     from supabase import create_client, Client, PostgrestAPIError
@@ -171,7 +219,8 @@ def create_new_session(phone):
         "booking_started": False,
         "booking_intro_shown": False,
         "greeted": False,
-        "awaiting_confirmation": False
+        "awaiting_confirmation": False,
+        "first_user_message_processed": False,
     }
 
 def get_session(phone):
@@ -721,32 +770,31 @@ def clean_school_display_name(school: str) -> str:
     return school
 
 def extract_age(msg):
-    """Extract age from message ONLY if explicitly stated"""
+    """Extract age from digits OR Spanish word numbers (1–18)."""
     text = msg.lower()
 
-    # Normalize accents
-    text = (
-        text.replace("á", "a")
-            .replace("é", "e")
-            .replace("í", "i")
-            .replace("ó", "o")
-            .replace("ú", "u")
-            .replace("ñ", "n")
-    )
-
-    # Pattern: "13 años", "13 anos"
-    m = re.search(r"\b(\d{1,2})\s*(?:ano|anos)\b", text)
+    # 1) Direct digit age: "12 años"
+    m = re.search(r"\b(\d{1,2})\s*(anos|años)\b", text)
     if m:
-        age = int(m.group(1))
-        if 1 <= age <= 25:
-            return age
+        n = int(m.group(1))
+        if 1 <= n <= 18:
+            return n
 
-    # Pattern: "edad 13", "tiene 13"
-    m = re.search(r"\b(?:edad|tiene)\s+(\d{1,2})\b", text)
+    # 2) Word-based with 'tiene' or 'edad': "tiene ocho"
+    m = re.search(r"(tiene|edad)\s+([a-záéíóúñ]+)", text)
     if m:
-        age = int(m.group(1))
-        if 3 <= age <= 25:
-            return age
+        candidate = m.group(2).strip()
+        num = words_to_number(candidate)
+        if num and 1 <= num <= 18:
+            return num
+
+    # 3) Word-based age directly: "ocho años", "quince años"
+    m = re.search(r"([a-záéíóúñ]+)\s+(anos|años)", text)
+    if m:
+        candidate = m.group(1).strip()
+        num = words_to_number(candidate)
+        if num and 1 <= num <= 18:
+            return num
 
     return None
 
@@ -770,6 +818,39 @@ def extract_date(msg, session):
         return today.strftime("%Y-%m-%d")
     if "pasado mañana" in text or "pasado manana" in text:
         return (today + timedelta(days=2)).strftime("%Y-%m-%d")
+
+    # ===========================
+    # DAY-IN-WORDS + MONTH (e.g., "quince de febrero")
+    # ===========================
+    m = re.search(
+        r"([a-záéíóúñ]+)\s+de\s+("
+        r"enero|febrero|marzo|abril|mayo|junio|julio|agosto|"
+        r"septiembre|octubre|noviembre|diciembre"
+        r")",
+        text
+    )
+
+    if m:
+        day_word = m.group(1)
+        month_word = m.group(2)
+
+        day_num = words_to_number(day_word)
+        if day_num:
+            month_map = {
+                "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+                "julio": 7, "agosto": 8, "septiembre": 9, "octubre": 10,
+                "noviembre": 11, "diciembre": 12
+            }
+            month_num = month_map[month_word]
+            year = today.year
+
+            try:
+                parsed = datetime(year, month_num, day_num).date()
+                if parsed < today:
+                    parsed = parsed.replace(year=year + 1)
+                return parsed.strftime("%Y-%m-%d")
+            except:
+                pass
 
     # Handle "13 de febrero" directly with regex
     # Pattern: "13 de febrero", "13 feb", "13/02", etc.
@@ -851,47 +932,82 @@ def extract_date(msg, session):
     return session.get("date")
 
 def extract_time(msg, session):
-    """Extract time from message"""
+    """Extract time from digits OR Colombian natural expressions."""
     text = msg.lower()
-    
-    # Handle "9m" as "9am"
-    text = re.sub(r"\b(\d{1,2})\s*m\b", r"\1am", text)
-    
-    # Pattern: 10am, 3pm, 10:30am, 10.30am
-    m = re.search(r"(\d{1,2})(?:[:\.](\d{2}))?\s*(am|pm)", text)
+
+    # Normalize accents
+    text = (
+        text.replace("á","a")
+            .replace("é","e")
+            .replace("í","i")
+            .replace("ó","o")
+            .replace("ú","u")
+    )
+
+    # ============
+    # 1) Try HH:MM or digits
+    # ============
+    m = re.search(r"(\d{1,2})(?:[:\.](\d{2}))?\s*(am|pm)?", text)
     if m:
         hour = int(m.group(1))
         minute = int(m.group(2)) if m.group(2) else 0
         ampm = m.group(3)
-        
-        # Convert to 24-hour format
+
         if ampm == "pm" and hour != 12:
             hour += 12
         if ampm == "am" and hour == 12:
             hour = 0
-        
-        # Validate business hours (7am - 5pm = 7:00 - 17:00)
+
         if 7 <= hour <= 17:
             return f"{hour:02d}:{minute:02d}"
-        else:
-            return "INVALID_TIME"
-    
-    # Pattern: "las 11" or "a las 11"
-    m = re.search(r"(?:las|a las)\s+(\d{1,2})", text)
+
+    # ===========================
+    # 2) Colombian forms: "a las tres", "tipo cuatro", "sobre las ocho"
+    # ===========================
+    m = re.search(r"(?:a las|las|tipo|sobre las|como a las)\s+([a-z]+)", text)
     if m:
-        hour = int(m.group(1))
-        if 7 <= hour <= 17:
-            return f"{hour:02d}:00"
-        else:
-            return "INVALID_TIME"
-    
-    # Vague times
-    if "tarde" in text:
-        return "15:00"
-    if "manana" in text and "en la" in text:
-        return "09:00"
-    
-    # Keep existing time if no new one found
+        word = m.group(1)
+        num = words_to_number(word)
+        if num is not None:
+            hour = num
+            if 7 <= hour <= 17:
+                return f"{hour:02d}:00"
+
+    # ===========================
+    # 3) Colombian minutes: "y media", "y cuarto", "menos diez", etc.
+    # ===========================
+    base_hour = None
+
+    for w in text.split():
+        n = words_to_number(w)
+        if n is not None and 0 <= n <= 24:
+            base_hour = n
+            break
+
+    if base_hour is not None:
+        minute = 0
+
+        if "y media" in text:
+            minute = 30
+        elif "y cuarto" in text or "y quince" in text:
+            minute = 15
+        elif "y veinte" in text:
+            minute = 20
+        elif "y veinticinco" in text:
+            minute = 25
+        elif "menos cuarto" in text or "menos quince" in text:
+            base_hour -= 1
+            minute = 45
+        elif "menos diez" in text:
+            base_hour -= 1
+            minute = 50
+        elif "menos veinte" in text:
+            base_hour -= 1
+            minute = 40
+
+        if 7 <= base_hour <= 17:
+            return f"{base_hour:02d}:{minute:02d}"
+
     return session.get("time")
 
 # =============================================================================
@@ -985,9 +1101,6 @@ def update_session_with_message(msg, session):
     if cedula:
         session["cedula"] = cedula
         updated.append("cedula")
-
-    if date == "PAST_DATE":
-        return "PAST_DATE"
 
     if date == "PAST_DATE":
         session.pop("date", None)
@@ -1265,6 +1378,8 @@ def process_message(msg, session):
     
     print("PROCESS MESSAGE:", msg)
     print("SESSION STATE:", session)
+
+    first = not session.get("first_user_message_processed", False)
     
     text = msg.strip()
     lower = text.lower()
@@ -1329,16 +1444,69 @@ def process_message(msg, session):
     # If user mentions school/exam context, treat as booking intent
     force_booking_intent = has_action or has_context or has_package_intent
     
-    if force_booking_intent or not (is_greeting and not session.get("booking_started")):
-        update_result = update_session_with_message(text, session)
+    # Do NOT extract data when the message is ONLY a FAQ question
+    if not check_faq(text):
+        if force_booking_intent or not (is_greeting and not session.get("booking_started")):
+            update_result = update_session_with_message(text, session)
+    
+            if first:
+                session["first_user_message_processed"] = True
+                save_session(session)
+
+        # Mark first user message as processed
+        if first:
+            session["first_user_message_processed"] = True
+            save_session(session)
+
         if update_result == "PAST_DATE":
             return "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
         if update_result == "INVALID_TIME":
             return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora."
-            
+
     # --------------------------------------------------
-    # 1. GREETING (ONLY IF MESSAGE IS JUST A GREETING)
+    # 0. GREETING + "NECESITO AGENDAR?" HANDLING
     # --------------------------------------------------
+    
+    faq_pre_answer = check_faq(text)
+    
+    # Caso: saludo + pregunta de si toca agendar
+    if is_greeting and faq_pre_answer:
+        greeting = get_greeting_by_time()
+        return (
+            f"{greeting}, 😊 Gracias por comunicarte con Oriental IPS.\n"
+            "Para atenderte de la mejor manera y evitar esperas, sí manejamos cita previa.\n"
+            "Si quieres, con gusto te ayudo a reservarla ahora mismo 🙌✨"
+        )
+
+    
+    # Caso: solo pregunta de si toca agendar
+    if faq_pre_answer:
+        return faq_pre_answer
+     
+    # --------------------------------------------------
+    # 1. GREETING HANDLING
+    # --------------------------------------------------
+    
+    # Caso 1: saludo + intención de agendar → iniciar flujo de cita
+    if is_greeting and has_action and not session.get("booking_started"):
+        greeting = get_greeting_by_time()
+        session["booking_started"] = True
+        session["booking_intro_shown"] = False
+        save_session(session)
+    
+        return (
+            f"{greeting}! 😊 Con gusto te ayudo a agendar la cita.\n\n"
+            "Para empezar, por favor compárteme la siguiente información:\n"
+            "- Nombre completo del estudiante\n"
+            "- Colegio\n"
+            "- Paquete\n"
+            "- Fecha y hora\n"
+            "- Edad del estudiante\n"
+            "- Documento de identidad (Tarjeta de Identidad o Cédula)\n\n"
+            "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
+        )
+    
+    # Caso 2: solo saludo → saludo normal
     if is_greeting and not session.get("booking_started"):
         session["greeted"] = True
         save_session(session)
@@ -1392,29 +1560,49 @@ def process_message(msg, session):
     # --------------------------------------------------
     # 5. SHOW DYNAMIC INTRO OR SUMMARY (IF ALL FIELDS PRESENT)
     # --------------------------------------------------
-    if session.get("booking_started") and not session.get("booking_intro_shown"):
+    if session.get("booking_started") and not session.get("booking_intro_shown") and first:
         session["booking_intro_shown"] = True
-        save_session(session)
+    
+        # Detect which fields we already have
+        collected = []
+        if session.get("student_name"): collected.append("el nombre")
+        if session.get("school"): collected.append("el colegio")
+        if session.get("package"): collected.append("el paquete")
+        if session.get("date"): collected.append("la fecha")
+        if session.get("time"): collected.append("la hora")
+        if session.get("age"): collected.append("la edad")
+        if session.get("cedula"): collected.append("el documento")
     
         missing = get_missing_fields(session)
     
-        # If NOTHING is missing → go straight to summary
-        if not missing:
-            return build_summary(session)
+        # If NO data exists → show full intro
+        if len(collected) == 0:
+            return (
+                "¡Perfecto, muchas gracias! 😊 Para ayudarte a agendar la cita, por favor compárteme la siguiente información:\n\n"
+                "- Nombre completo del estudiante\n"
+                "- Colegio\n"
+                "- Paquete\n"
+                "- Fecha y hora\n"
+                "- Documento de identidad (Tarjeta de Identidad o Cédula)\n\n"
+                "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
+            )
     
-        # If SOME fields already exist → follow old logic:
-        # → ask for the next missing field instead of showing full intro
-        if any([
-            session.get("student_name"),
-            session.get("school"),
-            session.get("package"),
-            session.get("date"),
-            session.get("time"),
-            session.get("age"),
-            session.get("cedula"),
-        ]):
-            # Respect old behavior
-            return get_field_prompt(missing[0])
+        # If SOME data exists → show adaptive intro
+        collected_str = ", ".join(collected)
+        missing_str = "\n".join([
+            "- Nombre completo del estudiante" if "student_name" in missing else "",
+            "- Colegio" if "school" in missing else "",
+            "- Paquete" if "package" in missing else "",
+            "- Fecha y hora" if "date" in missing or "time" in missing else "",
+            "- Documento de identidad (Tarjeta de Identidad o Cédula)" if "cedula" in missing else "",
+        ]).strip()
+    
+        return (
+            f"¡Perfecto, muchas gracias! 😊 Ya tengo {collected_str}.\n"
+            f"Para ayudarte a completar la cita, por favor compárteme la siguiente información pendiente:\n\n"
+            f"{missing_str}\n\n"
+            "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
+        )
     
         # Otherwise → NEW adaptive intro (only when the user has given *nothing*)
         known = []
