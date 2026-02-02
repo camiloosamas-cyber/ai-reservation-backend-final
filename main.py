@@ -1745,7 +1745,7 @@ async def home(request: Request):
     
     if templates:
         return templates.TemplateResponse(
-            "index.html",
+            "dashboard.html",
             {
                 "request": request,
                 "version": app.version,
