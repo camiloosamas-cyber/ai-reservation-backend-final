@@ -1480,10 +1480,10 @@ def process_message(msg, session):
         return faq_pre_answer
      
     # --------------------------------------------------
-    # 1. GREETING HANDLING
+    # 1. BOOKING INTENT HANDLING (WITH OR WITHOUT GREETING)
     # --------------------------------------------------
     
-    # Caso 1: saludo + intención de agendar → iniciar flujo de cita
+    # CASE A: greeting + intent
     if is_greeting and has_action and not session.get("booking_started"):
         greeting = get_greeting_by_time()
         session["booking_started"] = True
@@ -1491,8 +1491,7 @@ def process_message(msg, session):
         save_session(session)
     
         return (
-            f"{greeting}! 😊 Con gusto te ayudo a agendar la cita.\n\n"
-            "Para empezar, por favor compárteme la siguiente información:\n"
+            f"{greeting}! muchas gracias! 😊 Para ayudarte a agendar la cita, por favor compárteme la siguiente información:\n\n"
             "- Nombre completo del estudiante\n"
             "- Colegio\n"
             "- Paquete\n"
@@ -1502,7 +1501,24 @@ def process_message(msg, session):
             "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
         )
     
-    # Caso 2: solo saludo → saludo normal
+    # CASE B: intent WITHOUT greeting  ← 🔥 REQUIRED
+    if has_action and not is_greeting and not session.get("booking_started"):
+        session["booking_started"] = True
+        session["booking_intro_shown"] = False
+        save_session(session)
+    
+        return (
+            "¡Perfecto!  muchas gracias! 😊 Para ayudarte a agendar la cita, por favor compárteme la siguiente información:\n\n"
+            "- Nombre completo del estudiante\n"
+            "- Colegio\n"
+            "- Paquete\n"
+            "- Fecha y hora\n"
+            "- Edad del estudiante\n"
+            "- Documento de identidad (Tarjeta de Identidad o Cédula)\n\n"
+            "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
+        )
+    
+    # CASE C: only greeting → normal greeting
     if is_greeting and not session.get("booking_started"):
         session["greeted"] = True
         save_session(session)
