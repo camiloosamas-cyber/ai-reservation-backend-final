@@ -132,53 +132,27 @@
     }
 
     tbody.innerHTML = filtered.map(r => {
-    // Safely get datetime string
-    let dtStr = r.datetime;
-    if (!dtStr || typeof dtStr !== 'string') {
-      dtStr = '2026-01-01 00:00'; // fallback
-    }
-  
-    // Parse "YYYY-MM-DD HH:MM" as LOCAL time
-    function parseLocalDateTime(dateTimeStr) {
-      try {
-        // Handle ISO format: "2026-02-04T15:00:00+00:00"
-        if (dateTimeStr.includes('T')) {
-          return new Date(dateTimeStr); // JS parses ISO correctly
-        }
-        // Handle old format: "2026-02-04 15:00"
-        const [datePart, timePart] = dateTimeStr.split(' ');
-        const [year, month, day] = datePart.split('-').map(Number);
-        const [hour, minute] = timePart.split(':').map(Number);
-        return new Date(year, month - 1, day, hour, minute);
-      } catch (e) {
-        return new Date(); // fallback
-      }
-    }
-  
-    const dt = parseLocalDateTime(dtStr);
-    const localDt = dt.toLocaleString('es-CO', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
-  
-    return `
-      <tr>
-        <td>${localDt}</td>
-        <td>${r.customer_name || '—'}</td>
-        <td>${r.school_name || '—'}</td>
-        <td>${r.package || '—'}</td>
-        <td>${r.age || '—'}</td>
-        <td>${r.cedula || '—'}</td>
-        <td>
-          <button class="btn btn-sm btn-outline-secondary" onclick="copyId('${r.cedula || ''}')">📋 Copiar ID</button>
-        </td>
-      </tr>
-    `;
-  }).join('');
+      // ORIGINAL: simple display (may show wrong time due to UTC)
+      const dt = new Date(r.datetime);
+      const localDt = dt.toLocaleString('es-CO', {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      });
+
+      return `
+        <tr>
+          <td>${localDt}</td>
+          <td>${r.customer_name}</td>
+          <td>${r.school_name}</td>
+          <td>${r.package}</td>
+          <td>${r.age}</td>
+          <td>${r.cedula}</td>
+          <td>
+            <button class="btn btn-sm btn-outline-secondary" onclick="copyId('${r.cedula}')">📋 Copiar ID</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
   }
 
   function updateStats() {
@@ -201,5 +175,3 @@
 
 </body>
 </html>
-
-
