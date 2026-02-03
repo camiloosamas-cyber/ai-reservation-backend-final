@@ -132,12 +132,24 @@
     }
 
     tbody.innerHTML = filtered.map(r => {
-      const dt = new Date(r.datetime);
+      // Parse "YYYY-MM-DD HH:MM" as LOCAL time
+      function parseLocalDateTime(dateTimeStr) {
+        const [datePart, timePart] = dateTimeStr.split(' ');
+        const [year, month, day] = datePart.split('-').map(Number);
+        const [hour, minute] = timePart.split(':').map(Number);
+        return new Date(year, month - 1, day, hour, minute);
+      }
+    
+      const dt = parseLocalDateTime(r.datetime);
       const localDt = dt.toLocaleString('es-CO', {
-        year: 'numeric', month: 'short', day: 'numeric',
-        hour: '2-digit', minute: '2-digit'
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
       });
-
+    
       return `
         <tr>
           <td>${localDt}</td>
@@ -174,3 +186,4 @@
 
 </body>
 </html>
+
