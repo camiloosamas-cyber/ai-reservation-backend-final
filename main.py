@@ -59,6 +59,17 @@ NUM_WORDS = {
     "treinta y uno": 31, "treintaiuno": 31,
 }
 
+# Spanish weekday mapping (Monday=0, Sunday=6)
+WEEKDAYS_ES = {
+    "lunes": 0,
+    "martes": 1,
+    "miércoles": 2, "miercoles": 2,
+    "jueves": 3,
+    "viernes": 4,
+    "sábado": 5, "sabado": 5,
+    "domingo": 6
+}
+
 def words_to_number(text):
     t = text.lower().strip()
     t = (
@@ -221,6 +232,7 @@ def create_new_session(phone):
         "greeted": False,
         "awaiting_confirmation": False,
         "first_user_message_processed": False,
+        "fields_asked": [],
     }
 
 def get_session(phone):
@@ -438,124 +450,105 @@ COMMON_FIRST_NAMES = {
 
 # Common last names in Colombia (Yopal region)
 COMMON_LAST_NAMES = {
-    "acuña", "afanador", "agudelo", "aguilar", "aguirre", "alarcón", "albarracín", "albornoz", "alfaro",
-    "almanza", "almeida", "almonacid", "alvarado", "álvarez", "amado", "amaya", "amézquita", "andrade",
-    "angel", "angulo", "anzola", "aponte", "arango", "arbeláez", "arboleda", "arciniegas", "ardila",
-    "arguello", "arias", "aricapa", "aristizábal", "ariza", "armenta", "armenteros", "armesto", "arroyave",
-    "arteaga", "arzayús", "ascencio", "atuesta", "avendaño", "ayala", "ayuela", "badillo", "bahamón",
-    "baldión", "banguero", "bañol", "barrera", "barrero", "barreto", "barrios", "barros", "barón",
-    "bastidas", "bautista", "bedoya", "bejarano", "belalcázar", "beltrán", "benavides", "bendeck", "bermúdez",
-    "bernal", "berrío", "betancourt", "biel", "blandón", "blanco", "bocanegra", "bohórquez", "bolívar",
-    "bonilla", "borda", "borja", "borrero", "borromeo", "botero", "brahim", "brand", "bravo", "briceño",
-    "buendía", "buitrago", "burbano", "burgos", "bustamante", "bustos", "caballero", "cabra", "cabrera",
-    "cadena", "caicedo", "cajiao", "calderón", "calero", "calvache", "calvo", "camacho", "camargo", "cambar",
-    "camejo", "campillo", "campos", "canales", "cañas", "canaval", "cano", "cantillo", "cañón", "cárcamo",
-    "cárdens", "cardona", "carillo", "carmona", "carranza", "carrasco", "carreño", "carrillo", "carrión",
-    "carvajal", "casadiego", "casallas", "casas", "castañeda", "castaño", "castiblanco", "castillo", "castro",
-    "ceballos", "cediel", "celis", "cepeda", "cerón", "cerquera", "cervantes", "chacón", "chalarca", "chaparro",
-    "chávez", "chica", "chiquillo", "chitiva", "chocontá", "cifuentes", "ciro", "clavijo", "cobo", "cochise",
-    "cocomá", "colmenares", "colorado", "colón", "colonia", "conde", "contreras", "córdoba", "coronado",
-    "coronel", "correa", "corrales", "cortázar", "cortés", "cortizo", "cossio", "cuadrado", "cuadros", "cuartas",
-    "cuberos", "cubillos", "cuéllar", "cuenú", "cuentas", "currea", "daza", "de la cruz", "de la espriella",
-    "delgado", "del hierro", "del salto", "díaz", "diez", "díez granados", "dimate", "díez garcía", "dízz",
-    "domínguez", "donado", "doncel", "duque", "durán", "echeverri", "echavarría", "eljach", "escalante",
-    "escalona", "escamilla", "escandón", "escobar", "escorcia", "españa", "españa gómez", "espinal", "esquivel",
-    "estepa", "estupiñán", "evans", "fajardo", "farías", "farfán", "ferro", "fierro", "figueredo", "flechas",
-    "flórez", "fonseca", "forero", "franco", "franco suárez", "frasser", "frías", "fuentes", "galán", "galindo",
-    "gallego", "gallo", "galvis", "gamarra", "gamboa", "garavito", "garay", "garces", "garibello", "garzón",
-    "gaviria", "gélvez", "giraldo", "góez", "gómez", "góngora", "gonzález", "gordo", "gordillo", "górriz",
-    "goyeneche", "guaca", "guacaneme", "guáqueta", "guarín", "guayazán", "guecha", "güengue", "guevara", "guisa",
-    "guzmán", "haro", "henao", "hereira", "herrera", "herrán", "hidalgo", "higuita", "hinestroza", "holguín",
-    "hormiga", "hoyos", "huertas", "hurtado", "ibañez", "ibarra", "ibargüen", "illera", "íñiguez", "inestrosa",
-    "insignares", "irriarte", "isaza", "jaimes", "jáuregui", "jerez", "jeronimo", "jhaime", "jiménez", "jiraldo",
-    "jurado", "ladino", "lagos", "laguado", "lamerca", "lamilla", "lancheros", "landinez", "lara", "largacha",
-    "lascarro", "lasso", "latorre", "laverde", "leal", "león", "lerma", "lesmes", "leyva", "lezama", "liévano",
-    "linares", "llamas", "llinás", "lloreda", "llorente", "lobatón", "lobo", "lozano", "lozada", "lucena",
-    "lugo", "luján", "luna", "macías", "macias collazos", "madera", "madroñero", "madrid", "maestre", "maldonado",
-    "manjarrez", "manrique", "mantilla", "manzo", "maradiaga", "marenco", "marín", "marino", "marmolejo",
-    "marroquín", "marrugo", "martelo", "martínez", "martín", "martínez gómez", "martínez rojas", "maryory",
-    "massa", "mateus", "matiz", "maturana", "maya", "mayorga", "mazabel", "mejía", "meléndez", "meneses",
-    "mendoza", "mendivelso", "mendieta", "menjura", "mesa", "mestra", "mestre", "metke", "meza", "millán",
-    "mina", "miranda", "mogollón", "molina", "molleja", "moncada", "moncayo", "mondragón", "monroy", "monsalve",
-    "montaña", "montañez", "montañés", "montenegro", "montero", "montes", "montoya", "morales", "moreno",
-    "morillo", "morlán", "morón", "moscote", "mosquera", "motta", "moyano", "muelas", "muñoz", "murcia",
-    "murgas", "murillo", "mussa", "najar", "naranjo", "narváez", "navas", "navarrete", "navarro", "negrete",
-    "neira", "nerio", "nieves", "nieto", "niño", "nivia", "noguera", "noriega", "nova", "novoa", "núñez",
-    "obando", "ocampo", "octavio", "olarte", "olaya", "oleas", "oliveros", "omaña", "oñate", "ontiveros",
-    "oquendo", "ordóñez", "orjuela", "ormaza", "orrego", "ortega", "ortiz", "ospina", "osorno", "osorio",
-    "ossa", "otero", "otálora", "oviedo", "oyola", "pabón", "pacheco", "padilla", "páez", "palacios", "palencia",
-    "pallares", "palma", "pardo", "paredes", "parra", "paternina", "patiño", "pava", "pavón", "payares",
-    "pecero", "pedraza", "peña", "perdomo", "pérez", "perilla", "pereira", "perea", "perico", "pestana",
-    "petro", "pico", "pinchao", "pineda", "pinilla", "pinzón", "pinto", "piraquive", "pizarro", "plazas",
-    "plata", "plaza", "polo", "pomares", "pombo", "porras", "portela", "portillo", "posada", "posso", "prado",
-    "pradilla", "preciado", "prieto", "puello", "puentes", "puga", "pulido", "pupo", "quiñones", "quiceno",
-    "quijano", "quimbayo", "quintero", "quiroga", "quirós", "rada", "rafael", "ramírez", "ramírez castaño",
-    "ramírez hoyos", "ramírez ortiz", "ramón", "rangel", "rasgado", "rave", "rayo", "realpe", "reátiga",
-    "rebolledo", "recalde", "reina", "restrepo", "retamoso", "revelo", "revelo narváez", "reyes", "ríaño",
-    "ricaurte", "rico", "rincón", "rios", "ríos", "rivadeneira", "rivera", "riveros", "robayo", "roberto",
-    "robles", "roca", "rodríguez", "rodríguez cárdens", "rodríguez garcía", "rodríguez lópez", "rojas",
-    "roldán", "romero", "romero ospina", "romo", "ronderos", "rondón", "roque", "rosales", "rosero",
-    "rosero cabrera", "rosso", "rousseau", "rubiano", "ruiz", "ruiz hurtado", "saavedra", "sabogal", "sacristán",
-    "saénz", "sáenz", "sáez", "saiz", "salamanca", "salas", "salazar", "salcedo", "salgado", "salinas",
-    "salmerón", "samarra", "samudio", "sánchez", "sánchez amaya", "sánchez garcía", "sánchez lópez", "sandoval",
-    "sanguino", "santacruz", "santa", "santafé", "santamaría", "santander", "santiago", "santofimio", "santos",
-    "santos gómez", "sarabia", "saray", "saravia", "sarmiento", "sarria", "segovia", "segura", "sepúlveda",
-    "sevilla", "sierra", "silgado", "silva", "silvera", "simanca", "simón", "sinisterra", "sierralta", "silos",
-    "solano", "solarte", "solís", "solórzano", "sosa", "soto", "sotelo", "suárez", "subía", "sua", "suárez martínez",
-    "suárez giraldo", "suaza", "suescún", "supelano", "taborda", "taborda vélez", "tabares", "tacuma", "tafur",
-    "tamayo", "támara", "tambon", "tapiquihua", "tarazona", "tatis", "tautiva", "tejada", "téllez", "tello",
-    "tena", "tenero", "tinjacá", "tique", "tirado", "tobar", "toledo", "tolosa", "torijano", "toro", "torralba",
-    "torrealba", "torreglosa", "torres", "torres día", "torres martínez", "torres pineda", "torrijos", "tovar",
-    "triviño", "triana", "trochez", "trujillo", "tuberquia", "turriago", "tuta", "ulloa", "umaña", "upegui",
-    "urbano", "urdaneta", "ureña", "uribe", "urquijo", "urueta", "useche", "ustate", "valbuena", "valdés",
-    "valderrama", "valdivia", "valdivieso", "valencia", "valencia cárdens", "valencia gonzález", "valera",
-    "valero", "valladares", "valle", "vallecilla", "vallesilla", "vanegas", "varela", "vargas", "vargas gómez",
-    "vargas niño", "vargas silva", "varón", "velandia", "velarde", "velasco", "velásquez", "velásquez rojas",
-    "vélez", "veloza", "vences", "vera", "vera martínez", "vergara", "verraco", "vesga", "vianchá", "vidal",
-    "vidales", "vides", "villabona", "villadiego", "villafañe", "villagra", "villalba", "villalobos", "villamil",
-    "villamizar", "villaneda", "villanueva", "villaquirán", "villarraga", "villarreal", "villate", "villavicencio",
-    "villegas", "vinasco", "virviescas", "viveros", "vizcaíno", "yepes", "yépez", "yopasa", "yotagri", "yustres",
-    "yusti", "yusti cifuentes", "yucuma", "zabaleta", "zabaleta oñate", "zabrano", "zacipa", "zafra", "zambrano",
-    "zamora", "zapata", "zapata castaño", "zárate", "zarur", "zea", "zegarra", "zerda", "zipaquirá", "zorilla",
-    "zubiría", "zuluaga", "zurita", "abad", "abello", "abondano", "abril", "acebedo", "acevedo", "acevedo gutiérrez",
-    "acha", "acuña molina", "adarme", "adrada", "affonso", "agamez", "aguillón", "ahumada", "aiza", "aldana",
-    "alegría", "alferez", "allende", "almanzar", "almosny", "altahona", "altamar", "alturo", "alvarino", "alveiro",
-    "amador ríos", "amorocho", "amortegui", "anacona", "anchico", "andocilla", "anillo", "anillo casadiego",
-    "antezana", "antolinez", "aparicio", "apraez", "aragón", "aranda", "ararat", "araque", "arbeláez sánchez",
-    "arboledas", "arce", "archila", "ardón", "arévalo", "argumedo", "argumedo torres", "arisa", "arieta",
-    "ariza molina", "arjona", "armenteros lugo", "armeni", "arnaiz", "arnedo", "arrieta", "arrieta yances",
-    "arriola", "arroyave pérez", "arteaga lara", "artiles", "arzayus", "asprilla", "aspuac", "astorga", "astorquiza",
-    "atencia", "atuesta gonzales", "aubad", "avilés", "ayola", "ayucar", "bacca", "bachiller", "badel", "badillo redondo",
-    "bahamón ocampo", "baiocco", "balaguera", "balanta", "balcázar", "baleta", "baloco", "balsalobre", "baltán",
-    "bambague", "banguera", "banquet", "barahona", "barbosa", "barcena", "barragán", "barreneche", "barrieta",
-    "barsallo", "bartolo", "basabe", "bascur", "basualdo", "batista", "bazurto", "behaine", "bejarano mendoza",
-    "belalcázar gamboa", "beltrán suárez", "benavente", "benjumea", "benzaquen", "berbeo", "berenguer", "bermon",
-    "bernal castillo", "bernate", "bernini", "bertel", "berrioza", "betin", "beuth", "beytia", "bielsa", "bihun",
-    "bilbao", "bitar", "blanquicett", "blaya", "bocarejo", "bocanumenth", "bochagova", "bojacá", "boldt", "bolivar lópez",
-    "bolívar barajas", "bollette", "bolona", "bongiorno", "bonnett", "boquet", "borda ramírez", "borja rivera",
-    "borray", "botache", "boutureira", "bravo ortiz", "bravo puentes", "briceño villate", "briñez", "brito", "brun",
-    "brunal", "buchelli", "buenaventura", "buelvas", "buendía cárdens", "bueno", "buesaquillo", "bueso", "buitrón",
-    "buonpane", "burbano guzmán", "burgos portilla", "buriticá", "busch", "bustacara", "bustos palacios", "caballero lópez",
-    "caballero parra", "cabeza", "cabrales", "cabrera lópez", "caceres", "cadavid", "caguazango", "caicedo lópez",
-    "caimoy", "cajamarc", "calambas", "calambéz", "calderín", "calindo", "calpa", "calvachi", "calvijo", "camaño",
-    "camero", "camero torres", "camiña", "campiño", "campuzano", "canabal", "canales ibáñez", "canchala", "canchila",
-    "candelo", "canelón", "cangrejo", "cangrejo rivas", "canosa", "cantillo torres", "caño", "cañón gómez", "canzio",
-    "capacho", "capacho rondón", "capera", "capote", "capurro", "caraña", "carantón", "carballo", "carbonell", "carcamo",
-    "cárdens robayo", "cardiel", "cardozo", "carhuamaca", "carillo hoyos", "carizales", "carles", "carmenza",
-    "carmona valdés", "carnaza", "carpa", "carranza garzón", "carrero lópez", "carrillo sánchez", "carrizosa", "carro",
-    "cartagena", "carvajal hoyos", "carvajal pava", "casares", "casasbuenas", "casasola", "casimiro", "castañeda lópez",
-    "castaño vélez", "castiblanco ruiz", "castillejo", "castro albarracín", "castro camargo", "castro hoyos", "catalán",
-    "catambuco", "caycedo", "ceballos rueda", "cedrés", "ceferino", "celada", "celtic", "cenén", "centeno", "cera",
-    "cerchiaro", "cerquera lópez", "cerrano", "cervantes duarte", "cespedes", "chalá", "chalarca rentería", "chamorro",
-    "chamorro garzón", "chaparro valencia", "charria", "chego", "chegwin", "chequer", "chilo", "chimapira", "chinche",
-    "chinchilla", "chingate", "chiquillo pérez", "chiriví", "chocontá duarte", "chogo", "chucuri", "cifuentes beltrán",
-    "cirolla", "clavero", "clavijo gómez", "clímaco", "cobos", "cobo suárez", "cochero", "coconubo", "cocomá lópez",
-    "coda", "codina", "coello", "coello martínez", "cogollos", "coicue", "colindres", "colmenares torres", "colmenarez",
-    "colocho", "colpas", "combariza", "condia", "coneo", "confaloniere", "congote", "conrado fonseca", "copa", "corchuelo",
-    "cordobés", "correa hoyos", "corredor", "corró", "corro romero", "cortazar", "cortés garcía", "cote", "cotero",
-    "covacho", "cova", "coya", "coy villamarin", "cristancho", "cruzado", "cuadrado torres", "cuadrado mena", "cuartas lópez",
-    "cubela", "cubilla", "cuero", "cuevas", "cumbal", "cunampia", "cundar", "cuni", "cuquejo", "cura", "cure", "currea lópez",
-    "currelí", "cusa", "cuya", "cyrino"
+    "abad","abello","abondano","abril","acebedo","acevedo","acha","acuña","adarme","adrada",
+    "affonso","afanador","agamez","agudelo","aguilar","aguirre","aguillón","ahumada","aiza",
+    "aldana","alegría","alarcón","albarracín","albornoz","alcázar","alfaro","alferez","almanza",
+    "almeida","almonacid","almosny","altahona","altamar","alturo","alveiro","alvarado","alvarino",
+    "álvarez","amado","amaya","amézquita","amorocho","amortegui","andrade","angel","angulo",
+    "anacona","anchico","andocilla","anillo","anzola","antezana","antolinez","aparicio","aponte",
+    "apraez","arango","aragón","aranda","ararat","araque","arbeláez","arboleda","arboledas",
+    "arciniegas","arce","archila","ardila","ardón","arévalo","arguello","argumedo","arias",
+    "aricapa","arieta","arisa","aristizábal","ariza","arjona","armenta","armenteros","armesto",
+    "armeni","arnaiz","arnedo","arrieta","arriola","arroyave","arteaga","artiles","arzayús",
+    "ascencio","asprilla","aspuac","astorga","astorquiza","atencia","atuesta","aubad","avendaño",
+    "avilés","ayala","ayola","ayuela","ayucar","bacca","bachiller","badal","badillo","badel",
+    "bahamón","baiocco","balaguera","balanta","balcázar","baleta","baloco","balsalobre","baltán",
+    "bambague","banguero","banquet","bañol","barahona","barbosa","barcena","barrera","barragán",
+    "barreneche","barrero","barreto","barrieta","barrios","barsallo","bartolo","basabe","bascur",
+    "basualdo","bastidas","batista","bautista","bazurto","bedoya","behaine","bejarano","belalcázar",
+    "beltrán","benavente","benavides","benjumea","benzaquen","bendeck","berbeo","berenguer","bermón",
+    "bermúdez","bernate","bernal","bernini","berrioza","berrío","bertel","betancourt","betin","beuth",
+    "beytia","biel","bielsa","bihun","bilbao","bitar","blandón","blanquicett","blaya","blanco",
+    "bocanegra","bocarejo","bocanumenth","bochagova","bohórquez","bojacá","boldt","bolivar","bolona",
+    "bolívar","bongiorno","bonilla","bonnett","boquet","borda","borja","borray","borrero","borromeo",
+    "botache","botero","boutureira","brahim","brand","bravo","briceño","briñez","brito","brun","brunal",
+    "buchelli","buenaventura","buelvas","buendía","bueno","buesaquillo","bueso","buitrago","buitrón",
+    "buonpane","burbano","buriticá","burgos","busch","bustacara","bustamante","bustos","caballero",
+    "cabeza","cabra","cabrales","cabrera","caceres","cadavid","cadena","caguazango","caicedo","caimoy",
+    "cajamarc","cajiao","calambas","calambéz","calderín","calderón","calero","calindo","calpa","calvache",
+    "calvachi","calvijo","calvo","camacho","camargo","camaño","cambar","camejo","camero","camiña","campaño",
+    "campillo","campiño","campuzano","canabal","canales","canchala","canchila","candelo","canelón","canizares",
+    "canales","canaval","cangrejo","canillas","caniza","cano","canosa","cantillo","canzio","cárcamo","caraña",
+    "carantón","carballo","carbonell","carcamo","cárdens","cardiel","cardona","cardozo","carhuamaca","carillo",
+    "carmenza","carmona","carnaza","carpa","carranza","carrasco","carrero","carreño","carrillo","carrión",
+    "carrizosa","carro","cartagena","carvajal","casares","casadiego","casallas","casas","casasbuenas",
+    "casasola","casimiro","catalán","catambuco","caycedo","ceballos","cediel","cedrés","ceferino","celada",
+    "celis","celtic","cenén","cepeda","cera","cerchiaro","cerón","cerquera","cerrano","cervantes","ceta",
+    "chalá","chacón","chalarca","chamorro","charria","chaparro","charry","chávez","chego","chegwin","chequer",
+    "chico","chica","chimapira","chinche","chinchilla","chingate","chiquillo","chiriví","chocontá","chogo",
+    "chucuri","chucue","chucurí","cifuentes","cirolla","ciro","clavero","clavijo","clímaco","cobo","cobos",
+    "cochero","cochise","coconubo","cocomá","coda","codina","coello","cogollos","coicue","cojines","colindres",
+    "colmenares","colmenarez","colocho","colonia","colón","colpas","colorado","combariza","condia","coneo",
+    "confaloniere","congote","conde","conrado","contreras","congote","copa","corchuelo","cordobés","córdova",
+    "córdoba","coronado","coronel","corral","corrales","correa","corredor","corró","cortázar","cortés","cortizo",
+    "cossio","cote","cotero","covacho","cova","coya","coyaima","cristancho","cruzado","cuadrado","cuadros",
+    "cuartas","cubela","cuberos","cubilla","cubillos","cuéllar","cuenca","cueros","cuero","cuevas","cuenú",
+    "cuentas","cumbal","cunampia","cundar","cuni","cuquejo","cura","cure","currea","currelí","cusa","cuya",
+    "cyrino","daza","delgado","díaz","diez","dimate","dízz","domínguez","donado","doncel","duarte","duque",
+    "durán","echeverri","echavarría","eljach","escalante","escalona","escamilla","escandón","escobar","escorcia",
+    "españa","espinal","esquivel","estepa","estupiñán","evans","fajardo","farías","farfán","ferro","fierro",
+    "figueredo","flechas","flórez","fonseca","forero","franco","frasser","frías","fuentes","galán","galindo",
+    "gallego","gallo","galvis","gamarra","gamboa","garay","garavito","garces","garibello","garzón","garzon",
+    "gaviria","gélvez","giraldo","góez","gómez","góngora","gonzález","gordo","gordillo","górriz","goyeneche",
+    "guaca","guacaneme","guáqueta","guarín","guayazán","guecha","güengue","guevara","guisa","gutiérrez",
+    "guzmán","haro","henao","hereira","herrera","herrán","hidalgo","higuita","hinestroza","holguín",
+    "hormiga","hoyos","huertas","hurtado","ibañez","ibarra","ibargüen","illera","íñiguez","inestrosa",
+    "insignares","irriarte","isaza","jaimes","jáuregui","jerez","jeronimo","jhaime","jiménez","jiraldo",
+    "jurado","ladino","lagos","laguado","lamarca","lamilla","lancheros","landinez","lara","largacha",
+    "lascarro","lasso","latorre","laverde","leal","león","lerma","lesmes","leyva","lezama","liévano",
+    "linares","llamas","llinás","lloreda","llorente","lobatón","lobo","lozano","lozada","lucena",
+    "lugo","luján","luna","macías","madera","madroñero","madrid","maestre","maldonado","manjarrez",
+    "manrique","mantilla","manzo","maradiaga","marenco","marín","marino","marmolejo","marroquín",
+    "marrugo","martelo","martínez","martín","maryory","massa","mateus","matiz","maturana","maya",
+    "mayorga","mazabel","mejía","meléndez","meneses","mendoza","mendivelso","mendieta","menjura",
+    "mesa","mestra","mestre","metke","meza","millán","mina","mira","miranda","mogollón","molina",
+    "molleja","moncada","moncayo","mondragón","monroy","monsalve","montaña","montañez","montañés",
+    "montenegro","montero","montes","montoya","morales","morán","moreno","morillo","morlán","morón",
+    "mora","moscote","mosquera","motta","moyano","muelas","muñoz","murcia","murgas","murillo","mussa",
+    "najar","naranjo","narváez","navarro","navarrete","navas","negrete","neira","nerio","nieves",
+    "nieto","niño","nivia","noguera","noriega","nova","novoa","núñez","obando","ocampo","octavio",
+    "olarte","olaya","oleas","oliveros","omaña","oñate","ontiveros","oquendo","ordóñez","orjuela",
+    "ormaza","orrego","ortega","ortiz","ospina","osorno","osorio","ossa","otero","otálora","oviedo",
+    "oyola","pabón","pacheco","padilla","páez","palacios","palencia","pallares","palma","pardo",
+    "paredes","parra","paternina","patiño","pava","pavón","payares","pecero","pedraza","peña",
+    "perdomo","pérez","perilla","pereira","perea","perico","pestana","petro","pico","pinchao",
+    "pineda","pinilla","pinzón","pinto","piraquive","pizarro","plazas","plata","plaza","polo","pomares",
+    "pombo","porras","portela","portillo","posada","posso","prado","pradilla","preciado","prieto",
+    "puello","puentes","puga","pulido","pupo","quiceno","quijano","quimbayo","quintero","quiñones",
+    "quiroga","quirós","rada","rafael","ramírez","ramón","rangel","rasgado","rave","rayo","realpe",
+    "reátiga","rebolledo","recalde","reina","restrepo","retamoso","revelo","reyes","riaño","ricaurte",
+    "rico","rincón","rios","ríos","rivadeneira","rivera","riveros","robayo","roberto","robles",
+    "roca","rodríguez","rojas","roldán","romero","romo","ronderos","rondón","roque","rosales",
+    "rosero","rosso","rousseau","rubiano","ruiz","saavedra","sabogal","sacristán","saénz","sáenz",
+    "sáez","saiz","salamanca","salas","salazar","salcedo","salgado","salinas","salmerón","samudio",
+    "samarra","sánchez","sandoval","sanguino","santacruz","santa","santafé","santamaría","santander",
+    "santiago","santofimio","santos","sarabia","saray","saravia","sarmiento","sarria","segovia",
+    "segura","sepúlveda","sevilla","sierra","silgado","silva","silvera","simanca","simón","sinisterra",
+    "sierralta","silos","solano","solarte","solís","solórzano","sosa","soto","sotelo","subía","suárez",
+    "sua","suaza","suescún","supelano","taborda","tabares","tacuma","tafur","tamayo","támara","tambon",
+    "tapiquihua","tarazona","tatis","tautiva","tejada","téllez","tello","tena","tenero","tinjacá",
+    "tique","tirado","tobar","toledo","tolosa","torijano","toro","torralba","torrealba","torreglosa",
+    "torres","torrijos","tovar","triana","triviño","trochez","trujillo","tuberquia","turriago","tuta",
+    "ulloa","umaña","upegui","urbano","urdaneta","ureña","uribe","urquijo","urueta","useche","ustate",
+    "valbuena","valdés","valderrama","valdivia","valdivieso","valencia","valera","valero","valladares",
+    "valle","vallecilla","vallesilla","vanegas","varela","vargas","varón","velandia","velarde",
+    "velasco","velásquez","vélez","veloza","vences","vera","vergara","verraco","vesga","vianchá",
+    "vidal","vidales","vides","villabona","villadiego","villafañe","villagra","villalba","villalobos",
+    "villamil","villamizar","villaneda","villanueva","villaquirán","villarraga","villarreal","villate",
+    "villavicencio","villegas","vinasco","virviescas","viveros","vizcaíno","yepes","yépez","yopasa",
+    "yotagri","yusti","yustres","yucuma","zabaleta","zabrano","zacipa","zafra","zambrano","zamora",
+    "zapata","zárate","zarur","zea","zegarra","zerda","zipaquirá","zorilla","zubiría","zuluaga","zurita"
+
 }
 
 # Normalize name sets for accent-insensitive matching
@@ -574,7 +567,7 @@ FAQ = {
     "pago": "Aceptamos Nequi y efectivo.",
     "duracion": "Los exámenes médicos escolares toman aproximadamente 30 minutos por estudiante.",
     "llevar": "Debes traer el documento de identidad del estudiante (Tarjeta de Identidad o Cédula).",
-    "horario": "Atendemos de lunes a viernes de 7:00 AM a 5:00 PM.",
+    "horario": "Atendemos de lunes a viernes de 6:00 a.m. a 8:00 p.m.",
     "agendar": "Para garantizar una atención rápida y organizada, es necesario agendar la cita previamente. Si quieres, puedo ayudarte a reservarla ahora mismo 😊"
 }
 
@@ -583,21 +576,50 @@ FAQ = {
 # =============================================================================
 
 def extract_package(msg):
-    """Extract package from message"""
-    text = msg.lower()
+    """Extract package from message, including 'opcion 1/2/3', prices, and names."""
+    text = msg.lower().strip()
     
-    # Esencial
-    if any(k in text for k in ["esencial", "verde", "45k", "45000", "45.000", "45,000", "45 mil"]):
+    # Normalize accents and extra spaces
+    text = (
+        text.replace("á", "a")
+            .replace("é", "e")
+            .replace("í", "i")
+            .replace("ó", "o")
+            .replace("ú", "u")
+    )
+
+    # Helper: check if a standalone digit (1, 2, 3) appears in a relevant context
+    def matches_option_number(num_str, target_num):
+        # Match "1", "2", "3" only if near keywords like "paquete", "opcion", "quiero", etc.
+        pattern = rf"\b{num_str}\b"
+        m = re.search(pattern, text)
+        if m:
+            # Check context around the number
+            start = max(0, m.start() - 20)
+            end = min(len(text), m.end() + 20)
+            context = text[start:end]
+            if any(kw in context for kw in ["paquete", "opcion", "opción", "quiero", "elijo", "tomo", "la", "el", "numero", "número"]):
+                return True
+        return False
+
+    # --- OPTION 1: Cuidado Esencial ---
+    if (any(k in text for k in ["esencial", "verde", "45k", "45000", "45.000", "45,000", "45 mil"])
+        or re.search(r"\b(?:opcion|opción)\s*[11]\b", text)
+        or matches_option_number("1", 1)):
         return "Paquete Cuidado Esencial"
-    
-    # Activa
-    if any(k in text for k in ["activa", "salud activa", "azul", "psico", "psicologia", "60k", "60000", "60.000", "60,000", "60 mil"]):
+
+    # --- OPTION 2: Salud Activa ---
+    if (any(k in text for k in ["activa", "salud activa", "azul", "psico", "psicologia", "60k", "60000", "60.000", "60,000", "60 mil"])
+        or re.search(r"\b(?:opcion|opción)\s*[22]\b", text)
+        or matches_option_number("2", 2)):
         return "Paquete Salud Activa"
-    
-    # Bienestar
-    if any(k in text for k in ["bienestar", "total", "amarillo", "completo", "odonto", "75k", "75000", "75.000", "75,000", "75 mil"]):
+
+    # --- OPTION 3: Bienestar Total ---
+    if (any(k in text for k in ["bienestar", "total", "amarillo", "completo", "odonto", "75k", "75000", "75.000", "75,000", "75 mil"])
+        or re.search(r"\b(?:opcion|opción)\s*[33]\b", text)
+        or matches_option_number("3", 3)):
         return "Paquete Bienestar Total"
-    
+
     return None
 
 def extract_student_name(msg, current_name):
@@ -806,12 +828,43 @@ def extract_cedula(msg):
         return m.group(0)
     return None
 
-def extract_date(msg, session):
-    """Extract date from message"""
-    text = msg.lower()
-    today = datetime.now(LOCAL_TZ).date()
+def check_availability(date_str: str, time_str: str) -> bool:
+    """
+    Check if a time slot has fewer than 4 bookings (max capacity).
+    Assumes datetime is stored as "YYYY-MM-DD HH:MM" in Supabase.
+    """
+    if not supabase:
+        return True  # assume available if DB down
 
-    # Quick natural dates
+    try:
+        # Extract hour (e.g., "15" from "15:30")
+        hour = time_str.split(':')[0]
+        target_hour_pattern = f"{date_str} {hour}:"
+
+        # Count how many bookings exist for this hour
+        result = (
+            supabase.table(RESERVATION_TABLE)
+            .select("datetime", count="exact")
+            .eq("business_id", BUSINESS_ID)
+            .like("datetime", target_hour_pattern)
+            .execute()
+        )
+
+        count = len(result.data) if result.data else 0
+        return count < 4
+
+    except Exception as e:
+        print(f"Availability check error: {e}")
+        return True  # assume available on error
+
+def extract_date(msg, session):
+    """Extract date from message, including relative weekdays."""
+    text = msg.lower()
+    # Hardcode today as 2026-02-04 for testing (adjust if needed)
+    today = datetime.now(LOCAL_TZ).date()
+    weekday_today = today.weekday()  # Monday=0
+
+    # 1) Quick natural dates
     if "mañana" in text or "manana" in text:
         return (today + timedelta(days=1)).strftime("%Y-%m-%d")
     if "hoy" in text:
@@ -819,9 +872,28 @@ def extract_date(msg, session):
     if "pasado mañana" in text or "pasado manana" in text:
         return (today + timedelta(days=2)).strftime("%Y-%m-%d")
 
-    # ===========================
-    # DAY-IN-WORDS + MONTH (e.g., "quince de febrero")
-    # ===========================
+    # 2) WEEKDAY HANDLING: "viernes", "este lunes", "próximo miércoles"
+    norm_text = (
+        text.replace("á", "a")
+            .replace("é", "e")
+            .replace("í", "i")
+            .replace("ó", "o")
+            .replace("ú", "u")
+    )
+
+    for es_day, target_wd in WEEKDAYS_ES.items():
+        pattern = rf"(?:este\s+|proximo\s+|próximo\s+|para\s+el\s+|el\s+)?{es_day}\b"
+        if re.search(pattern, norm_text):
+            days_ahead = target_wd - weekday_today
+            if days_ahead <= 0:
+                days_ahead += 7
+            if re.search(rf"(?:proximo\s+|próximo\s+){es_day}", norm_text):
+                if days_ahead <= 6:
+                    days_ahead += 7
+            candidate_date = today + timedelta(days=days_ahead)
+            return candidate_date.strftime("%Y-%m-%d")
+
+    # 3) DAY-IN-WORDS + MONTH (e.g., "quince de febrero")
     m = re.search(
         r"([a-záéíóúñ]+)\s+de\s+("
         r"enero|febrero|marzo|abril|mayo|junio|julio|agosto|"
@@ -829,11 +901,9 @@ def extract_date(msg, session):
         r")",
         text
     )
-
     if m:
         day_word = m.group(1)
         month_word = m.group(2)
-
         day_num = words_to_number(day_word)
         if day_num:
             month_map = {
@@ -843,70 +913,55 @@ def extract_date(msg, session):
             }
             month_num = month_map[month_word]
             year = today.year
-
             try:
-                parsed = datetime(year, month_num, day_num).date()
-                if parsed < today:
-                    parsed = parsed.replace(year=year + 1)
+                parsed = datetime(2026, month_num, day_num).date()
                 return parsed.strftime("%Y-%m-%d")
             except:
                 pass
 
-    # Handle "13 de febrero" directly with regex
-    # Pattern: "13 de febrero", "13 feb", "13/02", etc.
+    # 4) Numeric date patterns (your existing logic)
     date_patterns = [
         r"(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)",
         r"(\d{1,2})\s+(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)",
         r"(\d{1,2})[/\-](\d{1,2})",
         r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})"
     ]
-
     for pattern in date_patterns:
         m = re.search(pattern, text)
         if m:
             day = int(m.group(1))
             month_str = m.group(2) if len(m.groups()) > 1 else None
-            
-            # Map month names to numbers
             month_map = {
                 "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
                 "julio": 7, "agosto": 8, "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
                 "ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6,
                 "jul": 7, "ago": 8, "sep": 9, "oct": 10, "nov": 11, "dic": 12
             }
-
             if month_str:
                 month = month_map.get(month_str.lower())
                 if month:
-                    year = today.year
-                    # If date is in past, assume next year
                     try:
-                        parsed_date = datetime(year, month, day).date()
-                        if parsed_date < today:
-                            parsed_date = parsed_date.replace(year=year + 1)
-                        return parsed_date.strftime("%Y-%m-%d")
-                    except ValueError:
-                        pass  # Invalid date (e.g., Feb 30)
-
-            # For MM/DD or DD/MM formats
-            if len(m.groups()) == 2:
-                # Assume DD/MM if first number <= 12
-                if day <= 12:
-                    month = int(m.group(2))
-                    year = today.year
-                    try:
-                        parsed_date = datetime(year, month, day).date()
+                        parsed_date = datetime(2026, month, day).date()
                         if parsed_date < today:
                             parsed_date = parsed_date.replace(year=year + 1)
                         return parsed_date.strftime("%Y-%m-%d")
                     except ValueError:
                         pass
+            if len(m.groups()) == 2 and day <= 12:
+                month = int(m.group(2))
+                try:
+                    parsed_date = datetime(2026, month, day).date()
+                    if parsed_date < today:
+                        parsed_date = parsed_date.replace(year=year + 1)
+                    return parsed_date.strftime("%Y-%m-%d")
+                except ValueError:
+                    pass
 
-    # Fallback to dateparser if no direct match
+    # 5) Fallback to dateparser
     if DATEPARSER_AVAILABLE:
         try:
             dt = dateparser.parse(
-                msg,  # ← Use original msg, not cleaned!
+                msg,
                 languages=["es"],
                 settings={
                     "TIMEZONE": "America/Bogota",
@@ -915,100 +970,93 @@ def extract_date(msg, session):
                     "DATE_ORDER": "DMY"
                 }
             )
-
             if dt:
                 local_dt = dt.astimezone(LOCAL_TZ)
                 parsed_date = local_dt.date()
-
-                # If date is still before today, assume user means next year
-                if parsed_date < today:
-                    parsed_date = parsed_date.replace(year=today.year + 1)
-
+                # Skip year rollover in test mode — always use 2026
+                pass
                 return parsed_date.strftime("%Y-%m-%d")
-
         except Exception as e:
             print("Dateparser error:", e)
 
     return session.get("date")
 
 def extract_time(msg, session):
-    """Extract time from digits OR Colombian natural expressions."""
+    """Extract time with full Colombian support: digits, am/pm, and word phrases."""
     text = msg.lower()
-
-    # Normalize accents
     text = (
-        text.replace("á","a")
-            .replace("é","e")
-            .replace("í","i")
-            .replace("ó","o")
-            .replace("ú","u")
+        text.replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
     )
 
-    # ============
-    # 1) Try HH:MM or digits
-    # ============
-    m = re.search(r"(\d{1,2})(?:[:\.](\d{2}))?\s*(am|pm)?", text)
+    def valid_hour(h):
+        return 6 <= h <= 20
+
+    # 1) Match "3 pm", "3:00 pm", "15:00", "a las 3 pm"
+    m = re.search(
+        r"(?:a\s+las\s+|las\s+)?(\d{1,2})(?:[:\.](\d{2}))?"
+        r"\s*(?:de\s+la\s+)?(mañana|manana|tarde|pm|am|p\.m\.|a\.m\.)",
+        text
+    )
     if m:
         hour = int(m.group(1))
         minute = int(m.group(2)) if m.group(2) else 0
-        ampm = m.group(3)
+        period = m.group(3).lower()
 
-        if ampm == "pm" and hour != 12:
-            hour += 12
-        if ampm == "am" and hour == 12:
-            hour = 0
+        if period in ["pm", "tarde", "p.m."]:
+            if hour != 12:
+                hour += 12
+        elif period in ["am", "mañana", "manana", "a.m."]:
+            if hour == 12:
+                hour = 0
 
-        if 7 <= hour <= 17:
+        if valid_hour(hour):
             return f"{hour:02d}:{minute:02d}"
 
-    # ===========================
-    # 2) Colombian forms: "a las tres", "tipo cuatro", "sobre las ocho"
-    # ===========================
-    m = re.search(r"(?:a las|las|tipo|sobre las|como a las)\s+([a-z]+)", text)
+    # 2) Match 24-hour format: "15:00", "9:30"
+    m = re.search(r"(?:a\s+las\s+|las\s+)?(\d{1,2})[:\.](\d{2})", text)
     if m:
-        word = m.group(1)
-        num = words_to_number(word)
-        if num is not None:
-            hour = num
-            if 7 <= hour <= 17:
-                return f"{hour:02d}:00"
+        hour = int(m.group(1))
+        minute = int(m.group(2))
+        if valid_hour(hour):
+            return f"{hour:02d}:{minute:02d}"
 
-    # ===========================
-    # 3) Colombian minutes: "y media", "y cuarto", "menos diez", etc.
-    # ===========================
+    # 3) Match standalone hour: "a las 3"
+    m = re.search(r"(?:a\s+las|las)\s+(\d{1,2})", text)
+    if m:
+        hour = int(m.group(1))
+        if valid_hour(hour):
+            return f"{hour:02d}:00"
+
+    # 4) Word-based: "tres y veinte"
     base_hour = None
-
-    for w in text.split():
+    words = text.split()
+    for w in words:
         n = words_to_number(w)
         if n is not None and 0 <= n <= 24:
             base_hour = n
             break
-
     if base_hour is not None:
         minute = 0
-
         if "y media" in text:
             minute = 30
         elif "y cuarto" in text or "y quince" in text:
             minute = 15
         elif "y veinte" in text:
             minute = 20
-        elif "y veinticinco" in text:
-            minute = 25
-        elif "menos cuarto" in text or "menos quince" in text:
+        elif "menos cuarto" in text:
             base_hour -= 1
             minute = 45
         elif "menos diez" in text:
             base_hour -= 1
             minute = 50
-        elif "menos veinte" in text:
-            base_hour -= 1
-            minute = 40
-
-        if 7 <= base_hour <= 17:
+        if valid_hour(base_hour):
             return f"{base_hour:02d}:{minute:02d}"
 
-    return session.get("time")
+    return session.get("time")  # fallback
 
 # =============================================================================
 # SESSION UPDATE
@@ -1260,6 +1308,22 @@ def get_available_times_for_date(target_date: str, limit: int = 5) -> list[str]:
         # Safe fallback: hourly slots
         return [f"{h:02d}:00" for h in range(7, 18)]
 
+    # Before inserting, check availability
+    if not check_availability(session["date"], session["time"]):
+        alternatives = get_available_times_for_date(session["date"], limit=3)
+        if alternatives:
+            alt_text = "\n".join([f"- {t}" for t in alternatives[:3]])
+            return (
+                f"❌ Lo siento, ya no hay cupo el {session['date']} a las {session['time']}. "
+                f"Pero tenemos disponibilidad ese mismo día a estas horas:\n{alt_text}\n\n"
+                "¿Te gustaría elegir una de estas opciones?"
+            )
+        else:
+            return (
+                f"❌ Lo siento, ya no hay cupo el {session['date']} a las {session['time']}. "
+                "¿Te gustaría que te sugiera fechas en otro día?"
+            )
+
 def insert_reservation(phone, session):
     try:
         # Validate required fields
@@ -1276,28 +1340,38 @@ def insert_reservation(phone, session):
             return False, f"Invalid datetime format: '{dt_str}' → {ve}"
 
         dt_local = dt.replace(tzinfo=LOCAL_TZ)
-        dt_text = dt_local.strftime("%Y-%m-%d %H:%M")  # ✅ "2026-02-20 15:00"
+        dt_text = dt_local.isoformat()  # e.g., "2026-02-12T15:00:00-05:00"
 
-        # Insert reservation
+        # ALWAYS save to SUPABASE (even in test mode)
         result = supabase.table(RESERVATION_TABLE).insert({
-          "customer_name": session["student_name"],
-          "contact_phone": phone,
-          "datetime": dt_text,
-          "status": "confirmado",          # ← now exists ✅
-          "business_id": BUSINESS_ID,      # ← now exists ✅
-          "package": session["package"],
-          "school_name": session["school"],
-          "age": session["age"],
-          "cedula": session["cedula"]
+            "customer_name": session["student_name"],
+            "contact_phone": phone,
+            "datetime": dt_text,
+            "status": "confirmado",
+            "business_id": BUSINESS_ID,
+            "package": session["package"],
+            "school_name": session["school"],
+            "age": session["age"],
+            "cedula": session["cedula"]
         }).execute()
 
         return True, "CONFIRMED"
 
     except Exception as e:
-        print("❌ INSERT RESERVATION FAILED:", repr(e))
+        print("\n\n❌ INSERT ERROR:")
+        print(repr(e))
         import traceback
-        traceback.print_exc()  # ← This will show exact error in logs
-        return False, str(e)[:200]
+        traceback.print_exc()
+        print("\n\n")
+        return False, str(e)
+
+    except Exception as e:
+        print("\n\n❌ INSERT ERROR (TEST MODE):")
+        print(repr(e))
+        import traceback
+        traceback.print_exc()
+        print("\n\n")
+        return False, str(e)
 
 # List of all ways users ask if they need to schedule an appointment
 APPOINTMENT_NEED_PATTERNS = [
@@ -1307,6 +1381,7 @@ APPOINTMENT_NEED_PATTERNS = [
     "hay que reservar", "hay que sacar cita", "hay que sacar turno",
     "toca agendar", "toca reservar", "toca pedir cita", "toca pedir turno",
     "es obligatorio agendar", "es obligatorio reservar",
+    "toca sacar cita"
 
     # Short / colloquial (but not too generic)
     "toca cita", "cita obligatoria", "es con cita",
@@ -1392,6 +1467,49 @@ def process_message(msg, session):
     )
 
     # --------------------------------------------------
+    # EARLY AVAILABILITY CHECK (WORKS AT ANY TIME)
+    # --------------------------------------------------
+    CUPON_KEYWORDS = ["cupo", "disponible", "disponibilidad"]
+    has_cupo = any(kw in normalized for kw in CUPON_KEYWORDS)
+    is_question = "?" in text or any(q in normalized for q in ["tienen", "hay", "puedo"])
+
+    if has_cupo and is_question:
+        # Reset booking flow to treat this as a new inquiry
+        session["booking_started"] = False
+        session["fields_asked"] = []
+        session["booking_intro_shown"] = False
+        save_session(session)
+        
+        extracted_date = extract_date(msg, session)
+        extracted_time = extract_time(msg, session)
+        
+        if extracted_date and extracted_time:
+            if check_availability(extracted_date, extracted_time):
+                return (
+                    f"✅ Sí, hay cupo el {extracted_date} a las {extracted_time}. "
+                    "¿Te gustaría agendar la cita?"
+                )
+            else:
+                alternatives = get_available_times_for_date(extracted_date, limit=3)
+                if alternatives:
+                    alt_text = "\n".join([f"- {t}" for t in alternatives[:3]])
+                    return (
+                        f"❌ Lo siento, ya no hay cupo el {extracted_date} a las {extracted_time}. "
+                        f"Pero tenemos disponibilidad ese mismo día a estas horas:\n{alt_text}\n\n"
+                        "¿Te sirve alguna de estas opciones?"
+                    )
+                else:
+                    return (
+                        f"❌ Lo siento, ya no hay cupo el {extracted_date} a las {extracted_time}. "
+                        "¿Te gustaría que te sugiera fechas en otro día?"
+                    )
+        else:
+            return (
+                "Por favor indícame la fecha y hora que deseas verificar "
+                "(ej: 'mañana a las 3 pm' o '15 de febrero a las 4 pm')."
+            )
+
+    # --------------------------------------------------
     # Detect intent
     # --------------------------------------------------
     ACTION_VERBS = [
@@ -1423,6 +1541,17 @@ def process_message(msg, session):
     ]
     is_info = any(p in normalized for p in INFO_TRIGGERS)
 
+    # Positive/Negative confirmation responses
+    POSITIVE_RESPONSES = [
+        "si", "claro", "por supuesto", "obvio", "vale", "ok", "deseo", "quiero",
+        "sí quiero", "si quiero", "me gustaria", "quisiera", "bueno", "dale"
+    ]
+
+    NEGATIVE_RESPONSES = [
+        "no", "no gracias", "gracias no", "no necesito", "no por ahora", "tal vez después",
+        "no quiero", "no me interesa", "otra vez", "después"
+    ]
+
     SCHOOL_CONTEXT = [
         "examen", "examenes", "medico", "medicos",
         "colegio", "escolar", "ingreso"
@@ -1436,28 +1565,6 @@ def process_message(msg, session):
     has_price_pattern = bool(re.search(r"\b(?:45|60|75)[\.,]?\d{3}\b", lower))
     
     has_package_intent = any(kw in lower for kw in PACKAGE_KEYWORDS) or has_price_pattern
-
-    # --------------------------------------------------
-    # ALWAYS extract data unless it's a pure greeting or info query
-    # --------------------------------------------------
-
-    force_booking_intent = False
-    update_result = None
-
-    update_result = None   # ← ← ← ADD THIS LINE
-    
-    if not check_faq(text):
-        if force_booking_intent or not (is_greeting and not session.get("booking_started")):
-            update_result = update_session_with_message(text, session)
-    
-        if first:
-            session["first_user_message_processed"] = True
-            save_session(session)
-    
-        if update_result == "PAST_DATE":
-            return "La fecha que indicaste ya pasó este año. ¿Te refieres a otro día?"
-        if update_result == "INVALID_TIME":
-            return "Lo siento, solo atendemos de 7am a 5pm. Por favor elige otra hora."
 
     # --------------------------------------------------
     # 0. GREETING + "NECESITO AGENDAR?" HANDLING
@@ -1483,47 +1590,54 @@ def process_message(msg, session):
     # 1. BOOKING INTENT HANDLING (WITH OR WITHOUT GREETING)
     # --------------------------------------------------
     
-    # CASE A: greeting + intent
-    if is_greeting and has_action and not session.get("booking_started"):
-        greeting = get_greeting_by_time()
-        session["booking_started"] = True
-        session["booking_intro_shown"] = False
-        save_session(session)
-    
-        return (
-            f"{greeting}! muchas gracias! 😊 Para ayudarte a agendar la cita, por favor compárteme la siguiente información:\n\n"
-            "- Nombre completo del estudiante\n"
-            "- Colegio\n"
-            "- Paquete\n"
-            "- Fecha y hora\n"
-            "- Edad del estudiante\n"
-            "- Documento de identidad (Tarjeta de Identidad o Cédula)\n\n"
-            "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
-        )
-    
-    # CASE B: intent WITHOUT greeting  ← 🔥 REQUIRED
-    if has_action and not is_greeting and not session.get("booking_started"):
-        session["booking_started"] = True
-        session["booking_intro_shown"] = False
-        save_session(session)
-    
-        return (
-            "¡Perfecto!  muchas gracias! 😊 Para ayudarte a agendar la cita, por favor compárteme la siguiente información:\n\n"
-            "- Nombre completo del estudiante\n"
-            "- Colegio\n"
-            "- Paquete\n"
-            "- Fecha y hora\n"
-            "- Edad del estudiante\n"
-            "- Documento de identidad (Tarjeta de Identidad o Cédula)\n\n"
-            "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
-        )
-    
-    # CASE C: only greeting → normal greeting
+    # CASE C: greeting + possible intent
     if is_greeting and not session.get("booking_started"):
-        session["greeted"] = True
-        save_session(session)
-        greeting = get_greeting_by_time()
-        return f"{greeting}, 😊 Gracias por escribir a Oriental IPS. ¿En qué te puedo ayudar hoy?"
+        # Check if there's also booking intent
+        if has_action or has_context or has_package_intent:
+            # Extract data first
+            update_session_with_message(msg, session)
+            session["booking_started"] = True
+            session["booking_intro_shown"] = False
+            save_session(session)
+            # Let Section 5 handle the adaptive intro (with greeting prefix)
+            # So don't return here — continue to Section 5
+        else:
+            # Pure greeting
+            session["greeted"] = True
+            save_session(session)
+            greeting = get_greeting_by_time()
+            return f"{greeting}, 😊 Gracias por escribir a Oriental IPS. ¿En qué te puedo ayudar hoy?"
+
+    # --------------------------------------------------
+    # HANDLE YES/NO AFTER GREETING OR FAQ
+    # --------------------------------------------------
+    # Only consider yes/no if we're NOT already in a booking flow
+    if not session.get("booking_started") and not session.get("awaiting_confirmation"):
+        # Normalize and split into words
+        clean_words = set(normalized.replace(",", "").replace(".", "").replace("!", "").split())
+
+        # Check for "no" (whole word only)
+        if any(neg in clean_words for neg in NEGATIVE_RESPONSES):
+            return (
+                "¡Entendido! 😊 Si en otro momento necesitas agendar una cita, "
+                "no dudes en escribirnos. ¡Que tengas un excelente día! 🙌"
+            )
+
+        # Check for "yes" (whole word only)
+        if any(pos in clean_words for pos in POSITIVE_RESPONSES):
+            session["booking_started"] = True
+            session["booking_intro_shown"] = False
+            save_session(session)
+            return (
+                "¡Excelente! 😊 Para ayudarte a agendar la cita, por favor compárteme la siguiente información:\n\n"
+                "- Nombre completo del estudiante\n"
+                "- Colegio\n"
+                "- Paquete\n"
+                "- Fecha y hora\n"
+                "- Edad del estudiante\n"
+                "- Documento de identidad (Tarjeta de Identidad o Cédula)\n\n"
+                "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
+            )
 
     # --------------------------------------------------
     # 2. INFO QUESTIONS (ALLOWED ANYTIME, BUT NO ACTION)
@@ -1556,15 +1670,48 @@ def process_message(msg, session):
         return faq_answer
 
     # --------------------------------------------------
+    # 4. HANDLE AVAILABILITY QUESTIONS ("¿TIENEN CUPO...?")
+    # --------------------------------------------------
+    if not session.get("booking_started"):
+        # Check for key words + question mark
+        has_cupo = any(word in normalized for word in ["cupo", "disponible", "disponibilidad"])
+        is_question = "?" in text or any(q in normalized for q in ["tienen", "hay", "puedo", "podria", "quisiera"])
+        
+        if has_cupo and is_question:
+            extracted_date = extract_date(msg, session)
+            extracted_time = extract_time(msg, session)
+            
+            if extracted_date and extracted_time:
+                if check_availability(extracted_date, extracted_time):
+                    return (
+                        f"✅ Sí, hay cupo el {extracted_date} a las {extracted_time}. "
+                        "¿Te gustaría agendar la cita?"
+                    )
+                else:
+                    alternatives = get_available_times_for_date(extracted_date, limit=3)
+                    if alternatives:
+                        alt_text = "\n".join([f"- {t}" for t in alternatives[:3]])
+                        return (
+                            f"❌ Lo siento, ya no hay cupo el {extracted_date} a las {extracted_time}. "
+                            f"Pero tenemos disponibilidad ese mismo día a estas horas:\n{alt_text}\n\n"
+                            "¿Te sirve alguna de estas opciones?"
+                        )
+                    else:
+                        return (
+                            f"❌ Lo siento, ya no hay cupo el {extracted_date} a las {extracted_time}. "
+                            "¿Te gustaría que te sugiera fechas en otro día?"
+                        )
+            else:
+                return (
+                    "Por favor indícame la fecha y hora que deseas verificar "
+                    "(ej: 'mañana a las 3 pm' o '15 de febrero a las 4 pm')."
+                )
+    
+    # --------------------------------------------------
     # 4. START BOOKING (ONCE)
     # --------------------------------------------------
-    SCHOOL_CONTEXT = [
-        "examen", "examenes", "medico", "medicos",
-        "colegio", "escolar", "ingreso"
-    ]
-    has_context = any(w in normalized for w in SCHOOL_CONTEXT)
-
     if not session.get("booking_started") and (has_action or has_context or has_package_intent):
+        update_session_with_message(msg, session)
         session["booking_started"] = True
         session["booking_intro_shown"] = False
         save_session(session)
@@ -1573,9 +1720,13 @@ def process_message(msg, session):
     # 5. SHOW DYNAMIC INTRO OR SUMMARY (IF ALL FIELDS PRESENT)
     # --------------------------------------------------
     if session.get("booking_started") and not session.get("booking_intro_shown") and first:
+        # Re-extract to ensure school/name are captured
+        update_session_with_message(msg, session)
+        
         session["booking_intro_shown"] = True
-    
-        # Detect which fields we already have
+        session["first_user_message_processed"] = True  # ← Critical!
+        save_session(session)
+
         collected = []
         if session.get("student_name"): collected.append("el nombre")
         if session.get("school"): collected.append("el colegio")
@@ -1584,79 +1735,59 @@ def process_message(msg, session):
         if session.get("time"): collected.append("la hora")
         if session.get("age"): collected.append("la edad")
         if session.get("cedula"): collected.append("el documento")
-    
+
         missing = get_missing_fields(session)
-    
-        # If NO data exists → show full intro
+
         if len(collected) == 0:
+            greeting_prefix = ""
+            if is_greeting:
+                greeting_word = get_greeting_by_time()
+                greeting_prefix = f"{greeting_word}! "
             return (
-                "¡Perfecto, muchas gracias! 😊 Para ayudarte a agendar la cita, por favor compárteme la siguiente información:\n\n"
+                f"{greeting_prefix}¡Perfecto, muchas gracias! 😊 Para ayudarte a agendar la cita, por favor compárteme la siguiente información:\n\n"
                 "- Nombre completo del estudiante\n"
                 "- Colegio\n"
                 "- Paquete\n"
                 "- Fecha y hora\n"
+                "- Edad del estudiante\n"
                 "- Documento de identidad (Tarjeta de Identidad o Cédula)\n\n"
                 "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
             )
-    
-        # If SOME data exists → show adaptive intro
-        collected_str = ", ".join(collected)
-        missing_str = "\n".join([
-            "- Nombre completo del estudiante" if "student_name" in missing else "",
-            "- Colegio" if "school" in missing else "",
-            "- Paquete" if "package" in missing else "",
-            "- Fecha y hora" if "date" in missing or "time" in missing else "",
-            "- Documento de identidad (Tarjeta de Identidad o Cédula)" if "cedula" in missing else "",
-        ]).strip()
-    
-        return (
-            f"¡Perfecto, muchas gracias! 😊 Ya tengo {collected_str}.\n"
-            f"Para ayudarte a completar la cita, por favor compárteme la siguiente información pendiente:\n\n"
-            f"{missing_str}\n\n"
-            "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
-        )
-    
-        # Otherwise → NEW adaptive intro (only when the user has given *nothing*)
-        known = []
-        missing_list = []
-    
-        if session.get("student_name"): known.append("nombre")
-        else: missing_list.append("Nombre completo del estudiante")
-    
-        if session.get("school"): known.append("colegio")
-        else: missing_list.append("Colegio")
-    
-        if session.get("package"): known.append("paquete")
-        else: missing_list.append("Paquete")
-    
-        if session.get("date") and session.get("time"):
-            known.append("fecha y hora")
-        elif session.get("date") or session.get("time"):
-            missing_list.append("Fecha y hora completas")
         else:
-            missing_list.append("Fecha y hora")
-    
-        if session.get("age"): known.append("edad")
-        else: missing_list.append("Edad")
-    
-        if session.get("cedula"): known.append("documento")
-        else: missing_list.append("Documento de identidad (Tarjeta de Identidad o Cédula)")
-    
-        # Build intro
-        intro = "¡Perfecto, muchas gracias! 😊 Para ayudarte a agendar la cita, por favor compárteme la siguiente información:\n\n"
-        for item in missing_list:
-            intro += f"- {item}\n"
-        intro += "\nPuedes enviarme los datos poco a poco o todos en un solo mensaje."
-    
-        return intro
+            collected_str = ", ".join(collected)
+            missing_items = []
+            if "student_name" in missing: missing_items.append("- Nombre completo del estudiante")
+            if "school" in missing: missing_items.append("- Colegio")
+            if "package" in missing: missing_items.append("- Paquete")
+            if "date" in missing or "time" in missing: missing_items.append("- Fecha y hora")
+            if "age" in missing: missing_items.append("- Edad del estudiante")
+            if "cedula" in missing: missing_items.append("- Documento de identidad (Tarjeta de Identidad o Cédula)")
+            missing_str = "\n".join(missing_items)
+
+            greeting_prefix = ""
+            if is_greeting:
+                greeting_word = get_greeting_by_time()
+                greeting_prefix = f"{greeting_word}! "
+
+            return (
+                f"{greeting_prefix}¡Perfecto, muchas gracias! 😊 Ya tengo {collected_str}. Para ayudarte a completar la cita, por favor compárteme la siguiente información pendiente:\n\n"
+                f"{missing_str}\n\n"
+                "Puedes enviarme los datos poco a poco o todos en un solo mensaje."
+            )
 
     # --------------------------------------------------
-    # 6. ASK NEXT MISSING FIELD  ← 🔥 THIS WAS MISSING
+    # 6. ASK NEXT MISSING FIELD (ONLY ONCE PER FIELD)
     # --------------------------------------------------
     if session.get("booking_started"):
         missing = get_missing_fields(session)
         if missing:
-            return get_field_prompt(missing[0])
+            fields_asked = set(session.get("fields_asked", []))
+            for field in missing:
+                if field not in fields_asked:
+                    session["fields_asked"] = list(fields_asked | {field})
+                    save_session(session)
+                    return get_field_prompt(field)
+            return None  # stay silent after one attempt per field
 
 
     # --------------------------------------------------
@@ -1763,21 +1894,18 @@ async def home(request: Request):
 
 @app.get("/api/reservations")
 async def get_reservations():
-    """Get upcoming reservations"""
-    
+    """Get all future reservations"""
     if not supabase:
         return {"error": "Supabase not available"}
-    
+
     try:
         now = datetime.now(LOCAL_TZ)
-        seven_days = now + timedelta(days=7)
         
         result = (
             supabase.table(RESERVATION_TABLE)
             .select("*")
             .eq("business_id", BUSINESS_ID)
-            .gte("datetime", now.isoformat())
-            .lt("datetime", seven_days.isoformat())
+            .gte("datetime", now.isoformat())  # Only filter: >= today
             .order("datetime", desc=False)
             .execute()
         )
