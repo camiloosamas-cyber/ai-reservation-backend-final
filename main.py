@@ -166,6 +166,20 @@ def is_slot_available(datetime_str: str, business_id: int) -> bool:
         print(f"Availability check error: {e}")
         return True
 
+def cancel_reservation(phone: str, business_id: int) -> dict:
+    if not supabase:
+        return {"success": False}
+    try:
+        result = supabase.table("reservations").select("*").eq("contact_phone", phone).eq("business_id", business_id).eq("status", "confirmed").order("datetime", desc=True).limit(1).execute()
+        if not result.data:
+            return {"success": False, "reason": "no_booking"}
+        booking = result.data[0]
+        supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", booking["reservation_id"]).execute()
+        return {"success": True, "booking": booking}
+    except Exception as e:
+        print(f"Cancel error: {e}")
+        return {"success": False}
+
 # =====================================================================
 # WEBHOOK — entry point for all WhatsApp messages
 # =====================================================================
@@ -191,13 +205,31 @@ async def webhook(request: Request):
     session = get_session(from_number)
     history = session.get("history", [])
 
-    # Ask OpenAI
-    try:
-        reply = ask_openai(config, history, incoming_msg)
-    except Exception as e:
-        print(f"OpenAI error: {e}")
-        reply = "Hubo un error procesando tu mensaje. Intenta de nuevo."
-
+    # Handle cancellation before asking OpenAI
+    cancel_keywords = ["cancelar", "cancela", "cancel", "quiero cancelar", "cancelar cita"]
+    if any(kw in incoming_msg.lower() for kw in cancel_keywords):
+        result = cancel_reservation(from_number, config["business_id"])
+        if result["success"]:
+            booking = result["booking"]
+            reply = (
+                f"✅ Tu cita ha sido cancelada.\n\n"
+                f"👤 {booking.get('client_name')}\n"
+                f"✂️ {booking.get('service')}\n"
+                f"📅 {booking.get('datetime', '')[:16]}\n\n"
+                f"Si quieres reservar de nuevo, con gusto te ayudo 😊"
+            )
+        elif result.get("reason") == "no_booking":
+            reply = "No encontré ninguna cita activa para cancelar. ¿Quieres reservar una nueva?"
+        else:
+            reply = "Hubo un problema cancelando tu cita. Intenta de nuevo."
+    else:
+        # Ask OpenAI
+        try:
+            reply = ask_openai(config, history, incoming_msg)
+        except Exception as e:
+            print(f"OpenAI error: {e}")
+            reply = "Hubo un error procesando tu mensaje. Intenta de nuevo."
+            
     # Check if booking was confirmed
     if "RESERVA_CONFIRMADA:" in reply:
         try:
