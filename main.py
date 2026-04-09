@@ -155,6 +155,17 @@ def ask_openai(config, history, new_message):
     )
     return response.choices[0].message.content.strip()
 
+def is_slot_available(datetime_str: str, business_id: int) -> bool:
+    if not supabase:
+        return True
+    try:
+        result = supabase.table("reservations").select("reservation_id", count="exact").eq("business_id", business_id).eq("datetime", datetime_str).eq("status", "confirmed").execute()
+        count = result.count or 0
+        return count < 3
+    except Exception as e:
+        print(f"Availability check error: {e}")
+        return True
+
 # =====================================================================
 # WEBHOOK — entry point for all WhatsApp messages
 # =====================================================================
@@ -189,18 +200,21 @@ async def webhook(request: Request):
 
     # Check if booking was confirmed
     if "RESERVA_CONFIRMADA:" in reply:
-        try:
-            json_str = reply.split("RESERVA_CONFIRMADA:")[1].strip()
-            extracted = json.loads(json_str)
-            save_reservation(from_number, config["business_id"], extracted)
-            reply = (
-                f"✅ ¡Listo! Tu cita en {config['name']} está confirmada.\n\n"
-                f"👤 Nombre: {extracted.get('name')}\n"
-                f"✂️ Servicio: {extracted.get('service')}\n"
-                f"📅 Fecha y hora: {extracted.get('datetime')}\n\n"
-                f"¡Te esperamos! 💈"
-            )
-            session["booked"] = True
+            try:
+                json_str = reply.split("RESERVA_CONFIRMADA:")[1].strip()
+                extracted = json.loads(json_str)
+                if not is_slot_available(extracted.get("datetime"), config["business_id"]):
+                    reply = "Lo siento, ese horario ya está lleno 😅 ¿Puedes elegir otra hora?"
+                else:
+                    save_reservation(from_number, config["business_id"], extracted)
+                    reply = (
+                        f"✅ ¡Listo! Tu cita en {config['name']} está confirmada.\n\n"
+                        f"👤 Nombre: {extracted.get('name')}\n"
+                        f"✂️ Servicio: {extracted.get('service')}\n"
+                        f"📅 Fecha y hora: {extracted.get('datetime')}\n\n"
+                        f"¡Te esperamos! 💈"
+                    )
+                    session["booked"] = True
         except Exception as e:
             print(f"Error parsing booking: {e}")
             reply = "Hubo un problema al confirmar tu reserva. Intenta de nuevo."
