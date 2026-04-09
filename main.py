@@ -200,21 +200,21 @@ async def webhook(request: Request):
 
     # Check if booking was confirmed
     if "RESERVA_CONFIRMADA:" in reply:
-            try:
-                json_str = reply.split("RESERVA_CONFIRMADA:")[1].strip()
-                extracted = json.loads(json_str)
-                if not is_slot_available(extracted.get("datetime"), config["business_id"]):
-                    reply = "Lo siento, ese horario ya está lleno 😅 ¿Puedes elegir otra hora?"
-                else:
-                    save_reservation(from_number, config["business_id"], extracted)
-                    reply = (
-                        f"✅ ¡Listo! Tu cita en {config['name']} está confirmada.\n\n"
-                        f"👤 Nombre: {extracted.get('name')}\n"
-                        f"✂️ Servicio: {extracted.get('service')}\n"
-                        f"📅 Fecha y hora: {extracted.get('datetime')}\n\n"
-                        f"¡Te esperamos! 💈"
-                    )
-                    session["booked"] = True
+        try:
+            json_str = reply.split("RESERVA_CONFIRMADA:")[1].strip()
+            extracted = json.loads(json_str)
+            if not is_slot_available(extracted.get("datetime"), config["business_id"]):
+                reply = "Lo siento, ese horario ya está lleno 😅 ¿Puedes elegir otra hora?"
+            else:
+                save_reservation(from_number, config["business_id"], extracted)
+                reply = (
+                    f"✅ ¡Listo! Tu cita en {config['name']} está confirmada.\n\n"
+                    f"👤 Nombre: {extracted.get('name')}\n"
+                    f"✂️ Servicio: {extracted.get('service')}\n"
+                    f"📅 Fecha y hora: {extracted.get('datetime')}\n\n"
+                    f"¡Te esperamos! 💈"
+                )
+                session["booked"] = True
         except Exception as e:
             print(f"Error parsing booking: {e}")
             reply = "Hubo un problema al confirmar tu reserva. Intenta de nuevo."
