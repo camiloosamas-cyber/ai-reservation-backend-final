@@ -138,7 +138,8 @@ REGLAS:
 - Si el cliente pregunta algo que no tiene que ver con reservas, redirígelo amablemente.
 - No inventes horarios ni servicios que no estén en la lista.
 - Si el cliente da una fecha u hora fuera del horario, díselo y pide otra.
-- El formato del datetime SIEMPRE debe ser: YYYY-MM-DD HH:MM"""
+- El formato del datetime SIEMPRE debe ser: YYYY-MM-DD HH:MM
+- El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año."""
 
 def ask_openai(config, history, new_message):
     system_prompt = build_system_prompt(config)
@@ -242,7 +243,7 @@ async def dashboard(request: Request, business_id: int):
     for r in reservations:
         rows += f"""
         <tr>
-            <td>{r.get('datetime', '-')}</td>
+            <td>{r.get('datetime', '-')[:16].replace('T', ' ') if r.get('datetime') else '-'}</td>
             <td>{r.get('client_name', '-')}</td>
             <td>{r.get('service', '-')}</td>
             <td>{r.get('contact_phone', '-')}</td>
