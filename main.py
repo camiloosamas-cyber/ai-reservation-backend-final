@@ -215,7 +215,7 @@ async def webhook(request: Request):
                 f"✅ Tu cita ha sido cancelada.\n\n"
                 f"👤 {booking.get('client_name')}\n"
                 f"✂️ {booking.get('service')}\n"
-                f"📅 {booking.get('datetime', '')[:16]}\n\n"
+                f"📅 {booking.get('datetime', '')[:16].replace('T', ' ')}\n\n"
                 f"Si quieres reservar de nuevo, con gusto te ayudo 😊"
             )
         elif result.get("reason") == "no_booking":
