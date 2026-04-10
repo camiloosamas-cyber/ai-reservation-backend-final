@@ -332,7 +332,7 @@ async def webhook(request: Request):
                     f"👤 Nombre: {extracted.get('name')}\n"
                     f"✂️ Servicio: {extracted.get('service')}\n"
                     f"📅 Fecha y hora: {extracted.get('datetime')}\n\n"
-                    f"¡Te esperamos! 💈"
+                    f"📍 Te esperamos en {config.get('location', 'nuestro local')} 💈"
                 )
                 session["booked"] = True
         except Exception as e:
