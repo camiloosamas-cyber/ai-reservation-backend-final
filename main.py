@@ -175,7 +175,8 @@ REGLAS:
 - No inventes horarios ni servicios que no estén en la lista.
 - Si el cliente da una fecha u hora fuera del horario, díselo y pide otra.
 - El formato del datetime SIEMPRE debe ser: YYYY-MM-DD HH:MM
-- El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año."""
+- El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año.
+- La fecha de hoy es {datetime.now(LOCAL_TZ).strftime("%A %d de %B de %Y")}. Usa esto para calcular fechas relativas como "mañana", "el viernes", "este sábado"."""
 
 def ask_openai(config, history, new_message):
     system_prompt = build_system_prompt(config)
