@@ -23,6 +23,25 @@ BUSINESS_CONFIGS = {
         "services": ["Corte", "Corte + Barba", "Afeitado", "Corte de Niño"],
         "hours": "Lunes a Sábado de 9:00 a.m. a 7:00 p.m.",
         "timezone": "America/Bogota",
+        "location": "Calle 10 #43-20, El Poblado, Medellín",
+        "parking": "Sí hay parqueadero disponible cerca del local.",
+        "service_duration": "Aproximadamente 30 minutos por servicio.",
+        "mobile": False,
+        "reviews": "Puedes ver nuestras reseñas en Google buscando 'Barbería El Paisa Medellín'.",
+        "licensed": "Sí, todos nuestros barberos están certificados y capacitados.",
+        "payment_methods": "Efectivo, Nequi, Daviplata y transferencia bancaria.",
+        "prices": {
+            "Corte": "$35.000 COP",
+            "Corte + Barba": "$55.000 COP",
+            "Afeitado": "$30.000 COP",
+            "Corte de Niño": "$25.000 COP"
+        },
+        "service_details": {
+            "Corte": "Incluye lavado, corte personalizado y peinado final.",
+            "Corte + Barba": "Incluye lavado, corte, perfilado y arreglo completo de barba con navaja.",
+            "Afeitado": "Afeitado clásico con navaja, toalla caliente y crema hidratante.",
+            "Corte de Niño": "Corte especializado y tranquilo para niños hasta 12 años."
+        }
     }
 }
 
@@ -118,12 +137,29 @@ def save_reservation(phone, business_id, extracted):
 
 def build_system_prompt(config):
     services_list = ", ".join(config["services"])
+
+    prices_text = "\n".join([f"  - {s}: {p}" for s, p in config.get("prices", {}).items()])
+    details_text = "\n".join([f"  - {s}: {d}" for s, d in config.get("service_details", {}).items()])
+
     return f"""Eres un asistente de reservas para {config["name"]} en Medellín, Colombia.
 
-Tu único trabajo es ayudar a los clientes a reservar una cita. No respondas preguntas que no tengan que ver con reservas o el negocio.
+Tu trabajo es ayudar a los clientes a reservar una cita Y responder preguntas frecuentes sobre el negocio.
 
 Servicios disponibles: {services_list}
 Horario: {config["hours"]}
+Ubicación: {config.get("location", "Consultar con el negocio")}
+Parqueadero: {config.get("parking", "No disponible")}
+Duración de cada servicio: {config.get("service_duration", "Aproximadamente 30 minutos")}
+¿Servicio a domicilio?: {"Sí" if config.get("mobile") else "No, el cliente debe venir al local"}
+Reseñas: {config.get("reviews", "Buscar en Google")}
+Barberos certificados: {config.get("licensed", "Sí")}
+Métodos de pago: {config.get("payment_methods", "Efectivo y transferencia")}
+
+Precios:
+{prices_text}
+
+Detalles de cada servicio:
+{details_text}
 
 FLUJO DE RESERVA:
 1. Saluda al cliente la primera vez.
@@ -135,7 +171,7 @@ RESERVA_CONFIRMADA:{{"name":"<nombre>","service":"<servicio>","datetime":"<YYYY-
 
 REGLAS:
 - Responde siempre en español colombiano, tono amigable y casual.
-- Si el cliente pregunta algo que no tiene que ver con reservas, redirígelo amablemente.
+- Si el cliente pregunta algo que no tiene que ver con el negocio o las reservas, redirígelo amablemente.
 - No inventes horarios ni servicios que no estén en la lista.
 - Si el cliente da una fecha u hora fuera del horario, díselo y pide otra.
 - El formato del datetime SIEMPRE debe ser: YYYY-MM-DD HH:MM
@@ -156,7 +192,7 @@ def ask_openai(config, history, new_message):
     return response.choices[0].message.content.strip()
 
 # =====================================================================
-# AVAILABILITY + CANCELLATION
+# AVAILABILITY + CANCELLATION + RESCHEDULE
 # =====================================================================
 
 def is_slot_available(datetime_str: str, business_id: int) -> bool:
@@ -247,7 +283,6 @@ async def webhook(request: Request):
             reply = "Hubo un problema cancelando tu cita. Intenta de nuevo."
 
     elif any(kw in incoming_msg.lower() for kw in reschedule_keywords):
-        # Check if they already gave a new datetime in the same message
         try:
             temp_reply = ask_openai(config, history, f"El cliente quiere cambiar su cita. Extrae SOLO la nueva fecha y hora de este mensaje y responde ÚNICAMENTE con el formato YYYY-MM-DD HH:MM, nada más. Si no hay fecha clara responde NO_DATE. Mensaje: {incoming_msg}")
             if temp_reply.strip() != "NO_DATE" and len(temp_reply.strip()) == 16:
@@ -275,7 +310,6 @@ async def webhook(request: Request):
             reply = "Claro, ¿para qué fecha y hora quieres cambiar tu cita? 📅"
 
     else:
-        
         # Ask OpenAI
         try:
             reply = ask_openai(config, history, incoming_msg)
@@ -435,8 +469,6 @@ async def dashboard(request: Request, business_id: int):
             .empty {{ text-align: center; color: #999; padding: 40px; }}
             .refresh {{ background: #1a1a1a; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
             .refresh:hover {{ background: #333; }}
-
-            /* Modal */
             .modal-overlay {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 100; justify-content: center; align-items: center; }}
             .modal-overlay.active {{ display: flex; }}
             .modal {{ background: white; border-radius: 12px; padding: 28px; width: 420px; max-width: 95%; }}
@@ -483,7 +515,6 @@ async def dashboard(request: Request, business_id: int):
             </div>
         </div>
 
-        <!-- Edit Modal -->
         <div class="modal-overlay" id="editModal">
             <div class="modal">
                 <h2>✏️ Editar Reserva</h2>
@@ -589,4 +620,4 @@ async def dashboard(request: Request, business_id: int):
 
 @app.get("/")
 async def root():
-    return {{"status": "running", "bot": "AI Reservation Bot v1.0.0"}}
+    return {"status": "running", "bot": "AI Reservation Bot v1.0.0"}
