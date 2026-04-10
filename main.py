@@ -184,6 +184,23 @@ def cancel_reservation(phone: str, business_id: int) -> dict:
         print(f"Cancel error: {e}")
         return {"success": False}
 
+def reschedule_reservation(phone: str, business_id: int, new_datetime: str) -> dict:
+    if not supabase:
+        return {"success": False}
+    try:
+        result = supabase.table("reservations").select("*").eq("contact_phone", phone).eq("business_id", business_id).eq("status", "confirmed").order("datetime", desc=True).limit(1).execute()
+        if not result.data:
+            return {"success": False, "reason": "no_booking"}
+        booking = result.data[0]
+        if not is_slot_available(new_datetime, business_id):
+            return {"success": False, "reason": "slot_full"}
+        supabase.table("reservations").update({"datetime": new_datetime}).eq("reservation_id", booking["reservation_id"]).execute()
+        booking["datetime"] = new_datetime
+        return {"success": True, "booking": booking}
+    except Exception as e:
+        print(f"Reschedule error: {e}")
+        return {"success": False}
+
 # =====================================================================
 # WEBHOOK — entry point for all WhatsApp messages
 # =====================================================================
@@ -211,6 +228,8 @@ async def webhook(request: Request):
 
     # Handle cancellation before asking OpenAI
     cancel_keywords = ["cancelar", "cancela", "cancel", "quiero cancelar", "cancelar cita"]
+    reschedule_keywords = ["cambiar", "reschedule", "reprogramar", "cambiar cita", "mover cita", "otra fecha", "otro horario"]
+
     if any(kw in incoming_msg.lower() for kw in cancel_keywords):
         result = cancel_reservation(from_number, config["business_id"])
         if result["success"]:
@@ -226,7 +245,37 @@ async def webhook(request: Request):
             reply = "No encontré ninguna cita activa para cancelar. ¿Quieres reservar una nueva?"
         else:
             reply = "Hubo un problema cancelando tu cita. Intenta de nuevo."
+
+    elif any(kw in incoming_msg.lower() for kw in reschedule_keywords):
+        # Check if they already gave a new datetime in the same message
+        try:
+            temp_reply = ask_openai(config, history, f"El cliente quiere cambiar su cita. Extrae SOLO la nueva fecha y hora de este mensaje y responde ÚNICAMENTE con el formato YYYY-MM-DD HH:MM, nada más. Si no hay fecha clara responde NO_DATE. Mensaje: {incoming_msg}")
+            if temp_reply.strip() != "NO_DATE" and len(temp_reply.strip()) == 16:
+                new_datetime = temp_reply.strip()
+                result = reschedule_reservation(from_number, config["business_id"], new_datetime)
+                if result["success"]:
+                    booking = result["booking"]
+                    reply = (
+                        f"✅ ¡Cita reprogramada!\n\n"
+                        f"👤 {booking.get('client_name')}\n"
+                        f"✂️ {booking.get('service')}\n"
+                        f"📅 Nueva fecha: {new_datetime}\n\n"
+                        f"¡Te esperamos! 💈"
+                    )
+                elif result.get("reason") == "slot_full":
+                    reply = "Ese horario ya está lleno 😅 ¿Puedes elegir otra fecha u hora?"
+                elif result.get("reason") == "no_booking":
+                    reply = "No encontré ninguna cita activa para cambiar. ¿Quieres reservar una nueva?"
+                else:
+                    reply = "Hubo un problema reprogramando tu cita. Intenta de nuevo."
+            else:
+                reply = "Claro, ¿para qué fecha y hora quieres cambiar tu cita? 📅"
+        except Exception as e:
+            print(f"Reschedule OpenAI error: {e}")
+            reply = "Claro, ¿para qué fecha y hora quieres cambiar tu cita? 📅"
+
     else:
+        
         # Ask OpenAI
         try:
             reply = ask_openai(config, history, incoming_msg)
