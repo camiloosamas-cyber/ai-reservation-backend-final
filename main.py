@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 
@@ -155,6 +155,10 @@ def ask_openai(config, history, new_message):
     )
     return response.choices[0].message.content.strip()
 
+# =====================================================================
+# AVAILABILITY + CANCELLATION
+# =====================================================================
+
 def is_slot_available(datetime_str: str, business_id: int) -> bool:
     if not supabase:
         return True
@@ -229,7 +233,7 @@ async def webhook(request: Request):
         except Exception as e:
             print(f"OpenAI error: {e}")
             reply = "Hubo un error procesando tu mensaje. Intenta de nuevo."
-            
+
     # Check if booking was confirmed
     if "RESERVA_CONFIRMADA:" in reply:
         try:
@@ -265,6 +269,42 @@ async def webhook(request: Request):
     return Response(content=str(resp), media_type="application/xml")
 
 # =====================================================================
+# DASHBOARD API ROUTES — for edit/cancel from dashboard
+# =====================================================================
+
+@app.post("/api/reservation/{reservation_id}/cancel")
+async def api_cancel_reservation(reservation_id: int):
+    if not supabase:
+        return JSONResponse({"success": False}, status_code=500)
+    try:
+        supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", reservation_id).execute()
+        return JSONResponse({"success": True})
+    except Exception as e:
+        print(f"API cancel error: {e}")
+        return JSONResponse({"success": False}, status_code=500)
+
+@app.post("/api/reservation/{reservation_id}/edit")
+async def api_edit_reservation(reservation_id: int, request: Request):
+    if not supabase:
+        return JSONResponse({"success": False}, status_code=500)
+    try:
+        body = await request.json()
+        update_data = {}
+        if body.get("client_name"):
+            update_data["client_name"] = body["client_name"]
+        if body.get("service"):
+            update_data["service"] = body["service"]
+        if body.get("datetime"):
+            update_data["datetime"] = body["datetime"]
+        if body.get("status"):
+            update_data["status"] = body["status"]
+        supabase.table("reservations").update(update_data).eq("reservation_id", reservation_id).execute()
+        return JSONResponse({"success": True})
+    except Exception as e:
+        print(f"API edit error: {e}")
+        return JSONResponse({"success": False}, status_code=500)
+
+# =====================================================================
 # DASHBOARD — business owner view
 # =====================================================================
 
@@ -287,13 +327,24 @@ async def dashboard(request: Request, business_id: int):
 
     rows = ""
     for r in reservations:
+        rid = r.get('reservation_id')
+        status = r.get('status', '-')
+        status_class = "status-confirmed" if status == "confirmed" else "status-cancelled"
+        status_label = "confirmada" if status == "confirmed" else "cancelada"
+        dt = r.get('datetime', '')
+        dt_display = dt[:16].replace('T', ' ') if dt else '-'
+
         rows += f"""
-        <tr>
-            <td>{r.get('datetime', '-')[:16].replace('T', ' ') if r.get('datetime') else '-'}</td>
+        <tr data-id="{rid}">
+            <td>{dt_display}</td>
             <td>{r.get('client_name', '-')}</td>
             <td>{r.get('service', '-')}</td>
             <td>{r.get('contact_phone', '-')}</td>
-            <td><span class="status">{r.get('status', '-')}</span></td>
+            <td><span class="status {status_class}">{status_label}</span></td>
+            <td class="actions">
+                <button class="btn-edit" onclick="openEdit({rid}, '{r.get('client_name','').replace("'","\\'")}', '{r.get('service','').replace("'","\\'")}', '{dt[:16] if dt else ''}', '{status}')">✏️ Editar</button>
+                <button class="btn-cancel" onclick="cancelReservation({rid})" {'disabled' if status == 'cancelled' else ''}>✖ Cancelar</button>
+            </td>
         </tr>
         """
 
@@ -309,20 +360,44 @@ async def dashboard(request: Request, business_id: int):
             body {{ font-family: 'Segoe UI', sans-serif; background: #f4f4f4; color: #222; }}
             .header {{ background: #1a1a1a; color: white; padding: 20px 32px; display: flex; align-items: center; justify-content: space-between; }}
             .header h1 {{ font-size: 1.4rem; font-weight: 600; }}
-            .header span {{ font-size: 0.9rem; opacity: 0.6; }}
-            .container {{ max-width: 1000px; margin: 32px auto; padding: 0 16px; }}
+            .container {{ max-width: 1100px; margin: 32px auto; padding: 0 16px; }}
             .card {{ background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
-            .total {{ font-size: 1rem; color: #555; margin-bottom: 24px; }}
+            .top-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }}
+            .total {{ font-size: 1rem; color: #555; }}
             .total strong {{ color: #1a1a1a; font-size: 1.2rem; }}
+            .search-bar {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+            .search-bar input {{ padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.85rem; width: 180px; }}
+            .search-bar button {{ background: #1a1a1a; color: white; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
+            .search-bar button:hover {{ background: #333; }}
             table {{ width: 100%; border-collapse: collapse; }}
-            th {{ background: #1a1a1a; color: white; padding: 12px 16px; text-align: left; font-weight: 500; font-size: 0.9rem; }}
-            td {{ padding: 12px 16px; border-bottom: 1px solid #f0f0f0; font-size: 0.9rem; }}
+            th {{ background: #1a1a1a; color: white; padding: 12px 16px; text-align: left; font-weight: 500; font-size: 0.85rem; }}
+            td {{ padding: 12px 16px; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; }}
             tr:last-child td {{ border-bottom: none; }}
             tr:hover td {{ background: #fafafa; }}
-            .status {{ background: #e6f4ea; color: #2e7d32; padding: 3px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: 500; }}
+            .status {{ padding: 3px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: 500; }}
+            .status-confirmed {{ background: #e6f4ea; color: #2e7d32; }}
+            .status-cancelled {{ background: #fdecea; color: #c62828; }}
+            .actions {{ display: flex; gap: 6px; }}
+            .btn-edit {{ background: #1a1a1a; color: white; border: none; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; }}
+            .btn-edit:hover {{ background: #333; }}
+            .btn-cancel {{ background: #fdecea; color: #c62828; border: 1px solid #f5c6c6; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; }}
+            .btn-cancel:hover {{ background: #fbc8c8; }}
+            .btn-cancel:disabled {{ opacity: 0.4; cursor: not-allowed; }}
             .empty {{ text-align: center; color: #999; padding: 40px; }}
             .refresh {{ background: #1a1a1a; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
             .refresh:hover {{ background: #333; }}
+
+            /* Modal */
+            .modal-overlay {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 100; justify-content: center; align-items: center; }}
+            .modal-overlay.active {{ display: flex; }}
+            .modal {{ background: white; border-radius: 12px; padding: 28px; width: 420px; max-width: 95%; }}
+            .modal h2 {{ font-size: 1.1rem; margin-bottom: 20px; }}
+            .modal label {{ display: block; font-size: 0.85rem; color: #555; margin-bottom: 4px; margin-top: 14px; }}
+            .modal input, .modal select {{ width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; }}
+            .modal-actions {{ display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }}
+            .btn-save {{ background: #1a1a1a; color: white; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
+            .btn-save:hover {{ background: #333; }}
+            .btn-close {{ background: #f0f0f0; color: #333; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
         </style>
     </head>
     <body>
@@ -332,8 +407,16 @@ async def dashboard(request: Request, business_id: int):
         </div>
         <div class="container">
             <div class="card">
-                <p class="total">Total citas: <strong>{len(reservations)}</strong></p>
-                <table>
+                <div class="top-bar">
+                    <p class="total">Total citas: <strong>{len(reservations)}</strong></p>
+                    <div class="search-bar">
+                        <input type="text" id="searchName" placeholder="Buscar por nombre..." oninput="filterTable()">
+                        <input type="text" id="searchPhone" placeholder="Teléfono..." oninput="filterTable()">
+                        <input type="date" id="searchDate" onchange="filterTable()">
+                        <button onclick="clearSearch()">Limpiar</button>
+                    </div>
+                </div>
+                <table id="reservationTable">
                     <thead>
                         <tr>
                             <th>Fecha & Hora</th>
@@ -341,14 +424,111 @@ async def dashboard(request: Request, business_id: int):
                             <th>Servicio</th>
                             <th>Teléfono</th>
                             <th>Estado</th>
+                            <th>Acciones</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        {'<tr><td colspan="5" class="empty">No hay reservas aún.</td></tr>' if not reservations else rows}
+                    <tbody id="tableBody">
+                        {'<tr><td colspan="6" class="empty">No hay reservas aún.</td></tr>' if not reservations else rows}
                     </tbody>
                 </table>
             </div>
         </div>
+
+        <!-- Edit Modal -->
+        <div class="modal-overlay" id="editModal">
+            <div class="modal">
+                <h2>✏️ Editar Reserva</h2>
+                <input type="hidden" id="editId">
+                <label>Nombre del cliente</label>
+                <input type="text" id="editName">
+                <label>Servicio</label>
+                <input type="text" id="editService">
+                <label>Fecha y hora (YYYY-MM-DD HH:MM)</label>
+                <input type="text" id="editDatetime" placeholder="2026-04-10 15:00">
+                <label>Estado</label>
+                <select id="editStatus">
+                    <option value="confirmed">Confirmada</option>
+                    <option value="cancelled">Cancelada</option>
+                </select>
+                <div class="modal-actions">
+                    <button class="btn-close" onclick="closeModal()">Cancelar</button>
+                    <button class="btn-save" onclick="saveEdit()">Guardar</button>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            function filterTable() {{
+                const name = document.getElementById('searchName').value.toLowerCase();
+                const phone = document.getElementById('searchPhone').value.toLowerCase();
+                const date = document.getElementById('searchDate').value;
+                const rows = document.querySelectorAll('#tableBody tr');
+                rows.forEach(row => {{
+                    const cells = row.querySelectorAll('td');
+                    if (cells.length < 4) return;
+                    const rowDate = cells[0].textContent;
+                    const rowName = cells[1].textContent.toLowerCase();
+                    const rowPhone = cells[3].textContent.toLowerCase();
+                    const matchName = rowName.includes(name);
+                    const matchPhone = rowPhone.includes(phone);
+                    const matchDate = !date || rowDate.startsWith(date);
+                    row.style.display = (matchName && matchPhone && matchDate) ? '' : 'none';
+                }});
+            }}
+
+            function clearSearch() {{
+                document.getElementById('searchName').value = '';
+                document.getElementById('searchPhone').value = '';
+                document.getElementById('searchDate').value = '';
+                filterTable();
+            }}
+
+            function openEdit(id, name, service, datetime, status) {{
+                document.getElementById('editId').value = id;
+                document.getElementById('editName').value = name;
+                document.getElementById('editService').value = service;
+                document.getElementById('editDatetime').value = datetime.replace('T', ' ');
+                document.getElementById('editStatus').value = status;
+                document.getElementById('editModal').classList.add('active');
+            }}
+
+            function closeModal() {{
+                document.getElementById('editModal').classList.remove('active');
+            }}
+
+            async function saveEdit() {{
+                const id = document.getElementById('editId').value;
+                const data = {{
+                    client_name: document.getElementById('editName').value,
+                    service: document.getElementById('editService').value,
+                    datetime: document.getElementById('editDatetime').value,
+                    status: document.getElementById('editStatus').value
+                }};
+                const res = await fetch(`/api/reservation/${{id}}/edit`, {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify(data)
+                }});
+                const result = await res.json();
+                if (result.success) {{
+                    closeModal();
+                    location.reload();
+                }} else {{
+                    alert('Error al guardar. Intenta de nuevo.');
+                }}
+            }}
+
+            async function cancelReservation(id) {{
+                if (!confirm('¿Seguro que quieres cancelar esta reserva?')) return;
+                const res = await fetch(`/api/reservation/${{id}}/cancel`, {{method: 'POST'}});
+                const result = await res.json();
+                if (result.success) {{
+                    location.reload();
+                }} else {{
+                    alert('Error al cancelar. Intenta de nuevo.');
+                }}
+            }}
+        </script>
     </body>
     </html>
     """
@@ -360,4 +540,4 @@ async def dashboard(request: Request, business_id: int):
 
 @app.get("/")
 async def root():
-    return {"status": "running", "bot": "AI Reservation Bot v1.0.0"}
+    return {{"status": "running", "bot": "AI Reservation Bot v1.0.0"}}
