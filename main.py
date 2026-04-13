@@ -63,10 +63,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# OpenAI client
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Supabase
 try:
     from supabase import create_client
     supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE"))
@@ -75,7 +73,6 @@ except Exception as e:
     supabase = None
     print(f"ERROR: Supabase connection failed: {e}")
 
-# Twilio
 try:
     from twilio.twiml.messaging_response import MessagingResponse
     print("✅ Twilio loaded")
@@ -111,12 +108,11 @@ def save_session(phone, session):
             print(f"Session save error: {e}")
 
 # =====================================================================
-# SAVE RESERVATION TO SUPABASE
+# SAVE RESERVATION
 # =====================================================================
 
 def save_reservation(phone, business_id, extracted):
     if not supabase:
-        print("No Supabase — reservation not saved")
         return
     try:
         supabase.table("reservations").insert({
@@ -132,12 +128,11 @@ def save_reservation(phone, business_id, extracted):
         print(f"ERROR saving reservation: {e}")
 
 # =====================================================================
-# OPENAI — BRAIN OF THE BOT
+# OPENAI
 # =====================================================================
 
 def build_system_prompt(config):
     services_list = ", ".join(config["services"])
-
     prices_text = "\n".join([f"  - {s}: {p}" for s, p in config.get("prices", {}).items()])
     details_text = "\n".join([f"  - {s}: {d}" for s, d in config.get("service_details", {}).items()])
 
@@ -183,7 +178,6 @@ def ask_openai(config, history, new_message):
     messages = [{"role": "system", "content": system_prompt}]
     messages += history
     messages.append({"role": "user", "content": new_message})
-
     response = openai_client.chat.completions.create(
         model="gpt-4o-mini",
         messages=messages,
@@ -239,7 +233,7 @@ def reschedule_reservation(phone: str, business_id: int, new_datetime: str) -> d
         return {"success": False}
 
 # =====================================================================
-# WEBHOOK — entry point for all WhatsApp messages
+# WEBHOOK
 # =====================================================================
 
 @app.post("/webhook")
@@ -251,19 +245,15 @@ async def webhook(request: Request):
 
     print(f"📩 Message from {from_number} to {to_number}: {incoming_msg}")
 
-    # Get business config based on the receiving number
     config = BUSINESS_CONFIGS.get(to_number)
     if not config:
-        print(f"No config found for number: {to_number}")
         resp = MessagingResponse()
         resp.message("Este número no está configurado.")
         return Response(content=str(resp), media_type="application/xml")
 
-    # Load session
     session = get_session(from_number)
     history = session.get("history", [])
 
-    # Handle cancellation before asking OpenAI
     cancel_keywords = ["cancelar", "cancela", "cancel", "quiero cancelar", "cancelar cita"]
     reschedule_keywords = ["cambiar", "reschedule", "reprogramar", "cambiar cita", "mover cita", "otra fecha", "otro horario"]
 
@@ -311,14 +301,12 @@ async def webhook(request: Request):
             reply = "Claro, ¿para qué fecha y hora quieres cambiar tu cita? 📅"
 
     else:
-        # Ask OpenAI
         try:
             reply = ask_openai(config, history, incoming_msg)
         except Exception as e:
             print(f"OpenAI error: {e}")
             reply = "Hubo un error procesando tu mensaje. Intenta de nuevo."
 
-    # Check if booking was confirmed
     if "RESERVA_CONFIRMADA:" in reply:
         try:
             json_str = reply.split("RESERVA_CONFIRMADA:")[1].strip()
@@ -339,21 +327,17 @@ async def webhook(request: Request):
             print(f"Error parsing booking: {e}")
             reply = "Hubo un problema al confirmar tu reserva. Intenta de nuevo."
 
-    # Update conversation history
     history.append({"role": "user", "content": incoming_msg})
     history.append({"role": "assistant", "content": reply})
-
-    # Keep history to last 20 messages to avoid token bloat
     session["history"] = history[-20:]
     save_session(from_number, session)
 
-    # Send reply via Twilio
     resp = MessagingResponse()
     resp.message(reply)
     return Response(content=str(resp), media_type="application/xml")
 
 # =====================================================================
-# DASHBOARD API ROUTES — for edit/cancel from dashboard
+# DASHBOARD API ROUTES
 # =====================================================================
 
 @app.post("/api/reservation/{reservation_id}/cancel")
@@ -364,7 +348,16 @@ async def api_cancel_reservation(reservation_id: int):
         supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", reservation_id).execute()
         return JSONResponse({"success": True})
     except Exception as e:
-        print(f"API cancel error: {e}")
+        return JSONResponse({"success": False}, status_code=500)
+
+@app.post("/api/reservation/{reservation_id}/complete")
+async def api_complete_reservation(reservation_id: int):
+    if not supabase:
+        return JSONResponse({"success": False}, status_code=500)
+    try:
+        supabase.table("reservations").update({"status": "completed"}).eq("reservation_id", reservation_id).execute()
+        return JSONResponse({"success": True})
+    except Exception as e:
         return JSONResponse({"success": False}, status_code=500)
 
 @app.post("/api/reservation/{reservation_id}/edit")
@@ -385,11 +378,32 @@ async def api_edit_reservation(reservation_id: int, request: Request):
         supabase.table("reservations").update(update_data).eq("reservation_id", reservation_id).execute()
         return JSONResponse({"success": True})
     except Exception as e:
-        print(f"API edit error: {e}")
+        return JSONResponse({"success": False}, status_code=500)
+
+@app.post("/api/reservation/walkin")
+async def api_walkin_booking(request: Request):
+    if not supabase:
+        return JSONResponse({"success": False}, status_code=500)
+    try:
+        body = await request.json()
+        business_id = body.get("business_id")
+        datetime_str = body.get("datetime")
+        if not is_slot_available(datetime_str, business_id):
+            return JSONResponse({"success": False, "reason": "slot_full"})
+        supabase.table("reservations").insert({
+            "contact_phone": "walk-in",
+            "business_id": business_id,
+            "client_name": body.get("client_name"),
+            "service": body.get("service"),
+            "datetime": datetime_str,
+            "status": "confirmed"
+        }).execute()
+        return JSONResponse({"success": True})
+    except Exception as e:
         return JSONResponse({"success": False}, status_code=500)
 
 # =====================================================================
-# DASHBOARD — business owner view
+# DASHBOARD
 # =====================================================================
 
 @app.get("/dashboard/{business_id}", response_class=HTMLResponse)
@@ -402,217 +416,275 @@ async def dashboard(request: Request, business_id: int):
         except Exception as e:
             print(f"Dashboard error: {e}")
 
-    # Find business name
     business_name = "Negocio"
+    business_services = []
     for config in BUSINESS_CONFIGS.values():
         if config["business_id"] == business_id:
             business_name = config["name"]
+            business_services = config.get("services", [])
             break
 
-    rows = ""
-    for r in reservations:
-        rid = r.get('reservation_id')
-        status = r.get('status', '-')
-        status_class = "status-confirmed" if status == "confirmed" else "status-cancelled"
-        status_label = "confirmada" if status == "confirmed" else "cancelada"
-        dt = r.get('datetime', '')
-        dt_display = dt[:16].replace('T', ' ') if dt else '-'
+    today_str = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+    today_reservations = [r for r in reservations if r.get("datetime", "")[:10] == today_str]
+    future_reservations = [r for r in reservations if r.get("datetime", "")[:10] > today_str]
+    past_reservations = [r for r in reservations if r.get("datetime", "")[:10] < today_str]
 
-        rows += f"""
-        <tr data-id="{rid}">
-            <td>{dt_display}</td>
-            <td>{r.get('client_name', '-')}</td>
-            <td>{r.get('service', '-')}</td>
-            <td>{r.get('contact_phone', '-')}</td>
-            <td><span class="status {status_class}">{status_label}</span></td>
-            <td class="actions">
-                <button class="btn-edit" onclick="openEdit({rid}, '{r.get('client_name','').replace("'","\\'")}', '{r.get('service','').replace("'","\\'")}', '{dt[:16] if dt else ''}', '{status}')">✏️ Editar</button>
-                <button class="btn-cancel" onclick="cancelReservation({rid})" {'disabled' if status == 'cancelled' else ''}>✖ Cancelar</button>
-            </td>
-        </tr>
-        """
+    def build_rows(res_list):
+        rows = ""
+        for r in res_list:
+            rid = r.get("reservation_id")
+            status = r.get("status", "-")
+            if status == "confirmed":
+                status_class = "status-confirmed"
+                status_label = "confirmada"
+            elif status == "completed":
+                status_class = "status-completed"
+                status_label = "completada"
+            else:
+                status_class = "status-cancelled"
+                status_label = "cancelada"
+            dt = r.get("datetime", "")
+            dt_display = dt[:16].replace("T", " ") if dt else "-"
+            is_walkin = r.get("contact_phone") == "walk-in"
+            phone_display = "🚶 Walk-in" if is_walkin else r.get("contact_phone", "-")
+            complete_btn = f'<button class="btn-complete" onclick="completeReservation({rid})">✔ Listo</button>' if status == "confirmed" else ""
+            cancel_btn = f'<button class="btn-cancel" onclick="cancelReservation({rid})">✖</button>' if status == "confirmed" else ""
+            name_safe = r.get("client_name", "").replace("'", "\\'")
+            service_safe = r.get("service", "").replace("'", "\\'")
+            rows += f"""
+            <tr>
+                <td>{dt_display}</td>
+                <td>{r.get("client_name", "-")}</td>
+                <td>{r.get("service", "-")}</td>
+                <td>{phone_display}</td>
+                <td><span class="status {status_class}">{status_label}</span></td>
+                <td class="actions">
+                    <button class="btn-edit" onclick="openEdit({rid}, '{name_safe}', '{service_safe}', '{dt[:16] if dt else ""}', '{status}')">✏️</button>
+                    {complete_btn}
+                    {cancel_btn}
+                </td>
+            </tr>"""
+        return rows
 
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>{business_name} — Reservas</title>
-        <style>
-            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-            body {{ font-family: 'Segoe UI', sans-serif; background: #f4f4f4; color: #222; }}
-            .header {{ background: #1a1a1a; color: white; padding: 20px 32px; display: flex; align-items: center; justify-content: space-between; }}
-            .header h1 {{ font-size: 1.4rem; font-weight: 600; }}
-            .container {{ max-width: 1100px; margin: 32px auto; padding: 0 16px; }}
-            .card {{ background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
-            .top-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }}
-            .total {{ font-size: 1rem; color: #555; }}
-            .total strong {{ color: #1a1a1a; font-size: 1.2rem; }}
-            .search-bar {{ display: flex; gap: 8px; flex-wrap: wrap; }}
-            .search-bar input {{ padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.85rem; width: 180px; }}
-            .search-bar button {{ background: #1a1a1a; color: white; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
-            .search-bar button:hover {{ background: #333; }}
-            table {{ width: 100%; border-collapse: collapse; }}
-            th {{ background: #1a1a1a; color: white; padding: 12px 16px; text-align: left; font-weight: 500; font-size: 0.85rem; }}
-            td {{ padding: 12px 16px; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; }}
-            tr:last-child td {{ border-bottom: none; }}
-            tr:hover td {{ background: #fafafa; }}
-            .status {{ padding: 3px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: 500; }}
-            .status-confirmed {{ background: #e6f4ea; color: #2e7d32; }}
-            .status-cancelled {{ background: #fdecea; color: #c62828; }}
-            .actions {{ display: flex; gap: 6px; }}
-            .btn-edit {{ background: #1a1a1a; color: white; border: none; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; }}
-            .btn-edit:hover {{ background: #333; }}
-            .btn-cancel {{ background: #fdecea; color: #c62828; border: 1px solid #f5c6c6; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; }}
-            .btn-cancel:hover {{ background: #fbc8c8; }}
-            .btn-cancel:disabled {{ opacity: 0.4; cursor: not-allowed; }}
-            .empty {{ text-align: center; color: #999; padding: 40px; }}
-            .refresh {{ background: #1a1a1a; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
-            .refresh:hover {{ background: #333; }}
-            .modal-overlay {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 100; justify-content: center; align-items: center; }}
-            .modal-overlay.active {{ display: flex; }}
-            .modal {{ background: white; border-radius: 12px; padding: 28px; width: 420px; max-width: 95%; }}
-            .modal h2 {{ font-size: 1.1rem; margin-bottom: 20px; }}
-            .modal label {{ display: block; font-size: 0.85rem; color: #555; margin-bottom: 4px; margin-top: 14px; }}
-            .modal input, .modal select {{ width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; }}
-            .modal-actions {{ display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }}
-            .btn-save {{ background: #1a1a1a; color: white; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
-            .btn-save:hover {{ background: #333; }}
-            .btn-close {{ background: #f0f0f0; color: #333; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>💈 {business_name} — Reservas</h1>
-            <button class="refresh" onclick="location.reload()">↻ Refrescar</button>
+    services_options = "".join([f'<option value="{s}">{s}</option>' for s in business_services])
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{business_name} — Reservas</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: 'Segoe UI', sans-serif; background: #f4f4f4; color: #222; }}
+        .header {{ background: #1a1a1a; color: white; padding: 20px 32px; display: flex; align-items: center; justify-content: space-between; }}
+        .header h1 {{ font-size: 1.4rem; font-weight: 600; }}
+        .header-btns {{ display: flex; gap: 10px; }}
+        .container {{ max-width: 1100px; margin: 32px auto; padding: 0 16px; }}
+        .card {{ background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 24px; }}
+        .section-title {{ font-size: 1rem; font-weight: 600; margin-bottom: 16px; color: #1a1a1a; display: flex; align-items: center; gap: 8px; }}
+        .badge {{ background: #1a1a1a; color: white; font-size: 0.75rem; padding: 2px 8px; border-radius: 20px; }}
+        .top-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px; }}
+        .search-bar {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+        .search-bar input {{ padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.85rem; width: 150px; }}
+        .search-bar button {{ background: #555; color: white; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
+        table {{ width: 100%; border-collapse: collapse; }}
+        th {{ background: #1a1a1a; color: white; padding: 12px 16px; text-align: left; font-weight: 500; font-size: 0.85rem; }}
+        td {{ padding: 11px 16px; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; }}
+        tr:last-child td {{ border-bottom: none; }}
+        tr:hover td {{ background: #fafafa; }}
+        .status {{ padding: 3px 10px; border-radius: 20px; font-size: 0.78rem; font-weight: 500; }}
+        .status-confirmed {{ background: #e6f4ea; color: #2e7d32; }}
+        .status-cancelled {{ background: #fdecea; color: #c62828; }}
+        .status-completed {{ background: #e8f0fe; color: #1a73e8; }}
+        .actions {{ display: flex; gap: 5px; }}
+        .btn-edit {{ background: #f0f0f0; color: #333; border: none; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; }}
+        .btn-complete {{ background: #e8f0fe; color: #1a73e8; border: 1px solid #c5d8f8; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; }}
+        .btn-cancel {{ background: #fdecea; color: #c62828; border: 1px solid #f5c6c6; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; }}
+        .empty {{ text-align: center; color: #999; padding: 28px; }}
+        .btn-refresh {{ background: #1a1a1a; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
+        .btn-walkin {{ background: #2e7d32; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
+        .modal-overlay {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 100; justify-content: center; align-items: center; }}
+        .modal-overlay.active {{ display: flex; }}
+        .modal {{ background: white; border-radius: 12px; padding: 28px; width: 420px; max-width: 95%; }}
+        .modal h2 {{ font-size: 1.1rem; margin-bottom: 20px; }}
+        .modal label {{ display: block; font-size: 0.85rem; color: #555; margin-bottom: 4px; margin-top: 14px; }}
+        .modal input, .modal select {{ width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; }}
+        .modal-actions {{ display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }}
+        .btn-save {{ background: #1a1a1a; color: white; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
+        .btn-close {{ background: #f0f0f0; color: #333; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
+        .error-msg {{ color: #c62828; font-size: 0.83rem; margin-top: 8px; display: none; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>💈 {business_name} — Reservas</h1>
+        <div class="header-btns">
+            <button class="btn-walkin" onclick="openWalkin()">+ Walk-in</button>
+            <button class="btn-refresh" onclick="location.reload()">↻ Refrescar</button>
         </div>
-        <div class="container">
-            <div class="card">
-                <div class="top-bar">
-                    <p class="total">Total citas: <strong>{len(reservations)}</strong></p>
-                    <div class="search-bar">
-                        <input type="text" id="searchName" placeholder="Buscar por nombre..." oninput="filterTable()">
-                        <input type="text" id="searchPhone" placeholder="Teléfono..." oninput="filterTable()">
-                        <input type="date" id="searchDate" onchange="filterTable()">
-                        <button onclick="clearSearch()">Limpiar</button>
-                    </div>
-                </div>
-                <table id="reservationTable">
-                    <thead>
-                        <tr>
-                            <th>Fecha & Hora</th>
-                            <th>Cliente</th>
-                            <th>Servicio</th>
-                            <th>Teléfono</th>
-                            <th>Estado</th>
-                            <th>Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tableBody">
-                        {'<tr><td colspan="6" class="empty">No hay reservas aún.</td></tr>' if not reservations else rows}
-                    </tbody>
-                </table>
-            </div>
+    </div>
+    <div class="container">
+
+        <div class="card">
+            <div class="section-title">📅 Hoy — {today_str} <span class="badge">{len(today_reservations)} cita(s)</span></div>
+            <table>
+                <thead><tr><th>Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
+                <tbody>{"".join(["<tr><td colspan='6' class='empty'>Sin citas hoy.</td></tr>"]) if not today_reservations else build_rows(today_reservations)}</tbody>
+            </table>
         </div>
 
-        <div class="modal-overlay" id="editModal">
-            <div class="modal">
-                <h2>✏️ Editar Reserva</h2>
-                <input type="hidden" id="editId">
-                <label>Nombre del cliente</label>
-                <input type="text" id="editName">
-                <label>Servicio</label>
-                <input type="text" id="editService">
-                <label>Fecha y hora (YYYY-MM-DD HH:MM)</label>
-                <input type="text" id="editDatetime" placeholder="2026-04-10 15:00">
-                <label>Estado</label>
-                <select id="editStatus">
-                    <option value="confirmed">Confirmada</option>
-                    <option value="cancelled">Cancelada</option>
-                </select>
-                <div class="modal-actions">
-                    <button class="btn-close" onclick="closeModal()">Cancelar</button>
-                    <button class="btn-save" onclick="saveEdit()">Guardar</button>
+        <div class="card">
+            <div class="top-bar">
+                <div class="section-title">🗓 Próximas <span class="badge">{len(future_reservations)}</span></div>
+                <div class="search-bar">
+                    <input type="text" id="searchName" placeholder="Nombre..." oninput="filterTable()">
+                    <input type="text" id="searchPhone" placeholder="Teléfono..." oninput="filterTable()">
+                    <input type="date" id="searchDate" onchange="filterTable()">
+                    <button onclick="clearSearch()">Limpiar</button>
                 </div>
             </div>
+            <table>
+                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
+                <tbody id="futureBody">{"".join(["<tr><td colspan='6' class='empty'>Sin citas próximas.</td></tr>"]) if not future_reservations else build_rows(future_reservations)}</tbody>
+            </table>
         </div>
 
-        <script>
-            function filterTable() {{
-                const name = document.getElementById('searchName').value.toLowerCase();
-                const phone = document.getElementById('searchPhone').value.toLowerCase();
-                const date = document.getElementById('searchDate').value;
-                const rows = document.querySelectorAll('#tableBody tr');
-                rows.forEach(row => {{
-                    const cells = row.querySelectorAll('td');
-                    if (cells.length < 4) return;
-                    const rowDate = cells[0].textContent;
-                    const rowName = cells[1].textContent.toLowerCase();
-                    const rowPhone = cells[3].textContent.toLowerCase();
-                    const matchName = rowName.includes(name);
-                    const matchPhone = rowPhone.includes(phone);
-                    const matchDate = !date || rowDate.startsWith(date);
-                    row.style.display = (matchName && matchPhone && matchDate) ? '' : 'none';
-                }});
-            }}
+        <div class="card">
+            <div class="section-title">🕐 Historial <span class="badge">{len(past_reservations)}</span></div>
+            <table>
+                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
+                <tbody>{"".join(["<tr><td colspan='6' class='empty'>Sin historial.</td></tr>"]) if not past_reservations else build_rows(past_reservations)}</tbody>
+            </table>
+        </div>
 
-            function clearSearch() {{
-                document.getElementById('searchName').value = '';
-                document.getElementById('searchPhone').value = '';
-                document.getElementById('searchDate').value = '';
-                filterTable();
-            }}
+    </div>
 
-            function openEdit(id, name, service, datetime, status) {{
-                document.getElementById('editId').value = id;
-                document.getElementById('editName').value = name;
-                document.getElementById('editService').value = service;
-                document.getElementById('editDatetime').value = datetime.replace('T', ' ');
-                document.getElementById('editStatus').value = status;
-                document.getElementById('editModal').classList.add('active');
-            }}
+    <div class="modal-overlay" id="editModal">
+        <div class="modal">
+            <h2>✏️ Editar Reserva</h2>
+            <input type="hidden" id="editId">
+            <label>Nombre del cliente</label>
+            <input type="text" id="editName">
+            <label>Servicio</label>
+            <input type="text" id="editService">
+            <label>Fecha y hora (YYYY-MM-DD HH:MM)</label>
+            <input type="text" id="editDatetime" placeholder="2026-04-10 15:00">
+            <label>Estado</label>
+            <select id="editStatus">
+                <option value="confirmed">Confirmada</option>
+                <option value="completed">Completada</option>
+                <option value="cancelled">Cancelada</option>
+            </select>
+            <div class="modal-actions">
+                <button class="btn-close" onclick="closeModal('editModal')">Cancelar</button>
+                <button class="btn-save" onclick="saveEdit()">Guardar</button>
+            </div>
+        </div>
+    </div>
 
-            function closeModal() {{
-                document.getElementById('editModal').classList.remove('active');
-            }}
+    <div class="modal-overlay" id="walkinModal">
+        <div class="modal">
+            <h2>🚶 Reserva Walk-in</h2>
+            <label>Nombre del cliente</label>
+            <input type="text" id="walkinName" placeholder="Nombre completo">
+            <label>Servicio</label>
+            <select id="walkinService">{services_options}</select>
+            <label>Fecha y hora (YYYY-MM-DD HH:MM)</label>
+            <input type="text" id="walkinDatetime" placeholder="{today_str} 10:00">
+            <p class="error-msg" id="walkinError">Ese horario ya está lleno. Elige otra hora.</p>
+            <div class="modal-actions">
+                <button class="btn-close" onclick="closeModal('walkinModal')">Cancelar</button>
+                <button class="btn-save" onclick="saveWalkin()">Confirmar</button>
+            </div>
+        </div>
+    </div>
 
-            async function saveEdit() {{
-                const id = document.getElementById('editId').value;
-                const data = {{
-                    client_name: document.getElementById('editName').value,
-                    service: document.getElementById('editService').value,
-                    datetime: document.getElementById('editDatetime').value,
-                    status: document.getElementById('editStatus').value
-                }};
-                const res = await fetch(`/api/reservation/${{id}}/edit`, {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify(data)
-                }});
-                const result = await res.json();
-                if (result.success) {{
-                    closeModal();
-                    location.reload();
-                }} else {{
-                    alert('Error al guardar. Intenta de nuevo.');
-                }}
-            }}
-
-            async function cancelReservation(id) {{
-                if (!confirm('¿Seguro que quieres cancelar esta reserva?')) return;
-                const res = await fetch(`/api/reservation/${{id}}/cancel`, {{method: 'POST'}});
-                const result = await res.json();
-                if (result.success) {{
-                    location.reload();
-                }} else {{
-                    alert('Error al cancelar. Intenta de nuevo.');
-                }}
-            }}
-        </script>
-    </body>
-    </html>
-    """
+    <script>
+        function filterTable() {{
+            const name = document.getElementById('searchName').value.toLowerCase();
+            const phone = document.getElementById('searchPhone').value.toLowerCase();
+            const date = document.getElementById('searchDate').value;
+            const rows = document.querySelectorAll('#futureBody tr');
+            rows.forEach(row => {{
+                const cells = row.querySelectorAll('td');
+                if (cells.length < 4) return;
+                const matchName = cells[1].textContent.toLowerCase().includes(name);
+                const matchPhone = cells[3].textContent.toLowerCase().includes(phone);
+                const matchDate = !date || cells[0].textContent.startsWith(date);
+                row.style.display = (matchName && matchPhone && matchDate) ? '' : 'none';
+            }});
+        }}
+        function clearSearch() {{
+            document.getElementById('searchName').value = '';
+            document.getElementById('searchPhone').value = '';
+            document.getElementById('searchDate').value = '';
+            filterTable();
+        }}
+        function openEdit(id, name, service, datetime, status) {{
+            document.getElementById('editId').value = id;
+            document.getElementById('editName').value = name;
+            document.getElementById('editService').value = service;
+            document.getElementById('editDatetime').value = datetime.replace('T', ' ');
+            document.getElementById('editStatus').value = status;
+            document.getElementById('editModal').classList.add('active');
+        }}
+        function openWalkin() {{
+            document.getElementById('walkinError').style.display = 'none';
+            document.getElementById('walkinName').value = '';
+            document.getElementById('walkinDatetime').value = '';
+            document.getElementById('walkinModal').classList.add('active');
+        }}
+        function closeModal(id) {{
+            document.getElementById(id).classList.remove('active');
+        }}
+        async function saveEdit() {{
+            const id = document.getElementById('editId').value;
+            const data = {{
+                client_name: document.getElementById('editName').value,
+                service: document.getElementById('editService').value,
+                datetime: document.getElementById('editDatetime').value,
+                status: document.getElementById('editStatus').value
+            }};
+            const res = await fetch(`/api/reservation/${{id}}/edit`, {{
+                method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify(data)
+            }});
+            const result = await res.json();
+            if (result.success) {{ closeModal('editModal'); location.reload(); }}
+            else {{ alert('Error al guardar.'); }}
+        }}
+        async function saveWalkin() {{
+            const data = {{
+                business_id: {business_id},
+                client_name: document.getElementById('walkinName').value,
+                service: document.getElementById('walkinService').value,
+                datetime: document.getElementById('walkinDatetime').value
+            }};
+            const res = await fetch('/api/reservation/walkin', {{
+                method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify(data)
+            }});
+            const result = await res.json();
+            if (result.success) {{ closeModal('walkinModal'); location.reload(); }}
+            else if (result.reason === 'slot_full') {{ document.getElementById('walkinError').style.display = 'block'; }}
+            else {{ alert('Error al guardar.'); }}
+        }}
+        async function completeReservation(id) {{
+            if (!confirm('¿Marcar esta cita como completada?')) return;
+            const res = await fetch(`/api/reservation/${{id}}/complete`, {{method: 'POST'}});
+            const result = await res.json();
+            if (result.success) {{ location.reload(); }}
+            else {{ alert('Error.'); }}
+        }}
+        async function cancelReservation(id) {{
+            if (!confirm('¿Seguro que quieres cancelar esta reserva?')) return;
+            const res = await fetch(`/api/reservation/${{id}}/cancel`, {{method: 'POST'}});
+            const result = await res.json();
+            if (result.success) {{ location.reload(); }}
+            else {{ alert('Error al cancelar.'); }}
+        }}
+    </script>
+</body>
+</html>"""
     return HTMLResponse(content=html)
 
 # =====================================================================
