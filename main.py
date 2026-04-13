@@ -171,6 +171,7 @@ REGLAS:
 - Si el cliente da una fecha u hora fuera del horario, díselo y pide otra.
 - El formato del datetime SIEMPRE debe ser: YYYY-MM-DD HH:MM
 - El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año.
+- Eres el asistente virtual oficial de {config["name"]}. Si alguien pregunta si este es el número correcto o quién eres, confirma que sí, eres el asistente de reservas de {config["name"]} y estás aquí para ayudar.
 - La fecha de hoy es {datetime.now(LOCAL_TZ).strftime("%d/%m/%Y")} (día de la semana: {["lunes","martes","miércoles","jueves","viernes","sábado","domingo"][datetime.now(LOCAL_TZ).weekday()]}). Usa esto para calcular fechas relativas como "mañana", "el viernes", "este sábado"."""
 
 def ask_openai(config, history, new_message):
@@ -410,7 +411,6 @@ DIAS_ES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Dom
 MESES_ES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 
 def format_datetime_display(dt_str: str) -> str:
-    """Convert 2026-04-13 15:00 to Lunes 13 Abr · 3:00 PM"""
     try:
         dt_str_clean = dt_str[:16].replace("T", " ")
         dt = datetime.strptime(dt_str_clean, "%Y-%m-%d %H:%M")
@@ -462,11 +462,23 @@ async def dashboard(request: Request, business_id: int):
             dt_display = format_datetime_display(dt) if dt else "-"
             is_presencial = r.get("contact_phone") == "presencial"
             phone_display = "🚶 Presencial" if is_presencial else r.get("contact_phone", "-")
-            complete_btn = f'<button class="btn-complete" onclick="completeReservation({rid})">✔ Listo</button>' if status == "confirmed" else ""
-            cancel_btn = f'<button class="btn-cancel" onclick="cancelReservation({rid})">✖</button>' if status == "confirmed" else ""
             name_safe = r.get("client_name", "").replace("'", "\\'")
             service_safe = r.get("service", "").replace("'", "\\'")
             dt_edit = dt[:16].replace("T", " ") if dt else ""
+
+            listo_btn = f'<button class="btn-complete" onclick="completeReservation({rid})">✔ Listo</button>' if status == "confirmed" else ""
+
+            dropdown = ""
+            if status == "confirmed":
+                dropdown = f"""
+                <div class="dropdown">
+                    <button class="btn-dots" onclick="toggleDropdown(this)">⋯</button>
+                    <div class="dropdown-menu">
+                        <div class="dropdown-item" onclick="openEdit({rid}, '{name_safe}', '{service_safe}', '{dt_edit}', '{status}'); closeAllDropdowns()">✏️ Editar</div>
+                        <div class="dropdown-item danger" onclick="cancelReservation({rid}); closeAllDropdowns()">✖ Cancelar</div>
+                    </div>
+                </div>"""
+
             rows += f"""
             <tr>
                 <td>{dt_display}</td>
@@ -474,9 +486,8 @@ async def dashboard(request: Request, business_id: int):
                 <td>{r.get("service", "-")}</td>
                 <td>{phone_display}</td>
                 <td class="actions">
-                    <button class="btn-edit" onclick="openEdit({rid}, '{name_safe}', '{service_safe}', '{dt_edit}', '{status}')">✏️</button>
-                    {complete_btn}
-                    {cancel_btn}
+                    {listo_btn}
+                    {dropdown}
                 </td>
                 <td><span class="status {status_class}">{status_label}</span></td>
             </tr>"""
@@ -497,8 +508,8 @@ async def dashboard(request: Request, business_id: int):
         .header {{ background: #1a1a1a; color: white; padding: 20px 32px; display: flex; align-items: center; justify-content: space-between; }}
         .header h1 {{ font-size: 1.4rem; font-weight: 600; }}
         .header-btns {{ display: flex; gap: 10px; }}
-        .tabs {{ background: white; border-bottom: 1px solid #e0e0e0; padding: 0 32px; display: flex; gap: 0; }}
-        .tab {{ padding: 14px 24px; cursor: pointer; font-size: 0.9rem; color: #666; border-bottom: 3px solid transparent; font-weight: 500; transition: all 0.2s; }}
+        .tabs {{ background: white; border-bottom: 1px solid #e0e0e0; padding: 0 32px; display: flex; }}
+        .tab {{ padding: 14px 24px; cursor: pointer; font-size: 0.9rem; color: #666; border-bottom: 3px solid transparent; font-weight: 500; transition: all 0.2s; user-select: none; }}
         .tab:hover {{ color: #1a1a1a; }}
         .tab.active {{ color: #1a1a1a; border-bottom-color: #1a1a1a; }}
         .tab-content {{ display: none; }}
@@ -513,17 +524,25 @@ async def dashboard(request: Request, business_id: int):
         .search-bar button {{ background: #555; color: white; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
         table {{ width: 100%; border-collapse: collapse; }}
         th {{ background: #1a1a1a; color: white; padding: 12px 16px; text-align: left; font-weight: 500; font-size: 0.85rem; }}
-        td {{ padding: 11px 16px; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; }}
+        td {{ padding: 11px 16px; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; vertical-align: middle; }}
         tr:last-child td {{ border-bottom: none; }}
         tr:hover td {{ background: #fafafa; }}
         .status {{ padding: 3px 10px; border-radius: 20px; font-size: 0.78rem; font-weight: 500; }}
         .status-confirmed {{ background: #e6f4ea; color: #2e7d32; }}
         .status-cancelled {{ background: #fdecea; color: #c62828; }}
         .status-completed {{ background: #e8f0fe; color: #1a73e8; }}
-        .actions {{ display: flex; gap: 5px; }}
-        .btn-edit {{ background: #f0f0f0; color: #333; border: none; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; }}
-        .btn-complete {{ background: #e8f0fe; color: #1a73e8; border: 1px solid #c5d8f8; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; }}
-        .btn-cancel {{ background: #fdecea; color: #c62828; border: 1px solid #f5c6c6; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; }}
+        .actions {{ display: flex; align-items: center; gap: 6px; }}
+        .btn-complete {{ background: #e8f0fe; color: #1a73e8; border: 1px solid #c5d8f8; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; font-weight: 500; }}
+        .btn-complete:hover {{ background: #c5d8f8; }}
+        .dropdown {{ position: relative; }}
+        .btn-dots {{ background: #f0f0f0; border: none; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 1rem; color: #555; font-weight: 700; line-height: 1; }}
+        .btn-dots:hover {{ background: #e0e0e0; }}
+        .dropdown-menu {{ display: none; position: absolute; right: 0; top: 110%; background: white; border: 1px solid #e0e0e0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 50; min-width: 130px; overflow: hidden; }}
+        .dropdown-menu.open {{ display: block; }}
+        .dropdown-item {{ padding: 10px 14px; font-size: 0.85rem; cursor: pointer; color: #333; }}
+        .dropdown-item:hover {{ background: #f5f5f5; }}
+        .dropdown-item.danger {{ color: #c62828; }}
+        .dropdown-item.danger:hover {{ background: #fdecea; }}
         .empty {{ text-align: center; color: #999; padding: 28px; }}
         .btn-refresh {{ background: #1a1a1a; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
         .btn-walkin {{ background: #2e7d32; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
@@ -537,8 +556,6 @@ async def dashboard(request: Request, business_id: int):
         .btn-save {{ background: #1a1a1a; color: white; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
         .btn-close {{ background: #f0f0f0; color: #333; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
         .error-msg {{ color: #c62828; font-size: 0.83rem; margin-top: 8px; display: none; }}
-        .date-time-row {{ display: flex; gap: 8px; }}
-        .date-time-row input, .date-time-row select {{ flex: 1; }}
     </style>
 </head>
 <body>
@@ -551,9 +568,9 @@ async def dashboard(request: Request, business_id: int):
     </div>
 
     <div class="tabs">
-        <div class="tab active" onclick="switchTab('hoy')">📅 Hoy <span class="badge" style="margin-left:6px">{len(today_reservations)}</span></div>
-        <div class="tab" onclick="switchTab('proximas')">🗓 Próximas <span class="badge" style="margin-left:6px">{len(future_reservations)}</span></div>
-        <div class="tab" onclick="switchTab('historial')">🕐 Historial <span class="badge" style="margin-left:6px">{len(past_reservations)}</span></div>
+        <div class="tab active" onclick="switchTab('hoy', this)">📅 Hoy <span class="badge" style="margin-left:6px">{len(today_reservations)}</span></div>
+        <div class="tab" onclick="switchTab('proximas', this)">🗓 Próximas <span class="badge" style="margin-left:6px">{len(future_reservations)}</span></div>
+        <div class="tab" onclick="switchTab('historial', this)">🕐 Historial <span class="badge" style="margin-left:6px">{len(past_reservations)}</span></div>
     </div>
 
     <div class="container">
@@ -622,7 +639,7 @@ async def dashboard(request: Request, business_id: int):
         </div>
     </div>
 
-    <!-- Walk-in / Presencial Modal -->
+    <!-- Presencial Modal -->
     <div class="modal-overlay" id="walkinModal">
         <div class="modal">
             <h2>🚶 Reserva Presencial</h2>
@@ -630,6 +647,7 @@ async def dashboard(request: Request, business_id: int):
             <input type="text" id="walkinName" placeholder="Nombre completo">
             <label>Servicio</label>
             <select id="walkinService">{services_options}</select>
+encial
             <label>Fecha</label>
             <input type="date" id="walkinDate">
             <label>Hora</label>
@@ -637,18 +655,28 @@ async def dashboard(request: Request, business_id: int):
             <p class="error-msg" id="walkinError">Ese horario ya está lleno. Elige otra hora.</p>
             <div class="modal-actions">
                 <button class="btn-close" onclick="closeModal('walkinModal')">Cancelar</button>
-                <button class="btn-save" onclick="saveWalkin()">Confirmar</button>
+                <button class="btn-save" id="walkinSaveBtn" onclick="saveWalkin()">Confirmar</button>
             </div>
         </div>
     </div>
 
     <script>
-        function switchTab(name) {{
+        function switchTab(name, el) {{
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
             document.getElementById('tab-' + name).classList.add('active');
-            event.target.closest('.tab').classList.add('active');
+            el.classList.add('active');
         }}
+        function toggleDropdown(btn) {{
+            closeAllDropdowns();
+            const menu = btn.nextElementSibling;
+            menu.classList.toggle('open');
+            event.stopPropagation();
+        }}
+        function closeAllDropdowns() {{
+            document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('open'));
+        }}
+        document.addEventListener('click', closeAllDropdowns);
         function filterTable() {{
             const name = document.getElementById('searchName').value.toLowerCase();
             const phone = document.getElementById('searchPhone').value.toLowerCase();
@@ -681,6 +709,7 @@ async def dashboard(request: Request, business_id: int):
             document.getElementById('walkinError').style.display = 'none';
             document.getElementById('walkinName').value = '';
             document.getElementById('walkinDate').value = '{today_str}';
+            document.getElementById('walkinSaveBtn').disabled = false;
             document.getElementById('walkinModal').classList.add('active');
         }}
         function closeModal(id) {{
@@ -702,7 +731,7 @@ async def dashboard(request: Request, business_id: int):
             else {{ alert('Error al guardar.'); }}
         }}
         async function saveWalkin() {{
-            document.querySelector('#walkinModal .btn-save').disabled = true;
+            document.getElementById('walkinSaveBtn').disabled = true;
             const date = document.getElementById('walkinDate').value;
             const hour = document.getElementById('walkinHour').value;
             const datetime = date + ' ' + hour;
@@ -719,11 +748,11 @@ async def dashboard(request: Request, business_id: int):
             if (result.success) {{ closeModal('walkinModal'); location.reload(); }}
             else if (result.reason === 'slot_full') {{
                 document.getElementById('walkinError').style.display = 'block';
-                document.querySelector('#walkinModal .btn-save').disabled = false;
+                document.getElementById('walkinSaveBtn').disabled = false;
             }}
             else {{
                 alert('Error al guardar.');
-                document.querySelector('#walkinModal .btn-save').disabled = false;
+                document.getElementById('walkinSaveBtn').disabled = false;
             }}
         }}
         async function completeReservation(id) {{
