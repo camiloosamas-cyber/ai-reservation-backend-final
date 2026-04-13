@@ -702,6 +702,7 @@ async def dashboard(request: Request, business_id: int):
             else {{ alert('Error al guardar.'); }}
         }}
         async function saveWalkin() {{
+            document.querySelector('#walkinModal .btn-save').disabled = true;
             const date = document.getElementById('walkinDate').value;
             const hour = document.getElementById('walkinHour').value;
             const datetime = date + ' ' + hour;
@@ -716,8 +717,14 @@ async def dashboard(request: Request, business_id: int):
             }});
             const result = await res.json();
             if (result.success) {{ closeModal('walkinModal'); location.reload(); }}
-            else if (result.reason === 'slot_full') {{ document.getElementById('walkinError').style.display = 'block'; }}
-            else {{ alert('Error al guardar.'); }}
+            else if (result.reason === 'slot_full') {{
+                document.getElementById('walkinError').style.display = 'block';
+                document.querySelector('#walkinModal .btn-save').disabled = false;
+            }}
+            else {{
+                alert('Error al guardar.');
+                document.querySelector('#walkinModal .btn-save').disabled = false;
+            }}
         }}
         async function completeReservation(id) {{
             if (!confirm('¿Marcar esta cita como completada?')) return;
