@@ -391,7 +391,7 @@ async def api_walkin_booking(request: Request):
         if not is_slot_available(datetime_str, business_id):
             return JSONResponse({"success": False, "reason": "slot_full"})
         supabase.table("reservations").insert({
-            "contact_phone": "walk-in",
+            "contact_phone": "presencial",
             "business_id": business_id,
             "client_name": body.get("client_name"),
             "service": body.get("service"),
@@ -405,6 +405,21 @@ async def api_walkin_booking(request: Request):
 # =====================================================================
 # DASHBOARD
 # =====================================================================
+
+DIAS_ES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+MESES_ES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+
+def format_datetime_display(dt_str: str) -> str:
+    """Convert 2026-04-13 15:00 to Lunes 13 Abr · 3:00 PM"""
+    try:
+        dt_str_clean = dt_str[:16].replace("T", " ")
+        dt = datetime.strptime(dt_str_clean, "%Y-%m-%d %H:%M")
+        dia = DIAS_ES[dt.weekday()]
+        mes = MESES_ES[dt.month - 1]
+        hora = dt.strftime("%I:%M %p").lstrip("0")
+        return f"{dia} {dt.day} {mes} · {hora}"
+    except:
+        return dt_str[:16].replace("T", " ")
 
 @app.get("/dashboard/{business_id}", response_class=HTMLResponse)
 async def dashboard(request: Request, business_id: int):
@@ -436,37 +451,39 @@ async def dashboard(request: Request, business_id: int):
             status = r.get("status", "-")
             if status == "confirmed":
                 status_class = "status-confirmed"
-                status_label = "confirmada"
+                status_label = "Confirmada"
             elif status == "completed":
                 status_class = "status-completed"
-                status_label = "completada"
+                status_label = "Completada"
             else:
                 status_class = "status-cancelled"
-                status_label = "cancelada"
+                status_label = "Cancelada"
             dt = r.get("datetime", "")
-            dt_display = dt[:16].replace("T", " ") if dt else "-"
-            is_walkin = r.get("contact_phone") == "walk-in"
-            phone_display = "🚶 Walk-in" if is_walkin else r.get("contact_phone", "-")
+            dt_display = format_datetime_display(dt) if dt else "-"
+            is_presencial = r.get("contact_phone") == "presencial"
+            phone_display = "🚶 Presencial" if is_presencial else r.get("contact_phone", "-")
             complete_btn = f'<button class="btn-complete" onclick="completeReservation({rid})">✔ Listo</button>' if status == "confirmed" else ""
             cancel_btn = f'<button class="btn-cancel" onclick="cancelReservation({rid})">✖</button>' if status == "confirmed" else ""
             name_safe = r.get("client_name", "").replace("'", "\\'")
             service_safe = r.get("service", "").replace("'", "\\'")
+            dt_edit = dt[:16].replace("T", " ") if dt else ""
             rows += f"""
             <tr>
                 <td>{dt_display}</td>
                 <td>{r.get("client_name", "-")}</td>
                 <td>{r.get("service", "-")}</td>
                 <td>{phone_display}</td>
-                <td><span class="status {status_class}">{status_label}</span></td>
                 <td class="actions">
-                    <button class="btn-edit" onclick="openEdit({rid}, '{name_safe}', '{service_safe}', '{dt[:16] if dt else ""}', '{status}')">✏️</button>
+                    <button class="btn-edit" onclick="openEdit({rid}, '{name_safe}', '{service_safe}', '{dt_edit}', '{status}')">✏️</button>
                     {complete_btn}
                     {cancel_btn}
                 </td>
+                <td><span class="status {status_class}">{status_label}</span></td>
             </tr>"""
         return rows
 
     services_options = "".join([f'<option value="{s}">{s}</option>' for s in business_services])
+    hours_options = "".join([f'<option value="{h:02d}:00">{h:02d}:00</option>' for h in range(9, 20)])
 
     html = f"""<!DOCTYPE html>
 <html lang="es">
@@ -480,6 +497,12 @@ async def dashboard(request: Request, business_id: int):
         .header {{ background: #1a1a1a; color: white; padding: 20px 32px; display: flex; align-items: center; justify-content: space-between; }}
         .header h1 {{ font-size: 1.4rem; font-weight: 600; }}
         .header-btns {{ display: flex; gap: 10px; }}
+        .tabs {{ background: white; border-bottom: 1px solid #e0e0e0; padding: 0 32px; display: flex; gap: 0; }}
+        .tab {{ padding: 14px 24px; cursor: pointer; font-size: 0.9rem; color: #666; border-bottom: 3px solid transparent; font-weight: 500; transition: all 0.2s; }}
+        .tab:hover {{ color: #1a1a1a; }}
+        .tab.active {{ color: #1a1a1a; border-bottom-color: #1a1a1a; }}
+        .tab-content {{ display: none; }}
+        .tab-content.active {{ display: block; }}
         .container {{ max-width: 1100px; margin: 32px auto; padding: 0 16px; }}
         .card {{ background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 24px; }}
         .section-title {{ font-size: 1rem; font-weight: 600; margin-bottom: 16px; color: #1a1a1a; display: flex; align-items: center; gap: 8px; }}
@@ -514,52 +537,68 @@ async def dashboard(request: Request, business_id: int):
         .btn-save {{ background: #1a1a1a; color: white; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
         .btn-close {{ background: #f0f0f0; color: #333; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
         .error-msg {{ color: #c62828; font-size: 0.83rem; margin-top: 8px; display: none; }}
+        .date-time-row {{ display: flex; gap: 8px; }}
+        .date-time-row input, .date-time-row select {{ flex: 1; }}
     </style>
 </head>
 <body>
     <div class="header">
         <h1>💈 {business_name} — Reservas</h1>
         <div class="header-btns">
-            <button class="btn-walkin" onclick="openWalkin()">+ Walk-in</button>
+            <button class="btn-walkin" onclick="openWalkin()">+ Presencial</button>
             <button class="btn-refresh" onclick="location.reload()">↻ Refrescar</button>
         </div>
     </div>
+
+    <div class="tabs">
+        <div class="tab active" onclick="switchTab('hoy')">📅 Hoy <span class="badge" style="margin-left:6px">{len(today_reservations)}</span></div>
+        <div class="tab" onclick="switchTab('proximas')">🗓 Próximas <span class="badge" style="margin-left:6px">{len(future_reservations)}</span></div>
+        <div class="tab" onclick="switchTab('historial')">🕐 Historial <span class="badge" style="margin-left:6px">{len(past_reservations)}</span></div>
+    </div>
+
     <div class="container">
 
-        <div class="card">
-            <div class="section-title">📅 Hoy — {today_str} <span class="badge">{len(today_reservations)} cita(s)</span></div>
-            <table>
-                <thead><tr><th>Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
-                <tbody>{"".join(["<tr><td colspan='6' class='empty'>Sin citas hoy.</td></tr>"]) if not today_reservations else build_rows(today_reservations)}</tbody>
-            </table>
-        </div>
-
-        <div class="card">
-            <div class="top-bar">
-                <div class="section-title">🗓 Próximas <span class="badge">{len(future_reservations)}</span></div>
-                <div class="search-bar">
-                    <input type="text" id="searchName" placeholder="Nombre..." oninput="filterTable()">
-                    <input type="text" id="searchPhone" placeholder="Teléfono..." oninput="filterTable()">
-                    <input type="date" id="searchDate" onchange="filterTable()">
-                    <button onclick="clearSearch()">Limpiar</button>
-                </div>
+        <div id="tab-hoy" class="tab-content active">
+            <div class="card">
+                <div class="section-title">Citas de hoy — {today_str}</div>
+                <table>
+                    <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Acciones</th><th>Estado</th></tr></thead>
+                    <tbody>{"<tr><td colspan='6' class='empty'>Sin citas hoy.</td></tr>" if not today_reservations else build_rows(today_reservations)}</tbody>
+                </table>
             </div>
-            <table>
-                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
-                <tbody id="futureBody">{"".join(["<tr><td colspan='6' class='empty'>Sin citas próximas.</td></tr>"]) if not future_reservations else build_rows(future_reservations)}</tbody>
-            </table>
         </div>
 
-        <div class="card">
-            <div class="section-title">🕐 Historial <span class="badge">{len(past_reservations)}</span></div>
-            <table>
-                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
-                <tbody>{"".join(["<tr><td colspan='6' class='empty'>Sin historial.</td></tr>"]) if not past_reservations else build_rows(past_reservations)}</tbody>
-            </table>
+        <div id="tab-proximas" class="tab-content">
+            <div class="card">
+                <div class="top-bar">
+                    <div class="section-title">Próximas citas</div>
+                    <div class="search-bar">
+                        <input type="text" id="searchName" placeholder="Nombre..." oninput="filterTable()">
+                        <input type="text" id="searchPhone" placeholder="Teléfono..." oninput="filterTable()">
+                        <input type="date" id="searchDate" onchange="filterTable()">
+                        <button onclick="clearSearch()">Limpiar</button>
+                    </div>
+                </div>
+                <table>
+                    <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Acciones</th><th>Estado</th></tr></thead>
+                    <tbody id="futureBody">{"<tr><td colspan='6' class='empty'>Sin citas próximas.</td></tr>" if not future_reservations else build_rows(future_reservations)}</tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="tab-historial" class="tab-content">
+            <div class="card">
+                <div class="section-title">Historial</div>
+                <table>
+                    <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Acciones</th><th>Estado</th></tr></thead>
+                    <tbody>{"<tr><td colspan='6' class='empty'>Sin historial.</td></tr>" if not past_reservations else build_rows(past_reservations)}</tbody>
+                </table>
+            </div>
         </div>
 
     </div>
 
+    <!-- Edit Modal -->
     <div class="modal-overlay" id="editModal">
         <div class="modal">
             <h2>✏️ Editar Reserva</h2>
@@ -583,15 +622,18 @@ async def dashboard(request: Request, business_id: int):
         </div>
     </div>
 
+    <!-- Walk-in / Presencial Modal -->
     <div class="modal-overlay" id="walkinModal">
         <div class="modal">
-            <h2>🚶 Reserva Walk-in</h2>
+            <h2>🚶 Reserva Presencial</h2>
             <label>Nombre del cliente</label>
             <input type="text" id="walkinName" placeholder="Nombre completo">
             <label>Servicio</label>
             <select id="walkinService">{services_options}</select>
-            <label>Fecha y hora (YYYY-MM-DD HH:MM)</label>
-            <input type="text" id="walkinDatetime" placeholder="{today_str} 10:00">
+            <label>Fecha</label>
+            <input type="date" id="walkinDate">
+            <label>Hora</label>
+            <select id="walkinHour">{hours_options}</select>
             <p class="error-msg" id="walkinError">Ese horario ya está lleno. Elige otra hora.</p>
             <div class="modal-actions">
                 <button class="btn-close" onclick="closeModal('walkinModal')">Cancelar</button>
@@ -601,6 +643,12 @@ async def dashboard(request: Request, business_id: int):
     </div>
 
     <script>
+        function switchTab(name) {{
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.getElementById('tab-' + name).classList.add('active');
+            event.target.closest('.tab').classList.add('active');
+        }}
         function filterTable() {{
             const name = document.getElementById('searchName').value.toLowerCase();
             const phone = document.getElementById('searchPhone').value.toLowerCase();
@@ -611,7 +659,7 @@ async def dashboard(request: Request, business_id: int):
                 if (cells.length < 4) return;
                 const matchName = cells[1].textContent.toLowerCase().includes(name);
                 const matchPhone = cells[3].textContent.toLowerCase().includes(phone);
-                const matchDate = !date || cells[0].textContent.startsWith(date);
+                const matchDate = !date || cells[0].textContent.includes(date);
                 row.style.display = (matchName && matchPhone && matchDate) ? '' : 'none';
             }});
         }}
@@ -632,7 +680,7 @@ async def dashboard(request: Request, business_id: int):
         function openWalkin() {{
             document.getElementById('walkinError').style.display = 'none';
             document.getElementById('walkinName').value = '';
-            document.getElementById('walkinDatetime').value = '';
+            document.getElementById('walkinDate').value = '{today_str}';
             document.getElementById('walkinModal').classList.add('active');
         }}
         function closeModal(id) {{
@@ -654,11 +702,14 @@ async def dashboard(request: Request, business_id: int):
             else {{ alert('Error al guardar.'); }}
         }}
         async function saveWalkin() {{
+            const date = document.getElementById('walkinDate').value;
+            const hour = document.getElementById('walkinHour').value;
+            const datetime = date + ' ' + hour;
             const data = {{
                 business_id: {business_id},
                 client_name: document.getElementById('walkinName').value,
                 service: document.getElementById('walkinService').value,
-                datetime: document.getElementById('walkinDatetime').value
+                datetime: datetime
             }};
             const res = await fetch('/api/reservation/walkin', {{
                 method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify(data)
