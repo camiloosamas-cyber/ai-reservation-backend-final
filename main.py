@@ -158,9 +158,14 @@ Detalles de cada servicio:
 
 FLUJO DE RESERVA:
 1. Saluda al cliente la primera vez.
-2. Cuando el cliente quiera reservar, pídele en UN solo mensaje: nombre completo, servicio, fecha y hora.
+2. Cuando el cliente quiera reservar, pídele su nombre completo, el servicio, la fecha y la hora. Recoge la información como el cliente la vaya dando, sin exigir que la envíe en un solo mensaje.
 3. Si el cliente responde con información incompleta, solo pregunta por lo que falta.
-4. Cuando tengas toda la información, confírmala con el cliente en un resumen claro.
+4. Cuando tengas toda la información, confírmala SIEMPRE con este formato exacto:
+👤 Nombre: [nombre]
+✂️ Servicio: [servicio]
+📅 Fecha: [YYYY-MM-DD]
+🕒 Hora: [HH:MM]
+¿Confirmas esta información? 😊
 5. Cuando el cliente confirme, responde EXACTAMENTE con este JSON y nada más:
 RESERVA_CONFIRMADA:{{"name":"<nombre>","service":"<servicio>","datetime":"<YYYY-MM-DD HH:MM>"}}
 
