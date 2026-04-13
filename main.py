@@ -647,7 +647,6 @@ async def dashboard(request: Request, business_id: int):
             <input type="text" id="walkinName" placeholder="Nombre completo">
             <label>Servicio</label>
             <select id="walkinService">{services_options}</select>
-encial
             <label>Fecha</label>
             <input type="date" id="walkinDate">
             <label>Hora</label>
