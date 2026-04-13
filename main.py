@@ -466,7 +466,7 @@ async def dashboard(request: Request, business_id: int):
             service_safe = r.get("service", "").replace("'", "\\'")
             dt_edit = dt[:16].replace("T", " ") if dt else ""
 
-            listo_btn = f'<button class="btn-complete" onclick="completeReservation({rid})">✔ Listo</button>' if status == "confirmed" else ""
+            listo_btn = f'<button class="btn-complete" onclick="completeReservation({rid})">✔ Listo</button>' if status == "confirmed" else "—"
 
             dropdown = ""
             if status == "confirmed":
