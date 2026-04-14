@@ -5,7 +5,8 @@ load_dotenv()
 
 import os
 import json
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, Response, JSONResponse
@@ -78,6 +79,53 @@ try:
     print("✅ Twilio loaded")
 except ImportError:
     print("WARNING: Twilio not available")
+
+# =====================================================================
+# DATE RESOLVER — converts relative Spanish dates to YYYY-MM-DD
+# =====================================================================
+
+WEEKDAY_MAP = {
+    "lunes": 0, "martes": 1, "miércoles": 2, "miercoles": 2,
+    "jueves": 3, "viernes": 4, "sábado": 5, "sabado": 5, "domingo": 6
+}
+
+def resolve_dates(text: str) -> str:
+    """
+    Scans message for relative date expressions and replaces them
+    with exact YYYY-MM-DD dates so GPT never has to calculate dates.
+    """
+    today = datetime.now(LOCAL_TZ).date()
+    result = text
+
+    # mañana / manana
+    if re.search(r"\bma[ñn]ana\b", result, re.IGNORECASE):
+        target = today + timedelta(days=1)
+        result = re.sub(r"\bma[ñn]ana\b", target.strftime("%Y-%m-%d"), result, flags=re.IGNORECASE)
+
+    # pasado mañana
+    if re.search(r"\bpasado\s+ma[ñn]ana\b", result, re.IGNORECASE):
+        target = today + timedelta(days=2)
+        result = re.sub(r"\bpasado\s+ma[ñn]ana\b", target.strftime("%Y-%m-%d"), result, flags=re.IGNORECASE)
+
+    # hoy
+    if re.search(r"\bhoy\b", result, re.IGNORECASE):
+        result = re.sub(r"\bhoy\b", today.strftime("%Y-%m-%d"), result, flags=re.IGNORECASE)
+
+    # weekday patterns: "este lunes", "el viernes", "próximo sábado", "el próximo martes", or just "sábado"
+    for day_es, day_num in WEEKDAY_MAP.items():
+        pattern = rf"\b(?:este\s+|el\s+(?:pr[oó]ximo\s+)?|pr[oó]ximo\s+)?{day_es}\b"
+        match = re.search(pattern, result, re.IGNORECASE)
+        if match:
+            days_ahead = (day_num - today.weekday()) % 7
+            if days_ahead == 0:
+                days_ahead = 7  # if today is that day, go to next week
+            # if "próximo" is in the match, add another week
+            if re.search(r"pr[oó]ximo", match.group(), re.IGNORECASE):
+                days_ahead += 7
+            target = today + timedelta(days=days_ahead)
+            result = re.sub(pattern, target.strftime("%Y-%m-%d"), result, flags=re.IGNORECASE)
+
+    return result
 
 # =====================================================================
 # SESSION MANAGEMENT
@@ -160,7 +208,7 @@ FLUJO DE RESERVA:
 1. Saluda al cliente la primera vez.
 2. Cuando el cliente quiera reservar, pídele su nombre completo, el servicio, la fecha y la hora. Recoge la información como el cliente la vaya dando, sin exigir que la envíe en un solo mensaje.
 3. Si el cliente responde con información incompleta, solo pregunta por lo que falta.
-4. Cuando tengas toda la información, confírmala SIEMPRE con este formato exacto:
+4. Cuando tengas toda la información, responde ÚNICAMENTE con este texto, sin cambiar nada, sin asteriscos, sin bullets, sin otro formato:
 👤 Nombre: [nombre]
 ✂️ Servicio: [servicio]
 📅 Fecha: [YYYY-MM-DD]
@@ -177,7 +225,7 @@ REGLAS:
 - El formato del datetime SIEMPRE debe ser: YYYY-MM-DD HH:MM
 - El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año.
 - Eres el asistente virtual oficial de {config["name"]}. Si alguien pregunta si este es el número correcto o quién eres, confirma que sí, eres el asistente de reservas de {config["name"]} y estás aquí para ayudar.
-- La fecha de hoy es {datetime.now(LOCAL_TZ).strftime("%d/%m/%Y")} (día de la semana: {["lunes","martes","miércoles","jueves","viernes","sábado","domingo"][datetime.now(LOCAL_TZ).weekday()]}). Usa esto para calcular fechas relativas como "mañana", "el viernes", "este sábado"."""
+- Las fechas en los mensajes ya vienen resueltas como YYYY-MM-DD. Úsalas directamente sin recalcular."""
 
 def ask_openai(config, history, new_message):
     system_prompt = build_system_prompt(config)
@@ -260,6 +308,11 @@ async def webhook(request: Request):
     session = get_session(from_number)
     history = session.get("history", [])
 
+    # Resolve relative dates before processing
+    resolved_msg = resolve_dates(incoming_msg)
+    if resolved_msg != incoming_msg:
+        print(f"📅 Date resolved: '{incoming_msg}' → '{resolved_msg}'")
+
     cancel_keywords = ["cancelar", "cancela", "cancel", "quiero cancelar", "cancelar cita"]
     reschedule_keywords = ["cambiar", "reschedule", "reprogramar", "cambiar cita", "mover cita", "otra fecha", "otro horario"]
 
@@ -281,7 +334,8 @@ async def webhook(request: Request):
 
     elif any(kw in incoming_msg.lower() for kw in reschedule_keywords):
         try:
-            temp_reply = ask_openai(config, history, f"El cliente quiere cambiar su cita. Extrae SOLO la nueva fecha y hora de este mensaje y responde ÚNICAMENTE con el formato YYYY-MM-DD HH:MM, nada más. Si no hay fecha clara responde NO_DATE. Mensaje: {incoming_msg}")
+            resolved_reschedule = resolve_dates(incoming_msg)
+            temp_reply = ask_openai(config, history, f"El cliente quiere cambiar su cita. Extrae SOLO la nueva fecha y hora de este mensaje y responde ÚNICAMENTE con el formato YYYY-MM-DD HH:MM, nada más. Si no hay fecha clara responde NO_DATE. Mensaje: {resolved_reschedule}")
             if temp_reply.strip() != "NO_DATE" and len(temp_reply.strip()) == 16:
                 new_datetime = temp_reply.strip()
                 result = reschedule_reservation(from_number, config["business_id"], new_datetime)
@@ -308,7 +362,7 @@ async def webhook(request: Request):
 
     else:
         try:
-            reply = ask_openai(config, history, incoming_msg)
+            reply = ask_openai(config, history, resolved_msg)
         except Exception as e:
             print(f"OpenAI error: {e}")
             reply = "Hubo un error procesando tu mensaje. Intenta de nuevo."
