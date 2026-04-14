@@ -90,42 +90,91 @@ WEEKDAY_MAP = {
 }
 
 def resolve_dates(text: str) -> str:
-    """
-    Scans message for relative date expressions and replaces them
-    with exact YYYY-MM-DD dates so GPT never has to calculate dates.
-    """
     today = datetime.now(LOCAL_TZ).date()
     result = text
 
-    # mañana / manana
-    if re.search(r"\bma[ñn]ana\b", result, re.IGNORECASE):
-        target = today + timedelta(days=1)
-        result = re.sub(r"\bma[ñn]ana\b", target.strftime("%Y-%m-%d"), result, flags=re.IGNORECASE)
-
-    # pasado mañana
     if re.search(r"\bpasado\s+ma[ñn]ana\b", result, re.IGNORECASE):
         target = today + timedelta(days=2)
         result = re.sub(r"\bpasado\s+ma[ñn]ana\b", target.strftime("%Y-%m-%d"), result, flags=re.IGNORECASE)
 
-    # hoy
+    if re.search(r"\bma[ñn]ana\b", result, re.IGNORECASE):
+        target = today + timedelta(days=1)
+        result = re.sub(r"\bma[ñn]ana\b", target.strftime("%Y-%m-%d"), result, flags=re.IGNORECASE)
+
     if re.search(r"\bhoy\b", result, re.IGNORECASE):
         result = re.sub(r"\bhoy\b", today.strftime("%Y-%m-%d"), result, flags=re.IGNORECASE)
 
-    # weekday patterns: "este lunes", "el viernes", "próximo sábado", "el próximo martes", or just "sábado"
     for day_es, day_num in WEEKDAY_MAP.items():
         pattern = rf"\b(?:este\s+|el\s+(?:pr[oó]ximo\s+)?|pr[oó]ximo\s+)?{day_es}\b"
         match = re.search(pattern, result, re.IGNORECASE)
         if match:
             days_ahead = (day_num - today.weekday()) % 7
             if days_ahead == 0:
-                days_ahead = 7  # if today is that day, go to next week
-            # if "próximo" is in the match, add another week
+                days_ahead = 7
             if re.search(r"pr[oó]ximo", match.group(), re.IGNORECASE):
                 days_ahead += 7
             target = today + timedelta(days=days_ahead)
             result = re.sub(pattern, target.strftime("%Y-%m-%d"), result, flags=re.IGNORECASE)
 
     return result
+
+# =====================================================================
+# CONFIRMATION FORMAT ENFORCER
+# =====================================================================
+
+def extract_confirmation_data(text: str) -> dict | None:
+    """
+    Detects if GPT's reply is a booking confirmation summary.
+    Extracts name, service, date, time regardless of how GPT formatted it.
+    Returns dict with keys: name, service, date, time — or None if not a confirmation.
+    """
+    lower = text.lower()
+
+    # Must contain confirmation question
+    if not any(phrase in lower for phrase in ["confirmas", "te parece bien", "está bien", "correcto"]):
+        return None
+
+    # Must contain at least name and date-like pattern
+    has_date = bool(re.search(r"\d{4}-\d{2}-\d{2}", text))
+    has_name = bool(re.search(r"nombre", lower))
+    has_service = bool(re.search(r"servicio", lower))
+
+    if not (has_name and has_service):
+        return None
+
+    # Extract name
+    name_match = re.search(r"nombre[:\*\s]+([A-Za-záéíóúñÁÉÍÓÚÑ\s]+?)(?:\n|\*|✂|📅|🕒|servicio|$)", text, re.IGNORECASE)
+    name = name_match.group(1).strip().strip("*").strip() if name_match else None
+
+    # Extract service
+    service_match = re.search(r"servicio[:\*\s]+([A-Za-záéíóúñÁÉÍÓÚÑ\s\+]+?)(?:\n|\*|📅|🕒|fecha|$)", text, re.IGNORECASE)
+    service = service_match.group(1).strip().strip("*").strip() if service_match else None
+
+    # Extract date
+    date_match = re.search(r"(\d{4}-\d{2}-\d{2})", text)
+    date = date_match.group(1) if date_match else None
+
+    # Extract time - look for HH:MM pattern
+    time_match = re.search(r"(\d{1,2}:\d{2})", text)
+    if not time_match:
+        # Try "3:00 p.m." or "3 p.m." style
+        time_match = re.search(r"(\d{1,2}(?::\d{2})?\s*(?:a\.m\.|p\.m\.|am|pm))", text, re.IGNORECASE)
+    time = time_match.group(1).strip() if time_match else None
+
+    if name and service and date and time:
+        return {"name": name, "service": service, "date": date, "time": time}
+
+    return None
+
+def format_confirmation(data: dict) -> str:
+    """Build the standard confirmation message from extracted data."""
+    return (
+        f"👤 Nombre: {data['name']}\n"
+        f"✂️ Servicio: {data['service']}\n"
+        f"📅 Fecha: {data['date']}\n"
+        f"🕒 Hora: {data['time']}\n\n"
+        f"¿Confirmas esta información? 😊"
+    )
 
 # =====================================================================
 # SESSION MANAGEMENT
@@ -208,12 +257,7 @@ FLUJO DE RESERVA:
 1. Saluda al cliente la primera vez.
 2. Cuando el cliente quiera reservar, pídele su nombre completo, el servicio, la fecha y la hora. Recoge la información como el cliente la vaya dando, sin exigir que la envíe en un solo mensaje.
 3. Si el cliente responde con información incompleta, solo pregunta por lo que falta.
-4. Cuando tengas toda la información, responde ÚNICAMENTE con este texto, sin cambiar nada, sin asteriscos, sin bullets, sin otro formato:
-👤 Nombre: [nombre]
-✂️ Servicio: [servicio]
-📅 Fecha: [YYYY-MM-DD]
-🕒 Hora: [HH:MM]
-¿Confirmas esta información? 😊
+4. Cuando tengas toda la información, muestra un resumen con: Nombre, Servicio, Fecha (YYYY-MM-DD), Hora (HH:MM), y pregunta si confirma.
 5. Cuando el cliente confirme, responde EXACTAMENTE con este JSON y nada más:
 RESERVA_CONFIRMADA:{{"name":"<nombre>","service":"<servicio>","datetime":"<YYYY-MM-DD HH:MM>"}}
 
@@ -222,7 +266,8 @@ REGLAS:
 - Si el cliente pregunta algo que no tiene que ver con el negocio o las reservas, redirígelo amablemente.
 - No inventes horarios ni servicios que no estén en la lista.
 - Si el cliente da una fecha u hora fuera del horario, díselo y pide otra.
-- El formato del datetime SIEMPRE debe ser: YYYY-MM-DD HH:MM
+- El formato de fecha SIEMPRE debe ser: YYYY-MM-DD
+- El formato de hora SIEMPRE debe ser: HH:MM
 - El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año.
 - Eres el asistente virtual oficial de {config["name"]}. Si alguien pregunta si este es el número correcto o quién eres, confirma que sí, eres el asistente de reservas de {config["name"]} y estás aquí para ayudar.
 - Las fechas en los mensajes ya vienen resueltas como YYYY-MM-DD. Úsalas directamente sin recalcular."""
@@ -366,6 +411,13 @@ async def webhook(request: Request):
         except Exception as e:
             print(f"OpenAI error: {e}")
             reply = "Hubo un error procesando tu mensaje. Intenta de nuevo."
+
+    # Enforce confirmation format — intercept GPT's summary and reformat it
+    if "RESERVA_CONFIRMADA:" not in reply:
+        confirmation_data = extract_confirmation_data(reply)
+        if confirmation_data:
+            reply = format_confirmation(confirmation_data)
+            print(f"✅ Confirmation reformatted for {from_number}")
 
     if "RESERVA_CONFIRMADA:" in reply:
         try:
