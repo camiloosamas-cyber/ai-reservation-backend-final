@@ -296,7 +296,7 @@ RESERVA_CONFIRMADA:{{"name":"<nombre>","service":"<servicio>","datetime":"<YYYY-
 REGLAS:
 - Responde siempre en español colombiano, tono amigable y casual.
 - Si el cliente pregunta algo que no tiene que ver con el negocio o las reservas, redirígelo amablemente.
-- NO valides ni rechaces horas — el sistema ya validó la hora antes de llegar aquí. Acepta siempre la hora que viene en el mensaje.
+- Horario válido: 9:00 AM a 7:00 PM (09:00 a 19:00). Las 6:00 PM = 18:00, que ES válido. Solo rechaza horas antes de las 9:00 AM o después de las 7:00 PM (19:00).
 - El formato de fecha SIEMPRE debe ser: YYYY-MM-DD
 - El formato de hora SIEMPRE debe ser: HH:MM
 - El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año.
@@ -388,20 +388,6 @@ async def webhook(request: Request):
     resolved_msg = resolve_dates(incoming_msg)
     if resolved_msg != incoming_msg:
         print(f"📅 Date resolved: '{incoming_msg}' → '{resolved_msg}'")
-
-    # Validate time in Python — if invalid, reply immediately without calling GPT
-    _, time_valid = extract_and_validate_time(incoming_msg, config)
-    if not time_valid:
-        open_h = config.get("hours_open", 9)
-        close_h = config.get("hours_close", 19)
-        reply = f"Ese horario no está disponible. Atendemos de {open_h}:00 a {close_h}:00. ¿A qué hora te gustaría?"
-        history.append({"role": "user", "content": incoming_msg})
-        history.append({"role": "assistant", "content": reply})
-        session["history"] = history[-20:]
-        save_session(from_number, session)
-        resp = MessagingResponse()
-        resp.message(reply)
-        return Response(content=str(resp), media_type="application/xml")
 
     cancel_keywords = ["cancelar", "cancela", "cancel", "quiero cancelar", "cancelar cita"]
     reschedule_keywords = ["cambiar", "reschedule", "reprogramar", "cambiar cita", "mover cita", "otra fecha", "otro horario"]
