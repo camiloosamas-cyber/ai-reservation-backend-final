@@ -133,17 +133,26 @@ def extract_and_validate_time(text: str, config: dict) -> tuple[str | None, bool
     close_h = config.get("hours_close", 19)
 
     # Match "6 pm", "6:30 pm", "18:00", "18", "a las 6", etc.
+    # Only match times with explicit am/pm OR preceded by "las"
     match = re.search(
-        r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.m\.|p\.m\.|am|pm)?\b",
+        r"(?:a\s+las\s+|las\s+)(\d{1,2})(?::(\d{2}))?\s*(a\.m\.|p\.m\.|am|pm)?|(\d{1,2})(?::(\d{2}))?\s*(a\.m\.|p\.m\.|am|pm)",
         text, re.IGNORECASE
     )
     if not match:
-        return None, True  # no time found, let GPT handle
+        return None, True
 
-    hour = int(match.group(1))
-    minute = int(match.group(2)) if match.group(2) else 0
-    period = match.group(3).lower().replace(".", "") if match.group(3) else None
+    if match.group(1):
+        hour = int(match.group(1))
+        minute = int(match.group(2)) if match.group(2) else 0
+        period = match.group(3).lower().replace(".", "") if match.group(3) else None
+    else:
+        hour = int(match.group(4))
+        minute = int(match.group(5)) if match.group(5) else 0
+        period = match.group(6).lower().replace(".", "") if match.group(6) else None
 
+    if period is None:
+        return None, True  # ambiguous, let GPT handle
+        
     # Convert to 24h
     if period in ("pm", "p.m."):
         if hour != 12:
