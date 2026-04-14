@@ -388,6 +388,8 @@ async def webhook(request: Request):
     resolved_msg = resolve_dates(incoming_msg)
     if resolved_msg != incoming_msg:
         print(f"📅 Date resolved: '{incoming_msg}' → '{resolved_msg}'")
+        # Add explicit note so GPT cannot miss the resolved date
+        resolved_msg = resolved_msg + f" [FECHA RESUELTA POR SISTEMA: usa exactamente esta fecha en el resumen]"
 
     cancel_keywords = ["cancelar", "cancela", "cancel", "quiero cancelar", "cancelar cita"]
     reschedule_keywords = ["cambiar", "reschedule", "reprogramar", "cambiar cita", "mover cita", "otra fecha", "otro horario"]
