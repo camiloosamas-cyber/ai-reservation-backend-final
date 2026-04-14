@@ -171,7 +171,7 @@ def extract_and_validate_time(text: str, config: dict) -> tuple[str | None, bool
 
 def extract_confirmation_data(text: str) -> dict | None:
     lower = text.lower()
-    if not any(phrase in lower for phrase in ["confirmas", "te parece bien", "está bien", "correcto"]):
+    if not any(phrase in lower for phrase in ["confirmas", "te parece bien", "está bien", "correcto", "confirma la cita"]):
         return None
     has_name = bool(re.search(r"nombre", lower))
     has_service = bool(re.search(r"servicio", lower))
@@ -288,8 +288,8 @@ Detalles de cada servicio:
 FLUJO DE RESERVA:
 1. Saluda al cliente mencionando el nombre del negocio.
 2. Cuando el cliente quiera reservar, pídele su nombre completo, el servicio, la fecha y la hora. Recoge la información como el cliente la vaya dando.
-3. Si el cliente responde con información incompleta, solo pregunta por lo que falta.
-4. Cuando tengas toda la información, muestra un resumen con: Nombre, Servicio, Fecha (YYYY-MM-DD), Hora (HH:MM), y pregunta si confirma.
+3. Si el cliente responde con información incompleta, solo pregunta por lo que falta. NUNCA hagas preguntas de confirmación como "¿es correcto el nombre?" o "¿es correcta la hora?" — si tienes toda la info, muestra el resumen directamente.
+4. Cuando tengas nombre, servicio, fecha Y hora, muestra INMEDIATAMENTE el resumen sin hacer más preguntas.
 5. Cuando el cliente confirme, responde EXACTAMENTE con este JSON y nada más:
 RESERVA_CONFIRMADA:{{"name":"<nombre>","service":"<servicio>","datetime":"<YYYY-MM-DD HH:MM>"}}
 
@@ -301,7 +301,7 @@ REGLAS:
 - El formato de hora SIEMPRE debe ser: HH:MM
 - El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año.
 - Eres el asistente virtual oficial de {config["name"]}. Si alguien pregunta si este es el número correcto o quién eres, confirma que sí.
-- Las fechas en los mensajes ya vienen resueltas como YYYY-MM-DD. Úsalas directamente sin recalcular."""
+- Las fechas en los mensajes ya vienen resueltas como YYYY-MM-DD. SIEMPRE usa exactamente esa fecha en el resumen y en el JSON. NUNCA calcules ni inventes fechas."""
 
 def ask_openai(config, history, new_message):
     system_prompt = build_system_prompt(config)
