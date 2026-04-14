@@ -121,6 +121,42 @@ def resolve_dates(text: str) -> str:
     return result
 
 # =====================================================================
+# TIME VALIDATOR — Python handles hour validation, not GPT
+# =====================================================================
+
+def extract_and_validate_time(text: str, config: dict) -> tuple[str | None, bool]:
+    """
+    Extract time from message and validate against business hours.
+    Returns (time_str_24h, is_valid)
+    """
+    open_h = config.get("hours_open", 9)
+    close_h = config.get("hours_close", 19)
+
+    # Match "6 pm", "6:30 pm", "18:00", "18", "a las 6", etc.
+    match = re.search(
+        r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.m\.|p\.m\.|am|pm)?\b",
+        text, re.IGNORECASE
+    )
+    if not match:
+        return None, True  # no time found, let GPT handle
+
+    hour = int(match.group(1))
+    minute = int(match.group(2)) if match.group(2) else 0
+    period = match.group(3).lower().replace(".", "") if match.group(3) else None
+
+    # Convert to 24h
+    if period in ("pm", "p.m."):
+        if hour != 12:
+            hour += 12
+    elif period in ("am", "a.m."):
+        if hour == 12:
+            hour = 0
+
+    is_valid = open_h <= hour < close_h
+    time_str = f"{hour:02d}:{minute:02d}"
+    return time_str, is_valid
+
+# =====================================================================
 # CONFIRMATION FORMAT ENFORCER
 # =====================================================================
 
@@ -128,7 +164,6 @@ def extract_confirmation_data(text: str) -> dict | None:
     lower = text.lower()
     if not any(phrase in lower for phrase in ["confirmas", "te parece bien", "está bien", "correcto"]):
         return None
-    has_date = bool(re.search(r"\d{4}-\d{2}-\d{2}", text))
     has_name = bool(re.search(r"nombre", lower))
     has_service = bool(re.search(r"servicio", lower))
     if not (has_name and has_service):
@@ -154,6 +189,7 @@ def extract_confirmation_data(text: str) -> dict | None:
 
 def format_confirmation(data: dict) -> str:
     return (
+        f"Aquí está el resumen de tu cita:\n\n"
         f"👤 Nombre: {data['name']}\n"
         f"✂️ Servicio: {data['service']}\n"
         f"📅 Fecha: {data['date']}\n"
@@ -217,17 +253,15 @@ def build_system_prompt(config):
     services_list = ", ".join(config["services"])
     prices_text = "\n".join([f"  - {s}: {p}" for s, p in config.get("prices", {}).items()])
     details_text = "\n".join([f"  - {s}: {d}" for s, d in config.get("service_details", {}).items()])
-    open_h = config.get("hours_open", 9)
-    close_h = config.get("hours_close", 19)
 
-    return f"""Eres un asistente de reservas para {config["name"]} en Medellín, Colombia.
+    return f"""Eres el asistente virtual oficial de {config["name"]} en Medellín, Colombia.
+
+Cuando saludes al cliente por primera vez, SIEMPRE menciona el nombre del negocio. Ejemplo: "¡Hola! Bienvenido a {config["name"]}. ¿En qué te puedo ayudar?"
 
 Tu trabajo es ayudar a los clientes a reservar una cita Y responder preguntas frecuentes sobre el negocio.
 
 Servicios disponibles: {services_list}
 Horario: {config["hours"]}
-Hora de apertura: {open_h}:00 (formato 24h)
-Hora de cierre: {close_h}:00 (formato 24h)
 Ubicación: {config.get("location", "Consultar con el negocio")}
 Parqueadero: {config.get("parking", "No disponible")}
 Duración de cada servicio: {config.get("service_duration", "Aproximadamente 30 minutos")}
@@ -243,8 +277,8 @@ Detalles de cada servicio:
 {details_text}
 
 FLUJO DE RESERVA:
-1. Saluda al cliente la primera vez.
-2. Cuando el cliente quiera reservar, pídele su nombre completo, el servicio, la fecha y la hora. Recoge la información como el cliente la vaya dando, sin exigir que la envíe en un solo mensaje.
+1. Saluda al cliente mencionando el nombre del negocio.
+2. Cuando el cliente quiera reservar, pídele su nombre completo, el servicio, la fecha y la hora. Recoge la información como el cliente la vaya dando.
 3. Si el cliente responde con información incompleta, solo pregunta por lo que falta.
 4. Cuando tengas toda la información, muestra un resumen con: Nombre, Servicio, Fecha (YYYY-MM-DD), Hora (HH:MM), y pregunta si confirma.
 5. Cuando el cliente confirme, responde EXACTAMENTE con este JSON y nada más:
@@ -253,12 +287,11 @@ RESERVA_CONFIRMADA:{{"name":"<nombre>","service":"<servicio>","datetime":"<YYYY-
 REGLAS:
 - Responde siempre en español colombiano, tono amigable y casual.
 - Si el cliente pregunta algo que no tiene que ver con el negocio o las reservas, redirígelo amablemente.
-- No inventes horarios ni servicios que no estén en la lista.
-- Horario válido: desde las {open_h}:00 hasta las {close_h}:00 (formato 24h). Una cita a las 18:00 (6pm) ES válida porque {close_h} > 18. Solo rechaza horas ESTRICTAMENTE menores que {open_h} o ESTRICTAMENTE mayores que {close_h}.
+- NO valides ni rechaces horas — el sistema ya validó la hora antes de llegar aquí. Acepta siempre la hora que viene en el mensaje.
 - El formato de fecha SIEMPRE debe ser: YYYY-MM-DD
 - El formato de hora SIEMPRE debe ser: HH:MM
 - El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año.
-- Eres el asistente virtual oficial de {config["name"]}. Si alguien pregunta si este es el número correcto o quién eres, confirma que sí, eres el asistente de reservas de {config["name"]} y estás aquí para ayudar.
+- Eres el asistente virtual oficial de {config["name"]}. Si alguien pregunta si este es el número correcto o quién eres, confirma que sí.
 - Las fechas en los mensajes ya vienen resueltas como YYYY-MM-DD. Úsalas directamente sin recalcular."""
 
 def ask_openai(config, history, new_message):
@@ -342,9 +375,24 @@ async def webhook(request: Request):
     session = get_session(from_number)
     history = session.get("history", [])
 
+    # Resolve relative dates
     resolved_msg = resolve_dates(incoming_msg)
     if resolved_msg != incoming_msg:
         print(f"📅 Date resolved: '{incoming_msg}' → '{resolved_msg}'")
+
+    # Validate time in Python — if invalid, reply immediately without calling GPT
+    _, time_valid = extract_and_validate_time(incoming_msg, config)
+    if not time_valid:
+        open_h = config.get("hours_open", 9)
+        close_h = config.get("hours_close", 19)
+        reply = f"Ese horario no está disponible. Atendemos de {open_h}:00 a {close_h}:00. ¿A qué hora te gustaría?"
+        history.append({"role": "user", "content": incoming_msg})
+        history.append({"role": "assistant", "content": reply})
+        session["history"] = history[-20:]
+        save_session(from_number, session)
+        resp = MessagingResponse()
+        resp.message(reply)
+        return Response(content=str(resp), media_type="application/xml")
 
     cancel_keywords = ["cancelar", "cancela", "cancel", "quiero cancelar", "cancelar cita"]
     reschedule_keywords = ["cambiar", "reschedule", "reprogramar", "cambiar cita", "mover cita", "otra fecha", "otro horario"]
@@ -715,7 +763,6 @@ async def dashboard(request: Request, business_id: int):
 
     </div>
 
-    <!-- Edit Modal -->
     <div class="modal-overlay" id="editModal">
         <div class="modal">
             <h2>✏️ Editar Reserva</h2>
@@ -739,7 +786,6 @@ async def dashboard(request: Request, business_id: int):
         </div>
     </div>
 
-    <!-- Presencial Modal -->
     <div class="modal-overlay" id="walkinModal">
         <div class="modal">
             <h2>🚶 Reserva Presencial</h2>
