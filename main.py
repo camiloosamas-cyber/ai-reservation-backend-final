@@ -413,12 +413,12 @@ async def webhook(request: Request):
             reply = "Hubo un error procesando tu mensaje. Intenta de nuevo."
 
     # Enforce confirmation format — intercept GPT's summary and reformat it
+    original_reply = reply
     if "RESERVA_CONFIRMADA:" not in reply:
         confirmation_data = extract_confirmation_data(reply)
         if confirmation_data:
             reply = format_confirmation(confirmation_data)
             print(f"✅ Confirmation reformatted for {from_number}")
-
     if "RESERVA_CONFIRMADA:" in reply:
         try:
             json_str = reply.split("RESERVA_CONFIRMADA:")[1].strip()
@@ -440,7 +440,7 @@ async def webhook(request: Request):
             reply = "Hubo un problema al confirmar tu reserva. Intenta de nuevo."
 
     history.append({"role": "user", "content": incoming_msg})
-    history.append({"role": "assistant", "content": reply})
+    history.append({"role": "assistant", "content": original_reply})
     session["history"] = history[-20:]
     save_session(from_number, session)
 
