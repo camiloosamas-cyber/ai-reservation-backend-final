@@ -362,6 +362,31 @@ def reschedule_reservation(phone: str, business_id: int, new_datetime: str) -> d
         print(f"Reschedule error: {e}")
         return {"success": False}
 
+def transcribe_audio(media_url: str) -> str | None:
+    """Download audio from Twilio and transcribe with OpenAI Whisper."""
+    try:
+        import httpx
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        response = httpx.get(media_url, auth=(account_sid, auth_token), timeout=30)
+        if response.status_code != 200:
+            print(f"Failed to download audio: {response.status_code}")
+            return None
+        audio_bytes = response.content
+        import io
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = "audio.ogg"
+        transcript = openai_client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            language="es"
+        )
+        print(f"🎤 Transcribed: {transcript.text}")
+        return transcript.text
+    except Exception as e:
+        print(f"Transcription error: {e}")
+        return None
+
 # =====================================================================
 # WEBHOOK
 # =====================================================================
@@ -370,6 +395,18 @@ def reschedule_reservation(phone: str, business_id: int, new_datetime: str) -> d
 async def webhook(request: Request):
     form = await request.form()
     incoming_msg = form.get("Body", "").strip()
+    media_url = form.get("MediaUrl0", "")
+    media_type = form.get("MediaContentType0", "")
+
+    # Handle voice messages
+    if media_url and "audio" in media_type:
+        transcribed = transcribe_audio(media_url)
+        if transcribed:
+            incoming_msg = transcribed
+        else:
+            resp = MessagingResponse()
+            resp.message("No pude escuchar tu mensaje de voz. ¿Puedes escribirlo?")
+            return Response(content=str(resp), media_type="application/xml")
     from_number = form.get("From", "").replace("whatsapp:", "")
     to_number = form.get("To", "").replace("whatsapp:", "")
 
