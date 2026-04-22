@@ -368,7 +368,7 @@ def transcribe_audio(media_url: str) -> str | None:
         import httpx
         account_sid = os.getenv("TWILIO_ACCOUNT_SID")
         auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-        response = httpx.get(media_url, auth=(account_sid, auth_token), timeout=30)
+        response = httpx.get(media_url, auth=(account_sid, auth_token), timeout=30, follow_redirects=True)
         if response.status_code != 200:
             print(f"Failed to download audio: {response.status_code}")
             return None
