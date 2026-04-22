@@ -9,4 +9,5 @@ dateparser
 python-dotenv
 requests
 python-multipart
+httpx
 # force rebuild
