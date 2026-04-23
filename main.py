@@ -493,7 +493,9 @@ async def webhook(request: Request):
     if "RESERVA_CONFIRMADA:" in reply:
         try:
             json_str = reply.split("RESERVA_CONFIRMADA:")[1].strip()
-            extracted = json.loads(json_str)
+            # Extract only the JSON object, ignore anything after it
+            json_end = json_str.index("}") + 1
+            extracted = json.loads(json_str[:json_end])
             if not is_slot_available(extracted.get("datetime"), config["business_id"]):
                 reply = "Lo siento, ese horario ya está lleno 😅 ¿Puedes elegir otra hora?"
             else:
