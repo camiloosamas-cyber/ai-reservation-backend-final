@@ -25,6 +25,7 @@ BUSINESS_CONFIGS = {
         "hours": "Lunes a Sábado de 9:00 a.m. a 7:00 p.m.",
         "hours_open": 9,
         "hours_close": 19,
+        "slot_duration": 30,
         "timezone": "America/Bogota",
         "location": "Calle 10 #43-20, El Poblado, Medellín",
         "parking": "Sí hay parqueadero disponible cerca del local.",
@@ -302,6 +303,7 @@ REGLAS:
 - El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año.
 - Eres el asistente virtual oficial de {config["name"]}. Si alguien pregunta si este es el número correcto o quién eres, confirma que sí.
 - Las fechas en los mensajes ya vienen resueltas como YYYY-MM-DD. SIEMPRE usa exactamente esa fecha en el resumen y en el JSON. NUNCA calcules ni inventes fechas."""
+- Si el cliente pregunta por disponibilidad, horarios disponibles, o cuándo pueden atenderlo, responde SOLO con: CONSULTA_DISPONIBILIDAD
 
 def ask_openai(config, history, new_message):
     system_prompt = build_system_prompt(config)
@@ -361,6 +363,40 @@ def reschedule_reservation(phone: str, business_id: int, new_datetime: str) -> d
     except Exception as e:
         print(f"Reschedule error: {e}")
         return {"success": False}
+
+def get_available_slots(business_id: int, config: dict, days_ahead: int = 7) -> list:
+    """Returns available time slots for the next X days."""
+    from datetime import date
+    today = datetime.now(LOCAL_TZ).date()
+    open_h = config.get("hours_open", 9)
+    close_h = config.get("hours_close", 19)
+    slot_duration = config.get("slot_duration", 30)
+    available = []
+
+    for i in range(1, days_ahead + 1):
+        check_date = today + timedelta(days=i)
+        # Skip Sunday (weekday 6)
+        if check_date.weekday() == 6:
+            continue
+        slots_for_day = []
+        current_hour = open_h
+        current_min = 0
+        while True:
+            slot_end_min = current_min + slot_duration
+            end_hour = current_hour + slot_end_min // 60
+            if end_hour > close_h:
+                break
+            dt_str = f"{check_date.strftime('%Y-%m-%d')} {current_hour:02d}:{current_min:02d}"
+            if is_slot_available(dt_str, business_id):
+                slots_for_day.append(f"{current_hour:02d}:{current_min:02d}")
+            current_min += slot_duration
+            if current_min >= 60:
+                current_hour += 1
+                current_min = current_min % 60
+        if slots_for_day:
+            available.append({"date": check_date, "slots": slots_for_day})
+
+    return available
 
 def transcribe_audio(media_url: str) -> str | None:
     """Download audio from Twilio and transcribe with OpenAI Whisper."""
@@ -481,6 +517,22 @@ async def webhook(request: Request):
         except Exception as e:
             print(f"OpenAI error: {e}")
             reply = "Hubo un error procesando tu mensaje. Intenta de nuevo."
+
+    # Handle availability request
+    if "CONSULTA_DISPONIBILIDAD" in reply:
+        slots = get_available_slots(config["business_id"], config)
+        if not slots:
+            reply = "Lo siento, no hay disponibilidad en los próximos 7 días. Contáctanos directamente para más información."
+        else:
+            lines = ["Tenemos disponibilidad en los siguientes horarios:\n"]
+            for day in slots[:3]:  # Show next 3 days with availability
+                date_obj = day["date"]
+                dia = DIAS_ES[date_obj.weekday()]
+                mes = MESES_ES[date_obj.month - 1]
+                slot_list = ", ".join(day["slots"][:5])  # Max 5 slots per day
+                lines.append(f"📅 {dia} {date_obj.day} {mes}: {slot_list}")
+            lines.append("\n¿Cuál te queda mejor? 😊")
+            reply = "\n".join(lines)
 
     # Enforce confirmation format
     original_reply = reply
