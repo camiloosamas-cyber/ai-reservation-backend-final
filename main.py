@@ -466,8 +466,31 @@ async def webhook(request: Request):
 
     cancel_keywords = ["cancelar", "cancela", "cancel", "quiero cancelar", "cancelar cita"]
     reschedule_keywords = ["cambiar", "reschedule", "reprogramar", "cambiar cita", "mover cita", "otra fecha", "otro horario"]
+    availability_keywords = ["disponibilidad", "cuando tienen", "cuándo tienen", "qué días", "que dias", "horarios disponibles", "cuando puedo", "cuándo puedo"]
 
-    if any(kw in incoming_msg.lower() for kw in cancel_keywords):
+    if any(kw in incoming_msg.lower() for kw in availability_keywords):
+        slots = get_available_slots(config["business_id"], config)
+        if not slots:
+            reply = "Lo siento, no hay disponibilidad en los próximos 7 días. Contáctanos directamente."
+        else:
+            lines = ["Tenemos disponibilidad en los siguientes horarios:\n"]
+            for day in slots[:3]:
+                date_obj = day["date"]
+                dia = DIAS_ES[date_obj.weekday()]
+                mes = MESES_ES[date_obj.month - 1]
+                def fmt_slot(s):
+                    h, m = map(int, s.split(":"))
+                    period = "AM" if h < 12 else "PM"
+                    h12 = h if h <= 12 else h - 12
+                    if h12 == 0: h12 = 12
+                    return f"{h12}:{'00' if m == 0 else m:02d} {period}"
+                preferred = [s for s in day["slots"] if s in ["09:00","11:00","13:00","15:00","17:00"]]
+                slot_list = " · ".join(fmt_slot(s) for s in (preferred if preferred else day["slots"][:5]))
+                lines.append(f"{dia} {date_obj.day} {mes} → {slot_list}")
+            lines.append("\n¿Cuál te queda mejor? 😊")
+            reply = "\n".join(lines)
+
+    elif any(kw in incoming_msg.lower() for kw in cancel_keywords):
         result = cancel_reservation(from_number, config["business_id"])
         if result["success"]:
             booking = result["booking"]
@@ -517,24 +540,7 @@ async def webhook(request: Request):
         except Exception as e:
             print(f"OpenAI error: {e}")
             reply = "Hubo un error procesando tu mensaje. Intenta de nuevo."
-
-    # Handle availability request
-    if "CONSULTA_DISPONIBILIDAD" in reply:
-        slots = get_available_slots(config["business_id"], config)
-        if not slots:
-            reply = "Lo siento, no hay disponibilidad en los próximos 7 días. Contáctanos directamente para más información."
-        else:
-            lines = ["Tenemos disponibilidad en los siguientes horarios:\n"]
-            for day in slots[:3]:  # Show next 3 days with availability
-                date_obj = day["date"]
-                dia = DIAS_ES[date_obj.weekday()]
-                mes = MESES_ES[date_obj.month - 1]
-                preferred = [s for s in day["slots"] if s in ["09:00","11:00","13:00","15:00","17:00"]]
-                slot_list = ", ".join(preferred if preferred else day["slots"][:5])
-                lines.append(f"📅 {dia} {date_obj.day} {mes}: {slot_list}")
-            lines.append("\n¿Cuál te queda mejor? 😊")
-            reply = "\n".join(lines)
-
+            
     # Enforce confirmation format
     original_reply = reply
     if "RESERVA_CONFIRMADA:" not in reply:
