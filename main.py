@@ -479,7 +479,7 @@ async def webhook(request: Request):
                 period = "AM" if h < 12 else "PM"
                 h12 = h if h <= 12 else h - 12
                 if h12 == 0: h12 = 12
-                return f"{h12}:{'00' if m == 0 else m:02d} {period}"
+                return f"{h12}:{str(m).zfill(2)} {period}"
             for day in slots[:3]:
                 date_obj = day["date"]
                 dia = DIAS_ES[date_obj.weekday()]
