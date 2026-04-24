@@ -529,7 +529,8 @@ async def webhook(request: Request):
                 date_obj = day["date"]
                 dia = DIAS_ES[date_obj.weekday()]
                 mes = MESES_ES[date_obj.month - 1]
-                slot_list = ", ".join(day["slots"][:5])  # Max 5 slots per day
+                preferred = [s for s in day["slots"] if s in ["09:00","11:00","13:00","15:00","17:00"]]
+                slot_list = ", ".join(preferred if preferred else day["slots"][:5])
                 lines.append(f"📅 {dia} {date_obj.day} {mes}: {slot_list}")
             lines.append("\n¿Cuál te queda mejor? 😊")
             reply = "\n".join(lines)
