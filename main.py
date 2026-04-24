@@ -302,8 +302,8 @@ REGLAS:
 - El formato de hora SIEMPRE debe ser: HH:MM
 - El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año.
 - Eres el asistente virtual oficial de {config["name"]}. Si alguien pregunta si este es el número correcto o quién eres, confirma que sí.
-- Las fechas en los mensajes ya vienen resueltas como YYYY-MM-DD. SIEMPRE usa exactamente esa fecha en el resumen y en el JSON. NUNCA calcules ni inventes fechas."""
-- Si el cliente pregunta por disponibilidad, horarios disponibles, o cuándo pueden atenderlo, responde SOLO con: CONSULTA_DISPONIBILIDAD
+- Las fechas en los mensajes ya vienen resueltas como YYYY-MM-DD. SIEMPRE usa exactamente esa fecha en el resumen y en el JSON. NUNCA calcules ni inventes fechas.
+- Si el cliente pregunta por disponibilidad, horarios disponibles, o cuándo pueden atenderlo, responde SOLO con: CONSULTA_DISPONIBILIDAD"""
 
 def ask_openai(config, history, new_message):
     system_prompt = build_system_prompt(config)
