@@ -474,16 +474,16 @@ async def webhook(request: Request):
             reply = "Lo siento, no hay disponibilidad en los próximos 7 días. Contáctanos directamente."
         else:
             lines = ["Tenemos disponibilidad en los siguientes horarios:\n"]
+            def fmt_slot(s):
+                h, m = map(int, s.split(":"))
+                period = "AM" if h < 12 else "PM"
+                h12 = h if h <= 12 else h - 12
+                if h12 == 0: h12 = 12
+                return f"{h12}:{'00' if m == 0 else m:02d} {period}"
             for day in slots[:3]:
                 date_obj = day["date"]
                 dia = DIAS_ES[date_obj.weekday()]
                 mes = MESES_ES[date_obj.month - 1]
-                def fmt_slot(s):
-                    h, m = map(int, s.split(":"))
-                    period = "AM" if h < 12 else "PM"
-                    h12 = h if h <= 12 else h - 12
-                    if h12 == 0: h12 = 12
-                    return f"{h12}:{'00' if m == 0 else m:02d} {period}"
                 preferred = [s for s in day["slots"] if s in ["09:00","11:00","13:00","15:00","17:00"]]
                 slot_list = " · ".join(fmt_slot(s) for s in (preferred if preferred else day["slots"][:5]))
                 lines.append(f"{dia} {date_obj.day} {mes} → {slot_list}")
