@@ -34,11 +34,18 @@ BUSINESS_CONFIGS = {
         "reviews": "Puedes ver nuestras reseñas en Google buscando 'Barbería El Paisa Medellín'.",
         "licensed": "Sí, todos nuestros barberos están certificados y capacitados.",
         "payment_methods": "Efectivo, Nequi, Daviplata y transferencia bancaria.",
+        "avg_price": 35000,
         "prices": {
             "Corte": "$35.000 COP",
             "Corte + Barba": "$55.000 COP",
             "Afeitado": "$30.000 COP",
             "Corte de Niño": "$25.000 COP"
+        },
+        "service_prices": {
+            "Corte": 35000,
+            "Corte + Barba": 55000,
+            "Afeitado": 30000,
+            "Corte de Niño": 25000
         },
         "service_details": {
             "Corte": "Incluye lavado, corte personalizado y peinado final.",
@@ -122,19 +129,13 @@ def resolve_dates(text: str) -> str:
     return result
 
 # =====================================================================
-# TIME VALIDATOR — Python handles hour validation, not GPT
+# TIME VALIDATOR
 # =====================================================================
 
 def extract_and_validate_time(text: str, config: dict) -> tuple[str | None, bool]:
-    """
-    Extract time from message and validate against business hours.
-    Returns (time_str_24h, is_valid)
-    """
     open_h = config.get("hours_open", 9)
     close_h = config.get("hours_close", 19)
 
-    # Match "6 pm", "6:30 pm", "18:00", "18", "a las 6", etc.
-    # Only match times with explicit am/pm OR preceded by "las"
     match = re.search(
         r"(?:a\s+las\s+|las\s+)(\d{1,2})(?::(\d{2}))?\s*(a\.m\.|p\.m\.|am|pm)?|(\d{1,2})(?::(\d{2}))?\s*(a\.m\.|p\.m\.|am|pm)",
         text, re.IGNORECASE
@@ -152,13 +153,12 @@ def extract_and_validate_time(text: str, config: dict) -> tuple[str | None, bool
         period = match.group(6).lower().replace(".", "") if match.group(6) else None
 
     if period is None:
-        return None, True  # ambiguous, let GPT handle
-        
-    # Convert to 24h
-    if period in ("pm", "p.m."):
+        return None, True
+
+    if period in ("pm",):
         if hour != 12:
             hour += 12
-    elif period in ("am", "a.m."):
+    elif period in ("am",):
         if hour == 12:
             hour = 0
 
@@ -289,7 +289,7 @@ Detalles de cada servicio:
 FLUJO DE RESERVA:
 1. Saluda al cliente mencionando el nombre del negocio.
 2. Cuando el cliente quiera reservar, pídele su nombre completo, el servicio, la fecha y la hora. Recoge la información como el cliente la vaya dando.
-3. Si el cliente responde con información incompleta, solo pregunta por lo que falta. NUNCA hagas preguntas de confirmación como "¿es correcto el nombre?" o "¿es correcta la hora?" — si tienes toda la info, muestra el resumen directamente.
+3. Si el cliente responde con información incompleta, solo pregunta por lo que falta. NUNCA hagas preguntas de confirmación como "¿es correcto el nombre?" — si tienes toda la info, muestra el resumen directamente.
 4. Cuando tengas nombre, servicio, fecha Y hora, muestra INMEDIATAMENTE el resumen sin hacer más preguntas.
 5. Cuando el cliente confirme, responde EXACTAMENTE con este JSON y nada más:
 RESERVA_CONFIRMADA:{{"name":"<nombre>","service":"<servicio>","datetime":"<YYYY-MM-DD HH:MM>"}}
@@ -365,8 +365,6 @@ def reschedule_reservation(phone: str, business_id: int, new_datetime: str) -> d
         return {"success": False}
 
 def get_available_slots(business_id: int, config: dict, days_ahead: int = 7) -> list:
-    """Returns available time slots for the next X days."""
-    from datetime import date
     today = datetime.now(LOCAL_TZ).date()
     open_h = config.get("hours_open", 9)
     close_h = config.get("hours_close", 19)
@@ -375,7 +373,6 @@ def get_available_slots(business_id: int, config: dict, days_ahead: int = 7) -> 
 
     for i in range(1, days_ahead + 1):
         check_date = today + timedelta(days=i)
-        # Skip Sunday (weekday 6)
         if check_date.weekday() == 6:
             continue
         slots_for_day = []
@@ -399,7 +396,6 @@ def get_available_slots(business_id: int, config: dict, days_ahead: int = 7) -> 
     return available
 
 def transcribe_audio(media_url: str) -> str | None:
-    """Download audio from Twilio and transcribe with OpenAI Whisper."""
     try:
         import httpx
         account_sid = os.getenv("TWILIO_ACCOUNT_SID")
@@ -434,7 +430,6 @@ async def webhook(request: Request):
     media_url = form.get("MediaUrl0", "")
     media_type = form.get("MediaContentType0", "")
 
-    # Handle voice messages
     if media_url and "audio" in media_type:
         transcribed = transcribe_audio(media_url)
         if transcribed:
@@ -443,6 +438,7 @@ async def webhook(request: Request):
             resp = MessagingResponse()
             resp.message("No pude escuchar tu mensaje de voz. ¿Puedes escribirlo?")
             return Response(content=str(resp), media_type="application/xml")
+
     from_number = form.get("From", "").replace("whatsapp:", "")
     to_number = form.get("To", "").replace("whatsapp:", "")
 
@@ -457,16 +453,21 @@ async def webhook(request: Request):
     session = get_session(from_number)
     history = session.get("history", [])
 
-    # Resolve relative dates
     resolved_msg = resolve_dates(incoming_msg)
     if resolved_msg != incoming_msg:
         print(f"📅 Date resolved: '{incoming_msg}' → '{resolved_msg}'")
-        # Add explicit note so GPT cannot miss the resolved date
         resolved_msg = resolved_msg + f" [FECHA RESUELTA POR SISTEMA: usa exactamente esta fecha en el resumen]"
 
     cancel_keywords = ["cancelar", "cancela", "cancel", "quiero cancelar", "cancelar cita"]
     reschedule_keywords = ["cambiar", "reschedule", "reprogramar", "cambiar cita", "mover cita", "otra fecha", "otro horario"]
     availability_keywords = ["disponibilidad", "cuando tienen", "cuándo tienen", "qué días", "que dias", "horarios disponibles", "cuando puedo", "cuándo puedo"]
+
+    def fmt_slot(s):
+        h, m = map(int, s.split(":"))
+        period = "AM" if h < 12 else "PM"
+        h12 = h if h <= 12 else h - 12
+        if h12 == 0: h12 = 12
+        return f"{h12}:{str(m).zfill(2)} {period}"
 
     if any(kw in incoming_msg.lower() for kw in availability_keywords):
         slots = get_available_slots(config["business_id"], config)
@@ -474,18 +475,12 @@ async def webhook(request: Request):
             reply = "Lo siento, no hay disponibilidad en los próximos 7 días. Contáctanos directamente."
         else:
             lines = ["Tenemos disponibilidad en los siguientes horarios:\n"]
-            def fmt_slot(s):
-                h, m = map(int, s.split(":"))
-                period = "AM" if h < 12 else "PM"
-                h12 = h if h <= 12 else h - 12
-                if h12 == 0: h12 = 12
-                return f"{h12}:{str(m).zfill(2)} {period}"
             for day in slots[:3]:
                 date_obj = day["date"]
                 dia = DIAS_ES[date_obj.weekday()]
                 mes = MESES_ES[date_obj.month - 1]
-                preferred = [s for s in day["slots"] if s in ["09:00","11:00","13:00","15:00","17:00"]]
-                slot_list = " · ".join(fmt_slot(s) for s in (preferred if preferred else day["slots"][:5]))
+                preferred = [s for s in day["slots"] if s in ["09:00", "10:00", "11:00", "13:00", "14:00", "15:00", "16:00", "17:00"]]
+                slot_list = " · ".join(fmt_slot(s) for s in (preferred if preferred else day["slots"][:6]))
                 lines.append(f"{dia} {date_obj.day} {mes} → {slot_list}")
             lines.append("\n¿Cuál te queda mejor? 😊")
             reply = "\n".join(lines)
@@ -540,8 +535,7 @@ async def webhook(request: Request):
         except Exception as e:
             print(f"OpenAI error: {e}")
             reply = "Hubo un error procesando tu mensaje. Intenta de nuevo."
-            
-    # Enforce confirmation format
+
     original_reply = reply
     if "RESERVA_CONFIRMADA:" not in reply:
         confirmation_data = extract_confirmation_data(reply)
@@ -552,7 +546,6 @@ async def webhook(request: Request):
     if "RESERVA_CONFIRMADA:" in reply:
         try:
             json_str = reply.split("RESERVA_CONFIRMADA:")[1].strip()
-            # Extract only the JSON object, ignore anything after it
             json_end = json_str.index("}") + 1
             extracted = json.loads(json_str[:json_end])
             if not is_slot_available(extracted.get("datetime"), config["business_id"]):
@@ -651,18 +644,26 @@ async def api_walkin_booking(request: Request):
 # =====================================================================
 
 DIAS_ES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+DIAS_SHORT = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 MESES_ES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 
-def format_datetime_display(dt_str: str) -> str:
+def format_datetime_display(dt_str: str) -> tuple[str, str]:
     try:
         dt_str_clean = dt_str[:16].replace("T", " ")
         dt = datetime.strptime(dt_str_clean, "%Y-%m-%d %H:%M")
-        dia = DIAS_ES[dt.weekday()]
+        dia = DIAS_SHORT[dt.weekday()]
         mes = MESES_ES[dt.month - 1]
         hora = dt.strftime("%I:%M %p").lstrip("0")
-        return f"{dia} {dt.day} {mes} · {hora}"
+        date_part = f"{dia} {dt.day} {mes}"
+        return date_part, hora
     except:
-        return dt_str[:16].replace("T", " ")
+        raw = dt_str[:16].replace("T", " ")
+        return raw, ""
+
+def format_price(service: str, config: dict) -> str:
+    prices = config.get("service_prices", {})
+    price = prices.get(service, config.get("avg_price", 35000))
+    return f"${price:,}".replace(",", ".")
 
 @app.get("/dashboard/{business_id}", response_class=HTMLResponse)
 async def dashboard(request: Request, business_id: int):
@@ -676,340 +677,502 @@ async def dashboard(request: Request, business_id: int):
 
     business_name = "Negocio"
     business_services = []
+    business_config = {}
     for config in BUSINESS_CONFIGS.values():
         if config["business_id"] == business_id:
             business_name = config["name"]
             business_services = config.get("services", [])
+            business_config = config
             break
 
     today_str = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+    now = datetime.now(LOCAL_TZ)
+
     today_reservations = [r for r in reservations if r.get("datetime", "")[:10] == today_str]
     future_reservations = [r for r in reservations if r.get("datetime", "")[:10] > today_str]
     past_reservations = [r for r in reservations if r.get("datetime", "")[:10] < today_str]
 
-    def build_rows(res_list):
+    # Stats
+    current_month = now.strftime("%Y-%m")
+    month_reservations = [r for r in reservations if r.get("datetime", "")[:7] == current_month and r.get("status") == "confirmed"]
+    month_completed = [r for r in reservations if r.get("datetime", "")[:7] == current_month and r.get("status") == "completed"]
+    month_all = month_reservations + month_completed
+    month_count = len(month_all)
+
+    service_prices = business_config.get("service_prices", {})
+    avg_price = business_config.get("avg_price", 35000)
+    month_revenue = sum(service_prices.get(r.get("service", ""), avg_price) for r in month_all)
+
+    month_cancelled = len([r for r in reservations if r.get("datetime", "")[:7] == current_month and r.get("status") == "cancelled"])
+    today_count = len(today_reservations)
+    upcoming_count = len(future_reservations)
+
+    def fmt_currency(amount):
+        if amount >= 1000000:
+            return f"${amount/1000000:.1f}M"
+        elif amount >= 1000:
+            return f"${amount/1000:.0f}K"
+        return f"${amount:,}"
+
+    services_options = "".join([f'<option value="{s}">{s}</option>' for s in business_services])
+    hours_options = "".join([f'<option value="{h:02d}:00">{h:02d}:00</option>' for h in range(9, 20)])
+
+    def build_today_cards(res_list):
+        if not res_list:
+            return '<div class="empty-state">Sin citas programadas para hoy</div>'
+        cards = ""
+        for r in res_list:
+            rid = r.get("reservation_id")
+            status = r.get("status", "-")
+            dt = r.get("datetime", "")
+            date_part, time_part = format_datetime_display(dt)
+            is_presencial = r.get("contact_phone") == "presencial"
+            phone_display = "Presencial" if is_presencial else r.get("contact_phone", "-")
+            name_safe = r.get("client_name", "").replace("'", "\\'")
+            service_safe = r.get("service", "").replace("'", "\\'")
+            dt_edit = dt[:16].replace("T", " ") if dt else ""
+            price = format_price(r.get("service", ""), business_config)
+
+            if status == "confirmed":
+                status_html = '<span class="badge badge-green">Confirmada</span>'
+                actions = f'<button class="btn-done" onclick="completeReservation({rid})">✔ Listo</button><button class="btn-dots-sm" onclick="toggleDropdown(this)">⋯<div class="drop-menu"><div class="drop-item" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️ Editar</div><div class="drop-item danger" onclick="cancelReservation({rid})">✖ Cancelar</div></div></button>'
+            elif status == "completed":
+                status_html = '<span class="badge badge-blue">Completada</span>'
+                actions = f'<button class="btn-edit-sm" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️</button>'
+            else:
+                status_html = '<span class="badge badge-red">Cancelada</span>'
+                actions = f'<button class="btn-edit-sm" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️</button>'
+
+            cards += f"""
+            <div class="appt-card">
+                <div class="appt-time">{time_part}</div>
+                <div class="appt-sep"></div>
+                <div class="appt-info">
+                    <div class="appt-name">{r.get("client_name", "-")}</div>
+                    <div class="appt-meta">{r.get("service", "-")} · {price} · {phone_display}</div>
+                </div>
+                {status_html}
+                <div class="appt-actions">{actions}</div>
+            </div>"""
+        return cards
+
+    def build_table_rows(res_list):
+        if not res_list:
+            return '<tr><td colspan="6" class="empty-state">Sin citas</td></tr>'
         rows = ""
         for r in res_list:
             rid = r.get("reservation_id")
             status = r.get("status", "-")
-            if status == "confirmed":
-                status_class = "status-confirmed"
-                status_label = "Confirmada"
-            elif status == "completed":
-                status_class = "status-completed"
-                status_label = "Completada"
-            else:
-                status_class = "status-cancelled"
-                status_label = "Cancelada"
             dt = r.get("datetime", "")
-            dt_display = format_datetime_display(dt) if dt else "-"
+            date_part, time_part = format_datetime_display(dt)
             is_presencial = r.get("contact_phone") == "presencial"
             phone_display = "🚶 Presencial" if is_presencial else r.get("contact_phone", "-")
             name_safe = r.get("client_name", "").replace("'", "\\'")
             service_safe = r.get("service", "").replace("'", "\\'")
             dt_edit = dt[:16].replace("T", " ") if dt else ""
 
-            listo_btn = f'<button class="btn-complete" onclick="completeReservation({rid})">✔ Listo</button>' if status == "confirmed" else "—"
-
-            dropdown = ""
             if status == "confirmed":
-                dropdown = f"""
-                <div class="dropdown">
-                    <button class="btn-dots" onclick="toggleDropdown(this)">⋯</button>
-                    <div class="dropdown-menu">
-                        <div class="dropdown-item" onclick="openEdit({rid}, '{name_safe}', '{service_safe}', '{dt_edit}', '{status}'); closeAllDropdowns()">✏️ Editar</div>
-                        <div class="dropdown-item danger" onclick="cancelReservation({rid}); closeAllDropdowns()">✖ Cancelar</div>
-                    </div>
-                </div>"""
+                status_html = '<span class="badge badge-green">Confirmada</span>'
+                actions = f'<button class="btn-done" onclick="completeReservation({rid})">✔ Listo</button><button class="btn-dots-sm" onclick="toggleDropdown(this)">⋯<div class="drop-menu"><div class="drop-item" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️ Editar</div><div class="drop-item danger" onclick="cancelReservation({rid})">✖ Cancelar</div></div></button>'
+            elif status == "completed":
+                status_html = '<span class="badge badge-blue">Completada</span>'
+                actions = f'<button class="btn-edit-sm" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️</button>'
+            else:
+                status_html = '<span class="badge badge-red">Cancelada</span>'
+                actions = f'<button class="btn-edit-sm" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️</button>'
 
             rows += f"""
             <tr>
-                <td>{dt_display}</td>
-                <td>{r.get("client_name", "-")}</td>
+                <td><span class="td-date">{date_part}</span><span class="td-time">{time_part}</span></td>
+                <td class="td-name">{r.get("client_name", "-")}</td>
                 <td>{r.get("service", "-")}</td>
-                <td>{phone_display}</td>
-                <td class="actions">
-                    {listo_btn}
-                    {dropdown}
-                </td>
-                <td><span class="status {status_class}">{status_label}</span></td>
+                <td class="td-phone">{phone_display}</td>
+                <td>{status_html}</td>
+                <td class="td-actions">{actions}</td>
             </tr>"""
         return rows
-
-    services_options = "".join([f'<option value="{s}">{s}</option>' for s in business_services])
-    hours_options = "".join([f'<option value="{h:02d}:00">{h:02d}:00</option>' for h in range(9, 20)])
 
     html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{business_name} — Reservas</title>
+    <title>{business_name} — Panel</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: 'Segoe UI', sans-serif; background: #f4f4f4; color: #222; }}
-        .header {{ background: #1a1a1a; color: white; padding: 20px 32px; display: flex; align-items: center; justify-content: space-between; }}
-        .header h1 {{ font-size: 1.4rem; font-weight: 600; }}
-        .header-btns {{ display: flex; gap: 10px; }}
-        .tabs {{ background: white; border-bottom: 1px solid #e0e0e0; padding: 0 32px; display: flex; }}
-        .tab {{ padding: 14px 24px; cursor: pointer; font-size: 0.9rem; color: #666; border-bottom: 3px solid transparent; font-weight: 500; transition: all 0.2s; user-select: none; }}
-        .tab:hover {{ color: #1a1a1a; }}
-        .tab.active {{ color: #1a1a1a; border-bottom-color: #1a1a1a; }}
-        .tab-content {{ display: none; }}
-        .tab-content.active {{ display: block; }}
-        .container {{ max-width: 1100px; margin: 32px auto; padding: 0 16px; }}
-        .card {{ background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 24px; }}
-        .section-title {{ font-size: 1rem; font-weight: 600; margin-bottom: 16px; color: #1a1a1a; display: flex; align-items: center; gap: 8px; }}
-        .badge {{ background: #1a1a1a; color: white; font-size: 0.75rem; padding: 2px 8px; border-radius: 20px; }}
-        .top-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px; }}
-        .search-bar {{ display: flex; gap: 8px; flex-wrap: wrap; }}
-        .search-bar input {{ padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.85rem; width: 150px; }}
-        .search-bar button {{ background: #555; color: white; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
-        table {{ width: 100%; border-collapse: collapse; }}
-        th {{ background: #1a1a1a; color: white; padding: 12px 16px; text-align: left; font-weight: 500; font-size: 0.85rem; }}
-        td {{ padding: 11px 16px; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; vertical-align: middle; }}
-        tr:last-child td {{ border-bottom: none; }}
-        tr:hover td {{ background: #fafafa; }}
-        .status {{ padding: 3px 10px; border-radius: 20px; font-size: 0.78rem; font-weight: 500; }}
-        .status-confirmed {{ background: #e6f4ea; color: #2e7d32; }}
-        .status-cancelled {{ background: #fdecea; color: #c62828; }}
-        .status-completed {{ background: #e8f0fe; color: #1a73e8; }}
-        .actions {{ display: flex; align-items: center; gap: 6px; }}
-        .btn-complete {{ background: #e8f0fe; color: #1a73e8; border: 1px solid #c5d8f8; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; font-weight: 500; }}
-        .btn-complete:hover {{ background: #c5d8f8; }}
-        .dropdown {{ position: relative; }}
-        .btn-dots {{ background: #f0f0f0; border: none; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 1rem; color: #555; font-weight: 700; line-height: 1; }}
-        .btn-dots:hover {{ background: #e0e0e0; }}
-        .dropdown-menu {{ display: none; position: absolute; right: 0; top: 110%; background: white; border: 1px solid #e0e0e0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 50; min-width: 130px; overflow: hidden; }}
-        .dropdown-menu.open {{ display: block; }}
-        .dropdown-item {{ padding: 10px 14px; font-size: 0.85rem; cursor: pointer; color: #333; }}
-        .dropdown-item:hover {{ background: #f5f5f5; }}
-        .dropdown-item.danger {{ color: #c62828; }}
-        .dropdown-item.danger:hover {{ background: #fdecea; }}
-        .empty {{ text-align: center; color: #999; padding: 28px; }}
-        .btn-refresh {{ background: #1a1a1a; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
-        .btn-walkin {{ background: #2e7d32; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
-        .modal-overlay {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 100; justify-content: center; align-items: center; }}
-        .modal-overlay.active {{ display: flex; }}
-        .modal {{ background: white; border-radius: 12px; padding: 28px; width: 420px; max-width: 95%; }}
-        .modal h2 {{ font-size: 1.1rem; margin-bottom: 20px; }}
-        .modal label {{ display: block; font-size: 0.85rem; color: #555; margin-bottom: 4px; margin-top: 14px; }}
-        .modal input, .modal select {{ width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; }}
-        .modal-actions {{ display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }}
-        .btn-save {{ background: #1a1a1a; color: white; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
-        .btn-close {{ background: #f0f0f0; color: #333; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }}
-        .error-msg {{ color: #c62828; font-size: 0.83rem; margin-top: 8px; display: none; }}
+        :root {{
+            --bg: #0f0f0f;
+            --surface: #1a1a1a;
+            --surface2: #222;
+            --border: #2a2a2a;
+            --text: #f0f0f0;
+            --muted: #666;
+            --muted2: #444;
+            --green: #22c55e;
+            --green-dim: rgba(34,197,94,0.12);
+            --green-border: rgba(34,197,94,0.25);
+            --red: #ef4444;
+            --red-dim: rgba(239,68,68,0.1);
+            --blue: #3b82f6;
+            --blue-dim: rgba(59,130,246,0.1);
+            --amber: #f59e0b;
+        }}
+        * {{ margin:0; padding:0; box-sizing:border-box; }}
+        body {{ font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }}
+
+        /* HEADER */
+        .header {{ background:var(--surface); border-bottom:1px solid var(--border); padding:14px 24px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:100; }}
+        .brand {{ display:flex; align-items:center; gap:10px; }}
+        .brand-icon {{ width:34px; height:34px; background:var(--green-dim); border:1px solid var(--green-border); border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:17px; }}
+        .brand-name {{ font-size:0.9rem; font-weight:600; }}
+        .brand-sub {{ font-size:0.68rem; color:var(--muted); margin-top:1px; }}
+        .header-right {{ display:flex; align-items:center; gap:8px; }}
+        .live-badge {{ display:flex; align-items:center; gap:5px; background:var(--green-dim); border:1px solid var(--green-border); padding:4px 9px; border-radius:20px; font-size:0.7rem; color:var(--green); font-weight:500; }}
+        .live-dot {{ width:5px; height:5px; background:var(--green); border-radius:50%; animation:pulse 2s infinite; }}
+        @keyframes pulse {{ 0%,100%{{opacity:1}} 50%{{opacity:0.3}} }}
+        .btn-presencial {{ background:var(--green); color:#000; border:none; padding:7px 13px; border-radius:8px; font-size:0.78rem; font-weight:700; cursor:pointer; font-family:inherit; }}
+        .btn-refresh {{ background:var(--surface2); color:var(--muted); border:1px solid var(--border); padding:7px 11px; border-radius:8px; font-size:0.8rem; cursor:pointer; font-family:inherit; }}
+
+        /* TABS */
+        .tabs {{ background:var(--surface); border-bottom:1px solid var(--border); padding:0 24px; display:flex; }}
+        .tab {{ padding:11px 16px; font-size:0.8rem; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; font-weight:500; transition:all 0.15s; display:flex; align-items:center; gap:5px; user-select:none; }}
+        .tab.active {{ color:var(--text); border-bottom-color:var(--green); }}
+        .tab-count {{ background:var(--surface2); color:var(--muted2); font-size:0.67rem; padding:1px 6px; border-radius:10px; font-family:'DM Mono',monospace; }}
+        .tab.active .tab-count {{ background:var(--green-dim); color:var(--green); }}
+        .tab-content {{ display:none; }}
+        .tab-content.active {{ display:block; }}
+
+        /* CONTAINER */
+        .container {{ max-width:1020px; margin:0 auto; padding:22px 20px; }}
+
+        /* STATS */
+        .stats-row {{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:22px; }}
+        .stat-card {{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:14px 16px; }}
+        .stat-label {{ font-size:0.68rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:7px; }}
+        .stat-value {{ font-size:1.55rem; font-weight:700; font-family:'DM Mono',monospace; line-height:1; }}
+        .stat-sub {{ font-size:0.68rem; color:var(--muted); margin-top:4px; }}
+        .stat-green .stat-value {{ color:var(--green); }}
+        .stat-blue .stat-value {{ color:var(--blue); }}
+
+        /* SECTION */
+        .section-header {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }}
+        .section-title {{ font-size:0.72rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.07em; }}
+        .section-right {{ font-size:0.72rem; color:var(--muted); font-family:'DM Mono',monospace; }}
+
+        /* APPT CARDS */
+        .appt-list {{ display:flex; flex-direction:column; gap:7px; margin-bottom:26px; }}
+        .appt-card {{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:12px 14px; display:flex; align-items:center; gap:12px; transition:border-color 0.15s; }}
+        .appt-card:hover {{ border-color:#333; }}
+        .appt-time {{ font-family:'DM Mono',monospace; font-size:0.82rem; font-weight:500; min-width:62px; color:var(--text); }}
+        .appt-sep {{ width:1px; height:28px; background:var(--border); flex-shrink:0; }}
+        .appt-info {{ flex:1; min-width:0; }}
+        .appt-name {{ font-size:0.85rem; font-weight:600; }}
+        .appt-meta {{ font-size:0.72rem; color:var(--muted); margin-top:2px; }}
+        .appt-actions {{ display:flex; gap:5px; align-items:center; flex-shrink:0; }}
+
+        /* BADGES */
+        .badge {{ padding:3px 8px; border-radius:6px; font-size:0.68rem; font-weight:600; white-space:nowrap; }}
+        .badge-green {{ background:var(--green-dim); color:var(--green); }}
+        .badge-blue {{ background:var(--blue-dim); color:var(--blue); }}
+        .badge-red {{ background:var(--red-dim); color:var(--red); }}
+
+        /* BUTTONS */
+        .btn-done {{ background:var(--green-dim); color:var(--green); border:1px solid var(--green-border); padding:5px 11px; border-radius:7px; font-size:0.73rem; font-weight:600; cursor:pointer; font-family:inherit; white-space:nowrap; }}
+        .btn-done:hover {{ background:rgba(34,197,94,0.2); }}
+        .btn-dots-sm {{ background:var(--surface2); color:var(--muted); border:1px solid var(--border); padding:5px 9px; border-radius:7px; font-size:0.85rem; cursor:pointer; font-family:inherit; position:relative; }}
+        .btn-edit-sm {{ background:var(--surface2); color:var(--muted); border:1px solid var(--border); padding:5px 9px; border-radius:7px; font-size:0.78rem; cursor:pointer; font-family:inherit; }}
+        .drop-menu {{ display:none; position:absolute; right:0; top:110%; background:var(--surface); border:1px solid var(--border); border-radius:9px; box-shadow:0 8px 24px rgba(0,0,0,0.4); z-index:200; min-width:130px; overflow:hidden; text-align:left; }}
+        .drop-menu.open {{ display:block; }}
+        .drop-item {{ padding:9px 13px; font-size:0.8rem; cursor:pointer; color:var(--text); white-space:nowrap; }}
+        .drop-item:hover {{ background:var(--surface2); }}
+        .drop-item.danger {{ color:var(--red); }}
+        .drop-item.danger:hover {{ background:var(--red-dim); }}
+
+        /* TABLE */
+        .table-card {{ background:var(--surface); border:1px solid var(--border); border-radius:11px; overflow:hidden; }}
+        .table-header {{ padding:13px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }}
+        .search-row {{ display:flex; gap:7px; }}
+        .search-input {{ background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:6px 11px; border-radius:7px; font-size:0.77rem; font-family:inherit; outline:none; width:160px; }}
+        .search-input::placeholder {{ color:var(--muted); }}
+        table {{ width:100%; border-collapse:collapse; }}
+        th {{ padding:9px 14px; text-align:left; font-size:0.67rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid var(--border); }}
+        td {{ padding:11px 14px; font-size:0.8rem; border-bottom:1px solid var(--border); vertical-align:middle; }}
+        tr:last-child td {{ border-bottom:none; }}
+        tr:hover td {{ background:rgba(255,255,255,0.015); }}
+        .td-date {{ display:block; font-weight:500; }}
+        .td-time {{ display:block; font-size:0.7rem; color:var(--muted); font-family:'DM Mono',monospace; margin-top:1px; }}
+        .td-name {{ font-weight:500; }}
+        .td-phone {{ font-size:0.75rem; color:var(--muted); font-family:'DM Mono',monospace; }}
+        .td-actions {{ display:flex; gap:5px; align-items:center; }}
+
+        .empty-state {{ text-align:center; padding:36px; color:var(--muted); font-size:0.82rem; }}
+
+        /* MODAL */
+        .modal-overlay {{ display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:300; justify-content:center; align-items:center; }}
+        .modal-overlay.active {{ display:flex; }}
+        .modal {{ background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:26px; width:400px; max-width:95%; }}
+        .modal h2 {{ font-size:1rem; font-weight:600; margin-bottom:18px; }}
+        .modal label {{ display:block; font-size:0.75rem; color:var(--muted); margin-bottom:4px; margin-top:13px; }}
+        .modal input, .modal select {{ width:100%; padding:8px 11px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; font-size:0.85rem; color:var(--text); font-family:inherit; outline:none; }}
+        .modal-actions {{ display:flex; gap:8px; margin-top:18px; justify-content:flex-end; }}
+        .btn-save {{ background:var(--green); color:#000; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; font-size:0.82rem; font-weight:700; font-family:inherit; }}
+        .btn-cancel-modal {{ background:var(--surface2); color:var(--muted); border:1px solid var(--border); padding:8px 16px; border-radius:8px; cursor:pointer; font-size:0.82rem; font-family:inherit; }}
+        .error-msg {{ color:var(--red); font-size:0.78rem; margin-top:7px; display:none; }}
+
+        @media(max-width:640px) {{
+            .stats-row {{ grid-template-columns:repeat(2,1fr); }}
+            .header {{ padding:12px 16px; }}
+            .container {{ padding:16px; }}
+            .td-phone {{ display:none; }}
+            .appt-meta {{ font-size:0.68rem; }}
+        }}
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>💈 {business_name} — Reservas</h1>
-        <div class="header-btns">
-            <button class="btn-walkin" onclick="openWalkin()">+ Presencial</button>
-            <button class="btn-refresh" onclick="location.reload()">↻ Refrescar</button>
+
+<div class="header">
+    <div class="brand">
+        <div class="brand-icon">💈</div>
+        <div>
+            <div class="brand-name">{business_name}</div>
+            <div class="brand-sub">Panel de reservas</div>
+        </div>
+    </div>
+    <div class="header-right">
+        <div class="live-badge"><div class="live-dot"></div>Bot activo</div>
+        <button class="btn-presencial" onclick="openWalkin()">+ Presencial</button>
+        <button class="btn-refresh" onclick="location.reload()">↻</button>
+    </div>
+</div>
+
+<div class="tabs">
+    <div class="tab active" onclick="switchTab('hoy',this)">📅 Hoy <span class="tab-count">{today_count}</span></div>
+    <div class="tab" onclick="switchTab('proximas',this)">🗓 Próximas <span class="tab-count">{upcoming_count}</span></div>
+    <div class="tab" onclick="switchTab('historial',this)">🕐 Historial <span class="tab-count">{len(past_reservations)}</span></div>
+</div>
+
+<div class="container">
+
+    <!-- STATS -->
+    <div class="stats-row">
+        <div class="stat-card">
+            <div class="stat-label">Hoy</div>
+            <div class="stat-value">{today_count}</div>
+            <div class="stat-sub">{len([r for r in today_reservations if r.get('status')=='confirmed'])} confirmadas</div>
+        </div>
+        <div class="stat-card stat-green">
+            <div class="stat-label">Este mes</div>
+            <div class="stat-value">{month_count}</div>
+            <div class="stat-sub">citas agendadas</div>
+        </div>
+        <div class="stat-card stat-blue">
+            <div class="stat-label">Ingresos est.</div>
+            <div class="stat-value">{fmt_currency(month_revenue)}</div>
+            <div class="stat-sub">COP este mes</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Canceladas</div>
+            <div class="stat-value">{month_cancelled}</div>
+            <div class="stat-sub">este mes</div>
         </div>
     </div>
 
-    <div class="tabs">
-        <div class="tab active" onclick="switchTab('hoy', this)">📅 Hoy <span class="badge" style="margin-left:6px">{len(today_reservations)}</span></div>
-        <div class="tab" onclick="switchTab('proximas', this)">🗓 Próximas <span class="badge" style="margin-left:6px">{len(future_reservations)}</span></div>
-        <div class="tab" onclick="switchTab('historial', this)">🕐 Historial <span class="badge" style="margin-left:6px">{len(past_reservations)}</span></div>
+    <!-- HOY TAB -->
+    <div id="tab-hoy" class="tab-content active">
+        <div class="section-header">
+            <div class="section-title">Citas de hoy</div>
+            <div class="section-right">{DIAS_ES[now.weekday()]} {now.day} {MESES_ES[now.month-1]} {now.year}</div>
+        </div>
+        <div class="appt-list">
+            {build_today_cards(today_reservations)}
+        </div>
     </div>
 
-    <div class="container">
-
-        <div id="tab-hoy" class="tab-content active">
-            <div class="card">
-                <div class="section-title">Citas de hoy — {today_str}</div>
-                <table>
-                    <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Acciones</th><th>Estado</th></tr></thead>
-                    <tbody>{"<tr><td colspan='6' class='empty'>Sin citas hoy.</td></tr>" if not today_reservations else build_rows(today_reservations)}</tbody>
-                </table>
-            </div>
-        </div>
-
-        <div id="tab-proximas" class="tab-content">
-            <div class="card">
-                <div class="top-bar">
-                    <div class="section-title">Próximas citas</div>
-                    <div class="search-bar">
-                        <input type="text" id="searchName" placeholder="Nombre..." oninput="filterTable()">
-                        <input type="text" id="searchPhone" placeholder="Teléfono..." oninput="filterTable()">
-                        <input type="date" id="searchDate" onchange="filterTable()">
-                        <button onclick="clearSearch()">Limpiar</button>
-                    </div>
+    <!-- PROXIMAS TAB -->
+    <div id="tab-proximas" class="tab-content">
+        <div class="table-card">
+            <div class="table-header">
+                <div class="section-title">Próximas citas</div>
+                <div class="search-row">
+                    <input class="search-input" id="searchName" placeholder="Nombre..." oninput="filterTable()">
+                    <input class="search-input" id="searchPhone" placeholder="Teléfono..." oninput="filterTable()" style="width:130px">
+                    <input class="search-input" type="date" id="searchDate" onchange="filterTable()" style="width:140px">
                 </div>
-                <table>
-                    <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Acciones</th><th>Estado</th></tr></thead>
-                    <tbody id="futureBody">{"<tr><td colspan='6' class='empty'>Sin citas próximas.</td></tr>" if not future_reservations else build_rows(future_reservations)}</tbody>
-                </table>
             </div>
+            <table>
+                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th></th></tr></thead>
+                <tbody id="futureBody">{build_table_rows(future_reservations)}</tbody>
+            </table>
         </div>
+    </div>
 
-        <div id="tab-historial" class="tab-content">
-            <div class="card">
+    <!-- HISTORIAL TAB -->
+    <div id="tab-historial" class="tab-content">
+        <div class="table-card">
+            <div class="table-header">
                 <div class="section-title">Historial</div>
-                <table>
-                    <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Acciones</th><th>Estado</th></tr></thead>
-                    <tbody>{"<tr><td colspan='6' class='empty'>Sin historial.</td></tr>" if not past_reservations else build_rows(past_reservations)}</tbody>
-                </table>
             </div>
-        </div>
-
-    </div>
-
-    <div class="modal-overlay" id="editModal">
-        <div class="modal">
-            <h2>✏️ Editar Reserva</h2>
-            <input type="hidden" id="editId">
-            <label>Nombre del cliente</label>
-            <input type="text" id="editName">
-            <label>Servicio</label>
-            <input type="text" id="editService">
-            <label>Fecha y hora (YYYY-MM-DD HH:MM)</label>
-            <input type="text" id="editDatetime" placeholder="2026-04-10 15:00">
-            <label>Estado</label>
-            <select id="editStatus">
-                <option value="confirmed">Confirmada</option>
-                <option value="completed">Completada</option>
-                <option value="cancelled">Cancelada</option>
-            </select>
-            <div class="modal-actions">
-                <button class="btn-close" onclick="closeModal('editModal')">Cancelar</button>
-                <button class="btn-save" onclick="saveEdit()">Guardar</button>
-            </div>
+            <table>
+                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th></th></tr></thead>
+                <tbody>{build_table_rows(past_reservations)}</tbody>
+            </table>
         </div>
     </div>
 
-    <div class="modal-overlay" id="walkinModal">
-        <div class="modal">
-            <h2>🚶 Reserva Presencial</h2>
-            <label>Nombre del cliente</label>
-            <input type="text" id="walkinName" placeholder="Nombre completo">
-            <label>Servicio</label>
-            <select id="walkinService">{services_options}</select>
-            <label>Fecha</label>
-            <input type="date" id="walkinDate">
-            <label>Hora</label>
-            <select id="walkinHour">{hours_options}</select>
-            <p class="error-msg" id="walkinError">Ese horario ya está lleno. Elige otra hora.</p>
-            <div class="modal-actions">
-                <button class="btn-close" onclick="closeModal('walkinModal')">Cancelar</button>
-                <button class="btn-save" id="walkinSaveBtn" onclick="saveWalkin()">Confirmar</button>
-            </div>
+</div>
+
+<!-- EDIT MODAL -->
+<div class="modal-overlay" id="editModal">
+    <div class="modal">
+        <h2>✏️ Editar Reserva</h2>
+        <input type="hidden" id="editId">
+        <label>Nombre</label>
+        <input type="text" id="editName">
+        <label>Servicio</label>
+        <input type="text" id="editService">
+        <label>Fecha y hora (YYYY-MM-DD HH:MM)</label>
+        <input type="text" id="editDatetime" placeholder="2026-04-25 15:00">
+        <label>Estado</label>
+        <select id="editStatus">
+            <option value="confirmed">Confirmada</option>
+            <option value="completed">Completada</option>
+            <option value="cancelled">Cancelada</option>
+        </select>
+        <div class="modal-actions">
+            <button class="btn-cancel-modal" onclick="closeModal('editModal')">Cancelar</button>
+            <button class="btn-save" onclick="saveEdit()">Guardar</button>
         </div>
     </div>
+</div>
 
-    <script>
-        function switchTab(name, el) {{
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-            document.getElementById('tab-' + name).classList.add('active');
-            el.classList.add('active');
+<!-- WALKIN MODAL -->
+<div class="modal-overlay" id="walkinModal">
+    <div class="modal">
+        <h2>🚶 Reserva Presencial</h2>
+        <label>Nombre del cliente</label>
+        <input type="text" id="walkinName" placeholder="Nombre completo">
+        <label>Servicio</label>
+        <select id="walkinService">{services_options}</select>
+        <label>Fecha</label>
+        <input type="date" id="walkinDate">
+        <label>Hora</label>
+        <select id="walkinHour">{hours_options}</select>
+        <p class="error-msg" id="walkinError">Ese horario ya está lleno. Elige otra hora.</p>
+        <div class="modal-actions">
+            <button class="btn-cancel-modal" onclick="closeModal('walkinModal')">Cancelar</button>
+            <button class="btn-save" id="walkinSaveBtn" onclick="saveWalkin()">Confirmar</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    function switchTab(name, el) {{
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        document.getElementById('tab-' + name).classList.add('active');
+        el.classList.add('active');
+    }}
+
+    document.addEventListener('click', function(e) {{
+        if (!e.target.closest('.btn-dots-sm')) {{
+            document.querySelectorAll('.drop-menu').forEach(m => m.classList.remove('open'));
         }}
-        function toggleDropdown(btn) {{
-            closeAllDropdowns();
-            const menu = btn.nextElementSibling;
-            menu.classList.toggle('open');
-            event.stopPropagation();
-        }}
-        function closeAllDropdowns() {{
-            document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('open'));
-        }}
-        document.addEventListener('click', closeAllDropdowns);
-        function filterTable() {{
-            const name = document.getElementById('searchName').value.toLowerCase();
-            const phone = document.getElementById('searchPhone').value.toLowerCase();
-            const date = document.getElementById('searchDate').value;
-            const rows = document.querySelectorAll('#futureBody tr');
-            rows.forEach(row => {{
-                const cells = row.querySelectorAll('td');
-                if (cells.length < 4) return;
-                const matchName = cells[1].textContent.toLowerCase().includes(name);
-                const matchPhone = cells[3].textContent.toLowerCase().includes(phone);
-                const matchDate = !date || cells[0].textContent.includes(date);
-                row.style.display = (matchName && matchPhone && matchDate) ? '' : 'none';
-            }});
-        }}
-        function clearSearch() {{
-            document.getElementById('searchName').value = '';
-            document.getElementById('searchPhone').value = '';
-            document.getElementById('searchDate').value = '';
-            filterTable();
-        }}
-        function openEdit(id, name, service, datetime, status) {{
-            document.getElementById('editId').value = id;
-            document.getElementById('editName').value = name;
-            document.getElementById('editService').value = service;
-            document.getElementById('editDatetime').value = datetime.replace('T', ' ');
-            document.getElementById('editStatus').value = status;
-            document.getElementById('editModal').classList.add('active');
-        }}
-        function openWalkin() {{
-            document.getElementById('walkinError').style.display = 'none';
-            document.getElementById('walkinName').value = '';
-            document.getElementById('walkinDate').value = '{today_str}';
+    }});
+
+    function toggleDropdown(btn) {{
+        const menu = btn.querySelector('.drop-menu');
+        document.querySelectorAll('.drop-menu').forEach(m => {{ if(m !== menu) m.classList.remove('open'); }});
+        menu.classList.toggle('open');
+        event.stopPropagation();
+    }}
+
+    function filterTable() {{
+        const name = document.getElementById('searchName').value.toLowerCase();
+        const phone = document.getElementById('searchPhone').value.toLowerCase();
+        const date = document.getElementById('searchDate').value;
+        document.querySelectorAll('#futureBody tr').forEach(row => {{
+            const cells = row.querySelectorAll('td');
+            if (cells.length < 4) return;
+            const matchName = cells[1].textContent.toLowerCase().includes(name);
+            const matchPhone = cells[3].textContent.toLowerCase().includes(phone);
+            const matchDate = !date || cells[0].textContent.includes(date);
+            row.style.display = (matchName && matchPhone && matchDate) ? '' : 'none';
+        }});
+    }}
+
+    function openEdit(id, name, service, datetime, status) {{
+        document.getElementById('editId').value = id;
+        document.getElementById('editName').value = name;
+        document.getElementById('editService').value = service;
+        document.getElementById('editDatetime').value = datetime.replace('T',' ');
+        document.getElementById('editStatus').value = status;
+        document.getElementById('editModal').classList.add('active');
+    }}
+
+    function openWalkin() {{
+        document.getElementById('walkinError').style.display = 'none';
+        document.getElementById('walkinName').value = '';
+        document.getElementById('walkinDate').value = '{today_str}';
+        document.getElementById('walkinSaveBtn').disabled = false;
+        document.getElementById('walkinModal').classList.add('active');
+    }}
+
+    function closeModal(id) {{ document.getElementById(id).classList.remove('active'); }}
+
+    async function saveEdit() {{
+        const id = document.getElementById('editId').value;
+        const data = {{
+            client_name: document.getElementById('editName').value,
+            service: document.getElementById('editService').value,
+            datetime: document.getElementById('editDatetime').value,
+            status: document.getElementById('editStatus').value
+        }};
+        const res = await fetch(`/api/reservation/${{id}}/edit`, {{
+            method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(data)
+        }});
+        const result = await res.json();
+        if (result.success) {{ closeModal('editModal'); location.reload(); }}
+        else {{ alert('Error al guardar.'); }}
+    }}
+
+    async function saveWalkin() {{
+        document.getElementById('walkinSaveBtn').disabled = true;
+        const date = document.getElementById('walkinDate').value;
+        const hour = document.getElementById('walkinHour').value;
+        const data = {{
+            business_id: {business_id},
+            client_name: document.getElementById('walkinName').value,
+            service: document.getElementById('walkinService').value,
+            datetime: date + ' ' + hour
+        }};
+        const res = await fetch('/api/reservation/walkin', {{
+            method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(data)
+        }});
+        const result = await res.json();
+        if (result.success) {{ closeModal('walkinModal'); location.reload(); }}
+        else if (result.reason === 'slot_full') {{
+            document.getElementById('walkinError').style.display = 'block';
             document.getElementById('walkinSaveBtn').disabled = false;
-            document.getElementById('walkinModal').classList.add('active');
         }}
-        function closeModal(id) {{
-            document.getElementById(id).classList.remove('active');
-        }}
-        async function saveEdit() {{
-            const id = document.getElementById('editId').value;
-            const data = {{
-                client_name: document.getElementById('editName').value,
-                service: document.getElementById('editService').value,
-                datetime: document.getElementById('editDatetime').value,
-                status: document.getElementById('editStatus').value
-            }};
-            const res = await fetch(`/api/reservation/${{id}}/edit`, {{
-                method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify(data)
-            }});
-            const result = await res.json();
-            if (result.success) {{ closeModal('editModal'); location.reload(); }}
-            else {{ alert('Error al guardar.'); }}
-        }}
-        async function saveWalkin() {{
-            document.getElementById('walkinSaveBtn').disabled = true;
-            const date = document.getElementById('walkinDate').value;
-            const hour = document.getElementById('walkinHour').value;
-            const datetime = date + ' ' + hour;
-            const data = {{
-                business_id: {business_id},
-                client_name: document.getElementById('walkinName').value,
-                service: document.getElementById('walkinService').value,
-                datetime: datetime
-            }};
-            const res = await fetch('/api/reservation/walkin', {{
-                method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify(data)
-            }});
-            const result = await res.json();
-            if (result.success) {{ closeModal('walkinModal'); location.reload(); }}
-            else if (result.reason === 'slot_full') {{
-                document.getElementById('walkinError').style.display = 'block';
-                document.getElementById('walkinSaveBtn').disabled = false;
-            }}
-            else {{
-                alert('Error al guardar.');
-                document.getElementById('walkinSaveBtn').disabled = false;
-            }}
-        }}
-        async function completeReservation(id) {{
-            if (!confirm('¿Marcar esta cita como completada?')) return;
-            const res = await fetch(`/api/reservation/${{id}}/complete`, {{method: 'POST'}});
-            const result = await res.json();
-            if (result.success) {{ location.reload(); }}
-            else {{ alert('Error.'); }}
-        }}
-        async function cancelReservation(id) {{
-            if (!confirm('¿Seguro que quieres cancelar esta reserva?')) return;
-            const res = await fetch(`/api/reservation/${{id}}/cancel`, {{method: 'POST'}});
-            const result = await res.json();
-            if (result.success) {{ location.reload(); }}
-            else {{ alert('Error al cancelar.'); }}
-        }}
-    </script>
+        else {{ alert('Error al guardar.'); document.getElementById('walkinSaveBtn').disabled = false; }}
+    }}
+
+    async function completeReservation(id) {{
+        if (!confirm('¿Marcar como completada?')) return;
+        const res = await fetch(`/api/reservation/${{id}}/complete`, {{method:'POST'}});
+        const result = await res.json();
+        if (result.success) location.reload();
+        else alert('Error.');
+    }}
+
+    async function cancelReservation(id) {{
+        if (!confirm('¿Cancelar esta reserva?')) return;
+        const res = await fetch(`/api/reservation/${{id}}/cancel`, {{method:'POST'}});
+        const result = await res.json();
+        if (result.success) location.reload();
+        else alert('Error al cancelar.');
+    }}
+</script>
 </body>
 </html>"""
     return HTMLResponse(content=html)
