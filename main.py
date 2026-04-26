@@ -907,7 +907,7 @@ async def dashboard(request: Request, business_id: int):
         .drop-item.danger:hover {{ background:var(--red-dim); }}
 
         /* TABLE */
-        .table-card {{ background:var(--surface); border:1px solid var(--border); border-radius:11px; overflow:hidden; }}
+        .table-card {{ background:var(--surface); border:1px solid var(--border); border-radius:11px; overflow:visible; }}
         .table-header {{ padding:13px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }}
         .search-row {{ display:flex; gap:7px; }}
         .search-input {{ background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:6px 11px; border-radius:7px; font-size:0.77rem; font-family:inherit; outline:none; width:160px; }}
