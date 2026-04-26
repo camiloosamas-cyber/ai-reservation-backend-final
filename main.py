@@ -914,8 +914,9 @@ async def dashboard(request: Request, business_id: int):
         .search-input::placeholder {{ color:var(--muted); }}
         table {{ width:100%; border-collapse:collapse; }}
         th {{ padding:9px 14px; text-align:left; font-size:0.67rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid var(--border); }}
-        td {{ padding:11px 14px; font-size:0.8rem; border-bottom:1px solid var(--border); vertical-align:middle; }}
-        tr:last-child td {{ border-bottom:none; }}
+        td {{ padding:11px 14px; font-size:0.8rem; vertical-align:middle; }}
+        tbody tr {{ border-bottom:1px solid var(--border); }}
+        tbody tr:last-child {{ border-bottom:none; }}
         tr:hover td {{ background:rgba(255,255,255,0.015); }}
         .td-date {{ display:block; font-weight:500; }}
         .td-time {{ display:block; font-size:0.7rem; color:var(--muted); font-family:'DM Mono',monospace; margin-top:1px; }}
