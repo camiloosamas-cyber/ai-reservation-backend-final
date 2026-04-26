@@ -1000,7 +1000,7 @@ async def dashboard(request: Request, business_id: int):
                 </div>
             </div>
             <table>
-                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th></th></tr></thead>
+                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
                 <tbody id="futureBody">{build_table_rows(future_reservations)}</tbody>
             </table>
         </div>
@@ -1013,7 +1013,7 @@ async def dashboard(request: Request, business_id: int):
                 <div class="section-title">Historial</div>
             </div>
             <table>
-                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th></th></tr></thead>
+                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
                 <tbody>{build_table_rows(past_reservations)}</tbody>
             </table>
         </div>
