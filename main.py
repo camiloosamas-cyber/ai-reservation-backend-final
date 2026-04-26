@@ -904,8 +904,9 @@ async def dashboard(request: Request, business_id: int):
         .td-name {{ font-weight:500; }}
         .td-phone {{ font-size:0.75rem; color:var(--muted); font-family:'DM Mono',monospace; }}
         .td-actions {{ display:flex; gap:5px; align-items:center; justify-content:flex-end; }}
-        table th:last-child, table td:last-child {{ width:130px; white-space:nowrap; text-align:right; padding-right:16px; }}
-        table th:nth-last-child(2), table td:nth-last-child(2) {{ width:120px; }}
+        table {{ table-layout: fixed; width: 100%; }}
+        table th:nth-last-child(2), table td:nth-last-child(2) {{ width:140px; min-width:140px; max-width:140px; white-space:nowrap; overflow:hidden; text-align:left; padding-right:8px; box-sizing:border-box; }}
+        table th:last-child, table td:last-child {{ width:150px; min-width:150px; max-width:150px; white-space:nowrap; overflow:hidden; text-align:right; padding-right:16px; box-sizing:border-box; }}
 
 
         .empty-state {{ text-align:center; padding:36px; color:var(--muted); font-size:0.82rem; }}
@@ -1003,7 +1004,7 @@ async def dashboard(request: Request, business_id: int):
                 </div>
             </div>
             <table>
-                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th style="width:60px">Acciones</th></tr></thead>
+                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
                 <tbody id="futureBody">{build_table_rows(future_reservations)}</tbody>
             </table>
         </div>
@@ -1016,7 +1017,7 @@ async def dashboard(request: Request, business_id: int):
                 <div class="section-title">Historial</div>
             </div>
             <table>
-                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th style="width:60px">Acciones</th></tr></thead>
+                <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
                 <tbody>{build_table_rows(past_reservations)}</tbody>
             </table>
         </div>
