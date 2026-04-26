@@ -922,7 +922,6 @@ async def dashboard(request: Request, business_id: int):
         .td-time {{ display:block; font-size:0.7rem; color:var(--muted); font-family:'DM Mono',monospace; margin-top:1px; }}
         .td-name {{ font-weight:500; }}
         .td-phone {{ font-size:0.75rem; color:var(--muted); font-family:'DM Mono',monospace; }}
-        .td-actions {{ display:flex; gap:5px; align-items:center; justify-content:flex-end; }}
         table {{ table-layout: fixed; width: 100%; }}
         table th:nth-last-child(2), table td:nth-last-child(2) {{ width:140px; text-align:left; padding-right:8px; box-sizing:border-box; overflow:hidden; }}
         table th:last-child, table td:last-child {{ width:150px; padding-right:16px; box-sizing:border-box; overflow:visible; border-left:none; background:transparent; }}
