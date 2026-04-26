@@ -903,7 +903,7 @@ async def dashboard(request: Request, business_id: int):
         .td-time {{ display:block; font-size:0.7rem; color:var(--muted); font-family:'DM Mono',monospace; margin-top:1px; }}
         .td-name {{ font-weight:500; }}
         .td-phone {{ font-size:0.75rem; color:var(--muted); font-family:'DM Mono',monospace; }}
-        .td-actions {{ display:flex; gap:5px; align-items:center; }}
+        .td-actions {{ display:flex; gap:5px; align-items:center; width:60px; }}
 
         .empty-state {{ text-align:center; padding:36px; color:var(--muted); font-size:0.82rem; }}
 
