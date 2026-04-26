@@ -735,7 +735,16 @@ async def dashboard(request: Request, business_id: int):
 
             if status == "confirmed":
                 status_html = '<span class="badge badge-green">Confirmada</span>'
-                actions = f'<button class="btn-done" onclick="completeReservation({rid})">✔ Listo</button><button class="btn-dots-sm" onclick="toggleDropdown(this)">⋯<div class="drop-menu"><div class="drop-item" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️ Editar</div><div class="drop-item danger" onclick="cancelReservation({rid})">✖ Cancelar</div></div></button>'
+                actions = (
+                    f'<button class="btn-done" onclick="completeReservation({rid})">✔ Listo</button>'
+                    f'<div class="dots-wrap">'
+                    f'<button class="btn-dots-sm" onclick="toggleDropdown(this)">⋯</button>'
+                    f'<div class="drop-menu">'
+                    f'<div class="drop-item" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️ Editar</div>'
+                    f'<div class="drop-item danger" onclick="cancelReservation({rid})">✖ Cancelar</div>'
+                    f'</div>'
+                    f'</div>'
+                )
             elif status == "completed":
                 status_html = '<span class="badge badge-blue">Completada</span>'
                 actions = f'<button class="btn-edit-sm" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️</button>'
@@ -773,7 +782,16 @@ async def dashboard(request: Request, business_id: int):
 
             if status == "confirmed":
                 status_html = '<span class="badge badge-green">Confirmada</span>'
-                actions = f'<button class="btn-done" onclick="completeReservation({rid})">✔ Listo</button><button class="btn-dots-sm" onclick="toggleDropdown(this)">⋯<div class="drop-menu"><div class="drop-item" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️ Editar</div><div class="drop-item danger" onclick="cancelReservation({rid})">✖ Cancelar</div></div></button>'
+                actions = (
+                    f'<button class="btn-done" onclick="completeReservation({rid})">✔ Listo</button>'
+                    f'<div class="dots-wrap">'
+                    f'<button class="btn-dots-sm" onclick="toggleDropdown(this)">⋯</button>'
+                    f'<div class="drop-menu">'
+                    f'<div class="drop-item" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️ Editar</div>'
+                    f'<div class="drop-item danger" onclick="cancelReservation({rid})">✖ Cancelar</div>'
+                    f'</div>'
+                    f'</div>'
+                )
             elif status == "completed":
                 status_html = '<span class="badge badge-blue">Completada</span>'
                 actions = f'<button class="btn-edit-sm" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️</button>'
@@ -905,8 +923,9 @@ async def dashboard(request: Request, business_id: int):
         .td-phone {{ font-size:0.75rem; color:var(--muted); font-family:'DM Mono',monospace; }}
         .td-actions {{ display:flex; gap:5px; align-items:center; justify-content:flex-end; }}
         table {{ table-layout: fixed; width: 100%; }}
-        table th:nth-last-child(2), table td:nth-last-child(2) {{ width:140px; min-width:140px; max-width:140px; white-space:nowrap; overflow:hidden; text-align:left; padding-right:8px; box-sizing:border-box; }}
-        table th:last-child, table td:last-child {{ width:150px; min-width:150px; max-width:150px; white-space:nowrap; overflow:hidden; text-align:right; padding-right:16px; box-sizing:border-box; }}
+        table th:nth-last-child(2), table td:nth-last-child(2) {{ width:140px; text-align:left; padding-right:8px; box-sizing:border-box; overflow:hidden; }}
+        table th:last-child, table td:last-child {{ width:150px; padding-right:16px; box-sizing:border-box; overflow:visible; }}
+        .dots-wrap {{ position:relative; display:inline-block; }}
 
 
         .empty-state {{ text-align:center; padding:36px; color:var(--muted); font-size:0.82rem; }}
@@ -1084,7 +1103,7 @@ async def dashboard(request: Request, business_id: int):
     }});
 
     function toggleDropdown(btn) {{
-        const menu = btn.querySelector('.drop-menu');
+        const menu = btn.parentElement.querySelector('.drop-menu');
         document.querySelectorAll('.drop-menu').forEach(m => {{ if(m !== menu) m.classList.remove('open'); }});
         menu.classList.toggle('open');
         event.stopPropagation();
