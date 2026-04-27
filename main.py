@@ -314,7 +314,7 @@ def ask_openai(config, history, new_message):
         model="gpt-4o-mini",
         messages=messages,
         max_tokens=500,
-        temperature=0.7
+        temperature=0.3
     )
     return response.choices[0].message.content.strip()
 
@@ -565,7 +565,7 @@ async def webhook(request: Request):
             reply = "Hubo un problema al confirmar tu reserva. Intenta de nuevo."
 
     history.append({"role": "user", "content": incoming_msg})
-    history.append({"role": "assistant", "content": original_reply})
+    history.append({"role": "assistant", "content": reply})
     session["history"] = history[-20:]
     save_session(from_number, session)
 
