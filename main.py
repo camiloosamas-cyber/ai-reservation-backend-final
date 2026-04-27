@@ -34,6 +34,7 @@ BUSINESS_CONFIGS = {
         "reviews": "Puedes ver nuestras reseñas en Google buscando 'Barbería El Paisa Medellín'.",
         "licensed": "Sí, todos nuestros barberos están certificados y capacitados.",
         "payment_methods": "Efectivo, Nequi, Daviplata y transferencia bancaria.",
+        "password": "elpaisa2026",
         "avg_price": 35000,
         "prices": {
             "Corte": "$35.000 COP",
@@ -405,6 +406,9 @@ def transcribe_audio(media_url: str) -> str | None:
             print(f"Failed to download audio: {response.status_code}")
             return None
         audio_bytes = response.content
+        if len(audio_bytes) > 25 * 1024 * 1024:
+            print("Audio too large for Whisper")
+            return None
         import io
         audio_file = io.BytesIO(audio_bytes)
         audio_file.name = "audio.ogg"
@@ -574,13 +578,27 @@ async def webhook(request: Request):
     return Response(content=str(resp), media_type="application/xml")
 
 # =====================================================================
+# DASHBOARD AUTH
+# =====================================================================
+
+def check_dashboard_auth(request: Request, business_id: int) -> bool:
+    cookie = request.cookies.get(f"auth_{business_id}")
+    for config in BUSINESS_CONFIGS.values():
+        if config["business_id"] == business_id:
+            return cookie == config.get("password", "")
+    return False
+
+# =====================================================================
 # DASHBOARD API ROUTES
 # =====================================================================
 
 @app.post("/api/reservation/{reservation_id}/cancel")
-async def api_cancel_reservation(reservation_id: int):
+async def api_cancel_reservation(reservation_id: int, request: Request):
     if not supabase:
         return JSONResponse({"success": False}, status_code=500)
+    business_id = int(request.headers.get("X-Business-Id", "0"))
+    if not check_dashboard_auth(request, business_id):
+        return JSONResponse({"success": False}, status_code=401)
     try:
         supabase.table("reservations").update({"status": "cancelled"}).eq("reservation_id", reservation_id).execute()
         return JSONResponse({"success": True})
@@ -588,9 +606,12 @@ async def api_cancel_reservation(reservation_id: int):
         return JSONResponse({"success": False}, status_code=500)
 
 @app.post("/api/reservation/{reservation_id}/complete")
-async def api_complete_reservation(reservation_id: int):
+async def api_complete_reservation(reservation_id: int, request: Request):
     if not supabase:
         return JSONResponse({"success": False}, status_code=500)
+    business_id = int(request.headers.get("X-Business-Id", "0"))
+    if not check_dashboard_auth(request, business_id):
+        return JSONResponse({"success": False}, status_code=401)
     try:
         supabase.table("reservations").update({"status": "completed"}).eq("reservation_id", reservation_id).execute()
         return JSONResponse({"success": True})
@@ -601,8 +622,12 @@ async def api_complete_reservation(reservation_id: int):
 async def api_edit_reservation(reservation_id: int, request: Request):
     if not supabase:
         return JSONResponse({"success": False}, status_code=500)
+    business_id = int(request.headers.get("X-Business-Id", "0"))
+    if not check_dashboard_auth(request, business_id):
+        return JSONResponse({"success": False}, status_code=401)
     try:
         body = await request.json()
+        allowed_statuses = ["confirmed", "completed", "cancelled"]
         update_data = {}
         if body.get("client_name"):
             update_data["client_name"] = body["client_name"]
@@ -610,7 +635,7 @@ async def api_edit_reservation(reservation_id: int, request: Request):
             update_data["service"] = body["service"]
         if body.get("datetime"):
             update_data["datetime"] = body["datetime"]
-        if body.get("status"):
+        if body.get("status") and body["status"] in allowed_statuses:
             update_data["status"] = body["status"]
         supabase.table("reservations").update(update_data).eq("reservation_id", reservation_id).execute()
         return JSONResponse({"success": True})
@@ -621,6 +646,9 @@ async def api_edit_reservation(reservation_id: int, request: Request):
 async def api_walkin_booking(request: Request):
     if not supabase:
         return JSONResponse({"success": False}, status_code=500)
+    business_id_header = int(request.headers.get("X-Business-Id", "0"))
+    if not check_dashboard_auth(request, business_id_header):
+        return JSONResponse({"success": False}, status_code=401)
     try:
         body = await request.json()
         business_id = body.get("business_id")
@@ -638,6 +666,22 @@ async def api_walkin_booking(request: Request):
         return JSONResponse({"success": True})
     except Exception as e:
         return JSONResponse({"success": False}, status_code=500)
+
+# =====================================================================
+# DASHBOARD LOGIN
+# =====================================================================
+
+@app.post("/dashboard/{business_id}/login")
+async def dashboard_login(business_id: int, request: Request):
+    form = await request.form()
+    password = form.get("password", "")
+    for config in BUSINESS_CONFIGS.values():
+        if config["business_id"] == business_id:
+            if password == config.get("password", ""):
+                response = JSONResponse({"success": True})
+                response.set_cookie(f"auth_{business_id}", password, httponly=True, max_age=86400)
+                return response
+    return JSONResponse({"success": False}, status_code=401)
 
 # =====================================================================
 # DASHBOARD
@@ -667,6 +711,54 @@ def format_price(service: str, config: dict) -> str:
 
 @app.get("/dashboard/{business_id}", response_class=HTMLResponse)
 async def dashboard(request: Request, business_id: int):
+    if not check_dashboard_auth(request, business_id):
+        login_html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acceso — Panel de Reservas</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {{ margin:0; padding:0; box-sizing:border-box; }}
+        body {{ font-family:'DM Sans',sans-serif; background:#0f0f0f; color:#f0f0f0; min-height:100vh; display:flex; align-items:center; justify-content:center; }}
+        .login-card {{ background:#1a1a1a; border:1px solid #2a2a2a; border-radius:16px; padding:36px; width:340px; max-width:95%; }}
+        .login-icon {{ font-size:2rem; margin-bottom:16px; }}
+        .login-title {{ font-size:1.1rem; font-weight:600; margin-bottom:4px; }}
+        .login-sub {{ font-size:0.78rem; color:#666; margin-bottom:24px; }}
+        label {{ display:block; font-size:0.75rem; color:#666; margin-bottom:6px; }}
+        input {{ width:100%; padding:10px 13px; background:#222; border:1px solid #2a2a2a; border-radius:9px; color:#f0f0f0; font-size:0.88rem; font-family:inherit; outline:none; margin-bottom:14px; }}
+        input:focus {{ border-color:#22c55e; }}
+        button {{ width:100%; padding:10px; background:#22c55e; color:#000; border:none; border-radius:9px; font-size:0.88rem; font-weight:700; cursor:pointer; font-family:inherit; }}
+        .error {{ color:#ef4444; font-size:0.78rem; margin-top:10px; display:none; }}
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="login-icon">💈</div>
+        <div class="login-title">Panel de Reservas</div>
+        <div class="login-sub">Ingresa tu contraseña para continuar</div>
+        <label>Contraseña</label>
+        <input type="password" id="pwd" placeholder="••••••••" onkeydown="if(event.key==='Enter')login()">
+        <button onclick="login()">Entrar</button>
+        <div class="error" id="err">Contraseña incorrecta</div>
+    </div>
+    <script>
+        async function login() {{
+            const pwd = document.getElementById('pwd').value;
+            const res = await fetch('/dashboard/{business_id}/login', {{
+                method:'POST',
+                headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
+                body:'password=' + encodeURIComponent(pwd)
+            }});
+            if (res.ok) {{ location.reload(); }}
+            else {{ document.getElementById('err').style.display='block'; }}
+        }}
+    </script>
+</body>
+</html>"""
+        return HTMLResponse(content=login_html)
+
     reservations = []
     if supabase:
         try:
@@ -692,7 +784,6 @@ async def dashboard(request: Request, business_id: int):
     future_reservations = [r for r in reservations if r.get("datetime", "")[:10] > today_str]
     past_reservations = [r for r in reservations if r.get("datetime", "")[:10] < today_str]
 
-    # Stats
     current_month = now.strftime("%Y-%m")
     month_reservations = [r for r in reservations if r.get("datetime", "")[:7] == current_month and r.get("status") == "confirmed"]
     month_completed = [r for r in reservations if r.get("datetime", "")[:7] == current_month and r.get("status") == "completed"]
@@ -702,7 +793,6 @@ async def dashboard(request: Request, business_id: int):
     service_prices = business_config.get("service_prices", {})
     avg_price = business_config.get("avg_price", 35000)
     month_revenue = sum(service_prices.get(r.get("service", ""), avg_price) for r in month_all)
-
     month_cancelled = len([r for r in reservations if r.get("datetime", "")[:7] == current_month and r.get("status") == "cancelled"])
     today_count = len(today_reservations)
     upcoming_count = len(future_reservations)
@@ -742,8 +832,7 @@ async def dashboard(request: Request, business_id: int):
                     f'<div class="drop-menu">'
                     f'<div class="drop-item" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️ Editar</div>'
                     f'<div class="drop-item danger" onclick="cancelReservation({rid})">✖ Cancelar</div>'
-                    f'</div>'
-                    f'</div>'
+                    f'</div></div>'
                 )
             elif status == "completed":
                 status_html = '<span class="badge badge-blue">Completada</span>'
@@ -789,8 +878,7 @@ async def dashboard(request: Request, business_id: int):
                     f'<div class="drop-menu">'
                     f'<div class="drop-item" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️ Editar</div>'
                     f'<div class="drop-item danger" onclick="cancelReservation({rid})">✖ Cancelar</div>'
-                    f'</div>'
-                    f'</div>'
+                    f'</div></div>'
                 )
             elif status == "completed":
                 status_html = '<span class="badge badge-blue">Completada</span>'
@@ -833,12 +921,9 @@ async def dashboard(request: Request, business_id: int):
             --red-dim: rgba(239,68,68,0.1);
             --blue: #3b82f6;
             --blue-dim: rgba(59,130,246,0.1);
-            --amber: #f59e0b;
         }}
         * {{ margin:0; padding:0; box-sizing:border-box; }}
         body {{ font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }}
-
-        /* HEADER */
         .header {{ background:var(--surface); border-bottom:1px solid var(--border); padding:14px 24px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:100; }}
         .brand {{ display:flex; align-items:center; gap:10px; }}
         .brand-icon {{ width:34px; height:34px; background:var(--green-dim); border:1px solid var(--green-border); border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:17px; }}
@@ -850,8 +935,6 @@ async def dashboard(request: Request, business_id: int):
         @keyframes pulse {{ 0%,100%{{opacity:1}} 50%{{opacity:0.3}} }}
         .btn-presencial {{ background:var(--green); color:#000; border:none; padding:7px 13px; border-radius:8px; font-size:0.78rem; font-weight:700; cursor:pointer; font-family:inherit; }}
         .btn-refresh {{ background:var(--surface2); color:var(--muted); border:1px solid var(--border); padding:7px 11px; border-radius:8px; font-size:0.8rem; cursor:pointer; font-family:inherit; }}
-
-        /* TABS */
         .tabs {{ background:var(--surface); border-bottom:1px solid var(--border); padding:0 24px; display:flex; }}
         .tab {{ padding:11px 16px; font-size:0.8rem; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; font-weight:500; transition:all 0.15s; display:flex; align-items:center; gap:5px; user-select:none; }}
         .tab.active {{ color:var(--text); border-bottom-color:var(--green); }}
@@ -859,11 +942,7 @@ async def dashboard(request: Request, business_id: int):
         .tab.active .tab-count {{ background:var(--green-dim); color:var(--green); }}
         .tab-content {{ display:none; }}
         .tab-content.active {{ display:block; }}
-
-        /* CONTAINER */
         .container {{ max-width:1020px; margin:0 auto; padding:22px 20px; }}
-
-        /* STATS */
         .stats-row {{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:22px; }}
         .stat-card {{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:14px 16px; }}
         .stat-label {{ font-size:0.68rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:7px; }}
@@ -871,13 +950,9 @@ async def dashboard(request: Request, business_id: int):
         .stat-sub {{ font-size:0.68rem; color:var(--muted); margin-top:4px; }}
         .stat-green .stat-value {{ color:var(--green); }}
         .stat-blue .stat-value {{ color:var(--blue); }}
-
-        /* SECTION */
         .section-header {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }}
         .section-title {{ font-size:0.72rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.07em; }}
         .section-right {{ font-size:0.72rem; color:var(--muted); font-family:'DM Mono',monospace; }}
-
-        /* APPT CARDS */
         .appt-list {{ display:flex; flex-direction:column; gap:7px; margin-bottom:26px; }}
         .appt-card {{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:12px 14px; display:flex; align-items:center; gap:12px; transition:border-color 0.15s; }}
         .appt-card:hover {{ border-color:#333; }}
@@ -887,17 +962,14 @@ async def dashboard(request: Request, business_id: int):
         .appt-name {{ font-size:0.85rem; font-weight:600; }}
         .appt-meta {{ font-size:0.72rem; color:var(--muted); margin-top:2px; }}
         .appt-actions {{ display:flex; gap:5px; align-items:center; flex-shrink:0; }}
-
-        /* BADGES */
-        .badge {{ padding:3px 8px; border-radius:6px; font-size:0.68rem; font-weight:600; white-space:nowrap; }}
+        .badge {{ padding:3px 8px; border-radius:6px; font-size:0.68rem; font-weight:600; white-space:nowrap; flex-shrink:0; }}
         .badge-green {{ background:var(--green-dim); color:var(--green); }}
         .badge-blue {{ background:var(--blue-dim); color:var(--blue); }}
         .badge-red {{ background:var(--red-dim); color:var(--red); }}
-
-        /* BUTTONS */
         .btn-done {{ background:var(--green-dim); color:var(--green); border:1px solid var(--green-border); padding:5px 11px; border-radius:7px; font-size:0.73rem; font-weight:600; cursor:pointer; font-family:inherit; white-space:nowrap; }}
         .btn-done:hover {{ background:rgba(34,197,94,0.2); }}
-        .btn-dots-sm {{ background:var(--surface2); color:var(--muted); border:1px solid var(--border); padding:5px 9px; border-radius:7px; font-size:0.85rem; cursor:pointer; font-family:inherit; position:relative; }}
+        .dots-wrap {{ position:relative; display:inline-block; }}
+        .btn-dots-sm {{ background:var(--surface2); color:var(--muted); border:1px solid var(--border); padding:5px 9px; border-radius:7px; font-size:0.85rem; cursor:pointer; font-family:inherit; }}
         .btn-edit-sm {{ background:var(--surface2); color:var(--muted); border:1px solid var(--border); padding:5px 9px; border-radius:7px; font-size:0.78rem; cursor:pointer; font-family:inherit; }}
         .drop-menu {{ display:none; position:absolute; right:0; top:110%; background:var(--surface); border:1px solid var(--border); border-radius:9px; box-shadow:0 8px 24px rgba(0,0,0,0.4); z-index:200; min-width:130px; overflow:hidden; text-align:left; }}
         .drop-menu.open {{ display:block; }}
@@ -905,16 +977,14 @@ async def dashboard(request: Request, business_id: int):
         .drop-item:hover {{ background:var(--surface2); }}
         .drop-item.danger {{ color:var(--red); }}
         .drop-item.danger:hover {{ background:var(--red-dim); }}
-
-        /* TABLE */
         .table-card {{ background:var(--surface); border:1px solid var(--border); border-radius:11px; overflow:visible; }}
         .table-header {{ padding:13px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }}
         .search-row {{ display:flex; gap:7px; }}
         .search-input {{ background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:6px 11px; border-radius:7px; font-size:0.77rem; font-family:inherit; outline:none; width:160px; }}
         .search-input::placeholder {{ color:var(--muted); }}
-        table {{ width:100%; border-collapse:collapse; }}
+        table {{ width:100%; border-collapse:collapse; table-layout:fixed; }}
         th {{ padding:9px 14px; text-align:left; font-size:0.67rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid var(--border); }}
-        td {{ padding:11px 14px; font-size:0.8rem; vertical-align:middle; }}
+        td {{ padding:11px 14px; font-size:0.8rem; vertical-align:middle; overflow:hidden; }}
         tbody tr {{ border-bottom:1px solid var(--border); }}
         tbody tr:last-child {{ border-bottom:none; }}
         tr:hover td {{ background:rgba(255,255,255,0.015); }}
@@ -922,15 +992,14 @@ async def dashboard(request: Request, business_id: int):
         .td-time {{ display:block; font-size:0.7rem; color:var(--muted); font-family:'DM Mono',monospace; margin-top:1px; }}
         .td-name {{ font-weight:500; }}
         .td-phone {{ font-size:0.75rem; color:var(--muted); font-family:'DM Mono',monospace; }}
-        table {{ table-layout: fixed; width: 100%; }}
-        table th:nth-last-child(2), table td:nth-last-child(2) {{ width:140px; text-align:left; padding-right:8px; box-sizing:border-box; overflow:hidden; }}
-        table th:last-child, table td:last-child {{ width:150px; padding-right:16px; box-sizing:border-box; overflow:visible; border-left:none; background:transparent; }}
-        .dots-wrap {{ position:relative; display:inline-block; }}
-
-
+        .td-actions {{ overflow:visible; }}
+        table th:nth-child(1), table td:nth-child(1) {{ width:130px; }}
+        table th:nth-child(2), table td:nth-child(2) {{ width:auto; }}
+        table th:nth-child(3), table td:nth-child(3) {{ width:120px; }}
+        table th:nth-child(4), table td:nth-child(4) {{ width:130px; }}
+        table th:nth-child(5), table td:nth-child(5) {{ width:110px; }}
+        table th:nth-child(6), table td:nth-child(6) {{ width:160px; overflow:visible; }}
         .empty-state {{ text-align:center; padding:36px; color:var(--muted); font-size:0.82rem; }}
-
-        /* MODAL */
         .modal-overlay {{ display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:300; justify-content:center; align-items:center; }}
         .modal-overlay.active {{ display:flex; }}
         .modal {{ background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:26px; width:400px; max-width:95%; }}
@@ -941,7 +1010,6 @@ async def dashboard(request: Request, business_id: int):
         .btn-save {{ background:var(--green); color:#000; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; font-size:0.82rem; font-weight:700; font-family:inherit; }}
         .btn-cancel-modal {{ background:var(--surface2); color:var(--muted); border:1px solid var(--border); padding:8px 16px; border-radius:8px; cursor:pointer; font-size:0.82rem; font-family:inherit; }}
         .error-msg {{ color:var(--red); font-size:0.78rem; margin-top:7px; display:none; }}
-
         @media(max-width:640px) {{
             .stats-row {{ grid-template-columns:repeat(2,1fr); }}
             .header {{ padding:12px 16px; }}
@@ -975,8 +1043,6 @@ async def dashboard(request: Request, business_id: int):
 </div>
 
 <div class="container">
-
-    <!-- STATS -->
     <div class="stats-row">
         <div class="stat-card">
             <div class="stat-label">Hoy</div>
@@ -1000,18 +1066,14 @@ async def dashboard(request: Request, business_id: int):
         </div>
     </div>
 
-    <!-- HOY TAB -->
     <div id="tab-hoy" class="tab-content active">
         <div class="section-header">
             <div class="section-title">Citas de hoy</div>
             <div class="section-right">{DIAS_ES[now.weekday()]} {now.day} {MESES_ES[now.month-1]} {now.year}</div>
         </div>
-        <div class="appt-list">
-            {build_today_cards(today_reservations)}
-        </div>
+        <div class="appt-list">{build_today_cards(today_reservations)}</div>
     </div>
 
-    <!-- PROXIMAS TAB -->
     <div id="tab-proximas" class="tab-content">
         <div class="table-card">
             <div class="table-header">
@@ -1029,7 +1091,6 @@ async def dashboard(request: Request, business_id: int):
         </div>
     </div>
 
-    <!-- HISTORIAL TAB -->
     <div id="tab-historial" class="tab-content">
         <div class="table-card">
             <div class="table-header">
@@ -1041,10 +1102,8 @@ async def dashboard(request: Request, business_id: int):
             </table>
         </div>
     </div>
-
 </div>
 
-<!-- EDIT MODAL -->
 <div class="modal-overlay" id="editModal">
     <div class="modal">
         <h2>✏️ Editar Reserva</h2>
@@ -1068,7 +1127,6 @@ async def dashboard(request: Request, business_id: int):
     </div>
 </div>
 
-<!-- WALKIN MODAL -->
 <div class="modal-overlay" id="walkinModal">
     <div class="modal">
         <h2>🚶 Reserva Presencial</h2>
@@ -1089,6 +1147,8 @@ async def dashboard(request: Request, business_id: int):
 </div>
 
 <script>
+    const BIZ_ID = '{business_id}';
+
     function switchTab(name, el) {{
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -1097,7 +1157,7 @@ async def dashboard(request: Request, business_id: int):
     }}
 
     document.addEventListener('click', function(e) {{
-        if (!e.target.closest('.btn-dots-sm')) {{
+        if (!e.target.closest('.dots-wrap')) {{
             document.querySelectorAll('.drop-menu').forEach(m => m.classList.remove('open'));
         }}
     }});
@@ -1151,7 +1211,9 @@ async def dashboard(request: Request, business_id: int):
             status: document.getElementById('editStatus').value
         }};
         const res = await fetch(`/api/reservation/${{id}}/edit`, {{
-            method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(data)
+            method:'POST',
+            headers:{{'Content-Type':'application/json','X-Business-Id':BIZ_ID}},
+            body:JSON.stringify(data)
         }});
         const result = await res.json();
         if (result.success) {{ closeModal('editModal'); location.reload(); }}
@@ -1169,7 +1231,9 @@ async def dashboard(request: Request, business_id: int):
             datetime: date + ' ' + hour
         }};
         const res = await fetch('/api/reservation/walkin', {{
-            method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(data)
+            method:'POST',
+            headers:{{'Content-Type':'application/json','X-Business-Id':BIZ_ID}},
+            body:JSON.stringify(data)
         }});
         const result = await res.json();
         if (result.success) {{ closeModal('walkinModal'); location.reload(); }}
@@ -1182,7 +1246,10 @@ async def dashboard(request: Request, business_id: int):
 
     async function completeReservation(id) {{
         if (!confirm('¿Marcar como completada?')) return;
-        const res = await fetch(`/api/reservation/${{id}}/complete`, {{method:'POST'}});
+        const res = await fetch(`/api/reservation/${{id}}/complete`, {{
+            method:'POST',
+            headers:{{'X-Business-Id':BIZ_ID}}
+        }});
         const result = await res.json();
         if (result.success) location.reload();
         else alert('Error.');
@@ -1190,7 +1257,10 @@ async def dashboard(request: Request, business_id: int):
 
     async function cancelReservation(id) {{
         if (!confirm('¿Cancelar esta reserva?')) return;
-        const res = await fetch(`/api/reservation/${{id}}/cancel`, {{method:'POST'}});
+        const res = await fetch(`/api/reservation/${{id}}/cancel`, {{
+            method:'POST',
+            headers:{{'X-Business-Id':BIZ_ID}}
+        }});
         const result = await res.json();
         if (result.success) location.reload();
         else alert('Error al cancelar.');
