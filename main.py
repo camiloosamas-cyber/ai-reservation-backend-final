@@ -301,9 +301,10 @@ REGLAS:
 - Horario válido: 9:00 AM a 7:00 PM (09:00 a 19:00). Las 6:00 PM = 18:00, que ES válido. Solo rechaza horas antes de las 9:00 AM o después de las 7:00 PM (19:00).
 - El formato de fecha SIEMPRE debe ser: YYYY-MM-DD
 - El formato de hora SIEMPRE debe ser: HH:MM
-- El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año.
 - Eres el asistente virtual oficial de {config["name"]}. Si alguien pregunta si este es el número correcto o quién eres, confirma que sí.
-- Las fechas en los mensajes ya vienen resueltas como YYYY-MM-DD. SIEMPRE usa exactamente esa fecha en el resumen y en el JSON. NUNCA calcules ni inventes fechas.
+- REGLA CRÍTICA DE FECHAS: Las fechas en formato YYYY-MM-DD que aparecen en el mensaje del cliente YA fueron calculadas por el sistema. Tu trabajo es COPIAR esa fecha exactamente como aparece. Está PROHIBIDO calcular, deducir o inventar cualquier fecha. Si ves "2026-05-01" en el mensaje, usas "2026-05-01". Si ves "2026-12-15", usas "2026-12-15". COPIA, NO PIENSES.
+- NUNCA uses la fecha de hoy a menos que el mensaje del cliente literalmente contenga la fecha de hoy en formato YYYY-MM-DD.
+- Si el cliente no menciona ninguna fecha y no hay fecha YYYY-MM-DD en el mensaje, PREGÚNTALE qué fecha quiere. NO asumas.
 - Si el cliente pregunta por disponibilidad, horarios disponibles, o cuándo pueden atenderlo, responde SOLO con: CONSULTA_DISPONIBILIDAD"""
 
 def ask_openai(config, history, new_message):
@@ -460,7 +461,9 @@ async def webhook(request: Request):
     resolved_msg = resolve_dates(incoming_msg)
     if resolved_msg != incoming_msg:
         print(f"📅 Date resolved: '{incoming_msg}' → '{resolved_msg}'")
-        resolved_msg = resolved_msg + f" [FECHA RESUELTA POR SISTEMA: usa exactamente esta fecha en el resumen]"
+        date_in_msg = re.search(r"(\d{4}-\d{2}-\d{2})", resolved_msg)
+        if date_in_msg:
+            resolved_msg = resolved_msg + f" [INSTRUCCIÓN OBLIGATORIA AL ASISTENTE: La fecha correcta para esta cita es {date_in_msg.group(1)}. Debes usar EXACTAMENTE esta fecha: {date_in_msg.group(1)}. No uses ninguna otra fecha. No inventes fechas.]"
 
     cancel_keywords = ["cancelar", "cancela", "cancel", "quiero cancelar", "cancelar cita"]
     reschedule_keywords = ["cambiar", "reschedule", "reprogramar", "cambiar cita", "mover cita", "otra fecha", "otro horario"]
