@@ -670,6 +670,18 @@ async def api_walkin_booking(request: Request):
     except Exception as e:
         return JSONResponse({"success": False}, status_code=500)
 
+@app.get("/api/reservations/{business_id}")
+async def api_get_reservations(business_id: int, request: Request):
+    if not check_dashboard_auth(request, business_id):
+        return JSONResponse({"success": False}, status_code=401)
+    if not supabase:
+        return JSONResponse({"success": False}, status_code=500)
+    try:
+        result = supabase.table("reservations").select("*").eq("business_id", business_id).order("datetime").execute()
+        return JSONResponse({"success": True, "reservations": result.data or []})
+    except Exception as e:
+        return JSONResponse({"success": False}, status_code=500)
+
 # =====================================================================
 # DASHBOARD LOGIN
 # =====================================================================
@@ -845,7 +857,7 @@ async def dashboard(request: Request, business_id: int):
                 actions = f'<button class="btn-edit-sm" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️</button>'
 
             cards += f"""
-            <div class="appt-card">
+            <div class="appt-card" data-rid="{rid}">
                 <div class="appt-time">{time_part}</div>
                 <div class="appt-sep"></div>
                 <div class="appt-info">
@@ -891,7 +903,7 @@ async def dashboard(request: Request, business_id: int):
                 actions = f'<button class="btn-edit-sm" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️</button>'
 
             rows += f"""
-            <tr>
+            <tr data-rid="{rid}">
                 <td><span class="td-date">{date_part}</span><span class="td-time">{time_part}</span></td>
                 <td class="td-name">{r.get("client_name", "-")}</td>
                 <td>{r.get("service", "-")}</td>
@@ -969,6 +981,12 @@ async def dashboard(request: Request, business_id: int):
         .badge-green {{ background:var(--green-dim); color:var(--green); }}
         .badge-blue {{ background:var(--blue-dim); color:var(--blue); }}
         .badge-red {{ background:var(--red-dim); color:var(--red); }}
+        @keyframes newRowPulse {{
+            0% {{ background:rgba(34,197,94,0.25); }}
+            100% {{ background:transparent; }}
+        }}
+        .row-new td {{ animation:newRowPulse 3s ease-out; }}
+        .appt-card.row-new {{ animation:newRowPulse 3s ease-out; }}
         .btn-done {{ background:var(--green-dim); color:var(--green); border:1px solid var(--green-border); padding:5px 11px; border-radius:7px; font-size:0.73rem; font-weight:600; cursor:pointer; font-family:inherit; white-space:nowrap; }}
         .btn-done:hover {{ background:rgba(34,197,94,0.2); }}
         .dots-wrap {{ position:relative; display:inline-block; }}
@@ -1268,6 +1286,124 @@ async def dashboard(request: Request, business_id: int):
         if (result.success) location.reload();
         else alert('Error al cancelar.');
     }}
+    // ============ POLLING FOR NEW RESERVATIONS ============
+    let lastReservationIds = new Set();
+    let pollingPaused = false;
+
+    document.querySelectorAll('[data-rid]').forEach(el => {{
+        lastReservationIds.add(el.getAttribute('data-rid'));
+    }});
+
+    function isModalOpen() {{
+        return document.querySelector('.modal-overlay.active') !== null;
+    }}
+
+    document.addEventListener('visibilitychange', () => {{
+        pollingPaused = document.hidden;
+    }});
+
+    function formatDatetime(dt) {{
+        const dias = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+        const meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+        try {{
+            const d = new Date(dt.replace(' ','T'));
+            const datePart = `${{dias[d.getDay()]}} ${{d.getDate()}} ${{meses[d.getMonth()]}}`;
+            let h = d.getHours();
+            const m = String(d.getMinutes()).padStart(2,'0');
+            const period = h < 12 ? 'AM' : 'PM';
+            h = h % 12 || 12;
+            return [datePart, `${{h}}:${{m}} ${{period}}`];
+        }} catch(e) {{ return [dt, '']; }}
+    }}
+
+    function escapeHtml(s) {{
+        if (!s) return '-';
+        return String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}})[c]);
+    }}
+
+    function buildActionsJS(r) {{
+        const rid = r.reservation_id;
+        const status = r.status;
+        const nameSafe = (r.client_name || '').replace(/'/g,"\\\\'");
+        const serviceSafe = (r.service || '').replace(/'/g,"\\\\'");
+        const dtEdit = (r.datetime || '').slice(0,16).replace('T',' ');
+        if (status === 'confirmed') {{
+            return `<button class="btn-done" onclick="completeReservation(${{rid}})">✔ Listo</button>`
+                + `<div class="dots-wrap"><button class="btn-dots-sm" onclick="toggleDropdown(this)">⋯</button>`
+                + `<div class="drop-menu">`
+                + `<div class="drop-item" onclick="openEdit(${{rid}},'${{nameSafe}}','${{serviceSafe}}','${{dtEdit}}','${{status}}')">✏️ Editar</div>`
+                + `<div class="drop-item danger" onclick="cancelReservation(${{rid}})">✖ Cancelar</div>`
+                + `</div></div>`;
+        }}
+        return `<button class="btn-edit-sm" onclick="openEdit(${{rid}},'${{nameSafe}}','${{serviceSafe}}','${{dtEdit}}','${{status}}')">✏️</button>`;
+    }}
+
+    function buildBadgeJS(status) {{
+        if (status === 'confirmed') return '<span class="badge badge-green">Confirmada</span>';
+        if (status === 'completed') return '<span class="badge badge-blue">Completada</span>';
+        return '<span class="badge badge-red">Cancelada</span>';
+    }}
+
+    function renderTableRow(r, isNew) {{
+        const [datePart, timePart] = formatDatetime(r.datetime || '');
+        const isPresencial = r.contact_phone === 'presencial';
+        const phoneDisplay = isPresencial ? '🚶 Presencial' : (r.contact_phone || '-');
+        const newClass = isNew ? 'row-new' : '';
+        return `<tr data-rid="${{r.reservation_id}}" class="${{newClass}}">`
+            + `<td><span class="td-date">${{datePart}}</span><span class="td-time">${{timePart}}</span></td>`
+            + `<td class="td-name">${{escapeHtml(r.client_name)}}</td>`
+            + `<td>${{escapeHtml(r.service)}}</td>`
+            + `<td class="td-phone">${{phoneDisplay}}</td>`
+            + `<td>${{buildBadgeJS(r.status)}}</td>`
+            + `<td class="td-actions">${{buildActionsJS(r)}}</td>`
+            + `</tr>`;
+    }}
+
+    async function pollReservations() {{
+        if (pollingPaused || isModalOpen()) return;
+        try {{
+            const res = await fetch(`/api/reservations/${{BIZ_ID}}`, {{
+                headers:{{'X-Business-Id':BIZ_ID}}
+            }});
+            if (!res.ok) return;
+            const data = await res.json();
+            if (!data.success) return;
+
+            const reservations = data.reservations;
+            const today = new Date().toISOString().slice(0,10);
+            const futureRes = reservations.filter(r => (r.datetime || '').slice(0,10) > today);
+
+            const currentIds = new Set(reservations.map(r => String(r.reservation_id)));
+            const newIds = new Set();
+            currentIds.forEach(id => {{ if (!lastReservationIds.has(id)) newIds.add(id); }});
+
+            if (newIds.size === 0 && currentIds.size === lastReservationIds.size) return;
+
+            const futureBody = document.getElementById('futureBody');
+            if (futureBody) {{
+                if (futureRes.length === 0) {{
+                    futureBody.innerHTML = '<tr><td colspan="6" class="empty-state">Sin citas</td></tr>';
+                }} else {{
+                    futureBody.innerHTML = futureRes.map(r =>
+                        renderTableRow(r, newIds.has(String(r.reservation_id)))
+                    ).join('');
+                }}
+            }}
+
+            lastReservationIds = currentIds;
+
+            const tabs = document.querySelectorAll('.tab-count');
+            const todayRes = reservations.filter(r => (r.datetime || '').slice(0,10) === today);
+            const pastRes = reservations.filter(r => (r.datetime || '').slice(0,10) < today);
+            if (tabs[0]) tabs[0].textContent = todayRes.length;
+            if (tabs[1]) tabs[1].textContent = futureRes.length;
+            if (tabs[2]) tabs[2].textContent = pastRes.length;
+        }} catch(e) {{
+            console.log('Poll error:', e);
+        }}
+    }}
+
+    setInterval(pollReservations, 10000);
 </script>
 </body>
 </html>"""
