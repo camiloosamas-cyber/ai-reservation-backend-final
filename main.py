@@ -1380,8 +1380,12 @@ async def dashboard(request: Request, business_id: int):
             const newIds = new Set();
             currentIds.forEach(id => {{ if (!lastReservationIds.has(id)) newIds.add(id); }});
 
-            if (newIds.size === 0 && currentIds.size === lastReservationIds.size) return;
-
+            if (currentIds.size === lastReservationIds.size) {{
+            let same = true;
+            currentIds.forEach(id => {{ if (!lastReservationIds.has(id)) same = false; }});
+            if (same) return;
+            }}
+            
             const futureBody = document.getElementById('futureBody');
             if (futureBody) {{
                 if (futureRes.length === 0) {{
