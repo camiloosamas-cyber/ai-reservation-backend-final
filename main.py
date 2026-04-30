@@ -103,6 +103,7 @@ WEEKDAY_MAP = {
 def resolve_dates(text: str) -> str:
     today = datetime.now(LOCAL_TZ).date()
     result = text
+    print(f"🔍 resolve_dates input: '{text}' | today={today} weekday={today.weekday()}")
 
     if re.search(r"\bpasado\s+ma[ñn]ana\b", result, re.IGNORECASE):
         target = today + timedelta(days=2)
@@ -126,7 +127,9 @@ def resolve_dates(text: str) -> str:
                 days_ahead += 7
             target = today + timedelta(days=days_ahead)
             result = re.sub(pattern, target.strftime("%Y-%m-%d"), result, flags=re.IGNORECASE)
+            print(f"🔍 Matched '{day_es}' → replacing with {target.strftime('%Y-%m-%d')}")
 
+    print(f"🔍 resolve_dates output: '{result}'")
     return result
 
 # =====================================================================
