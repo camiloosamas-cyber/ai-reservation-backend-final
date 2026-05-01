@@ -103,7 +103,6 @@ WEEKDAY_MAP = {
 def resolve_dates(text: str) -> str:
     today = datetime.now(LOCAL_TZ).date()
     result = text
-    print(f"🔍 resolve_dates input: '{text}' | today={today} weekday={today.weekday()}")
 
     if re.search(r"\bpasado\s+ma[ñn]ana\b", result, re.IGNORECASE):
         target = today + timedelta(days=2)
@@ -120,18 +119,14 @@ def resolve_dates(text: str) -> str:
         pattern = rf"\b(?:este\s+|el\s+(?:pr[oó]ximo\s+)?|pr[oó]ximo\s+)?{day_es}\b"
         match = re.search(pattern, result, re.IGNORECASE)
         if match:
-            matched_text = match.group()
-            is_proximo = bool(re.search(r"pr[oó]ximo", matched_text, re.IGNORECASE))
             days_ahead = (day_num - today.weekday()) % 7
-            if is_proximo:
-                if days_ahead == 0:
-                    days_ahead = 7
+            if days_ahead == 0:
+                days_ahead = 7
+            if re.search(r"pr[oó]ximo", match.group(), re.IGNORECASE):
                 days_ahead += 7
             target = today + timedelta(days=days_ahead)
             result = re.sub(pattern, target.strftime("%Y-%m-%d"), result, flags=re.IGNORECASE)
-            print(f"🔍 Matched '{day_es}' → replacing with {target.strftime('%Y-%m-%d')}")
 
-    print(f"🔍 resolve_dates output: '{result}'")
     return result
 
 # =====================================================================
@@ -306,10 +301,9 @@ REGLAS:
 - Horario válido: 9:00 AM a 7:00 PM (09:00 a 19:00). Las 6:00 PM = 18:00, que ES válido. Solo rechaza horas antes de las 9:00 AM o después de las 7:00 PM (19:00).
 - El formato de fecha SIEMPRE debe ser: YYYY-MM-DD
 - El formato de hora SIEMPRE debe ser: HH:MM
+- El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año.
 - Eres el asistente virtual oficial de {config["name"]}. Si alguien pregunta si este es el número correcto o quién eres, confirma que sí.
-- REGLA CRÍTICA DE FECHAS: Las fechas en formato YYYY-MM-DD que aparecen en el mensaje del cliente YA fueron calculadas por el sistema. Tu trabajo es COPIAR esa fecha exactamente como aparece. Está PROHIBIDO calcular, deducir o inventar cualquier fecha. Si ves "2026-05-01" en el mensaje, usas "2026-05-01". Si ves "2026-12-15", usas "2026-12-15". COPIA, NO PIENSES.
-- NUNCA uses la fecha de hoy a menos que el mensaje del cliente literalmente contenga la fecha de hoy en formato YYYY-MM-DD.
-- Si el cliente no menciona ninguna fecha y no hay fecha YYYY-MM-DD en el mensaje, PREGÚNTALE qué fecha quiere. NO asumas.
+- Las fechas en los mensajes ya vienen resueltas como YYYY-MM-DD. SIEMPRE usa exactamente esa fecha en el resumen y en el JSON. NUNCA calcules ni inventes fechas.
 - Si el cliente pregunta por disponibilidad, horarios disponibles, o cuándo pueden atenderlo, responde SOLO con: CONSULTA_DISPONIBILIDAD"""
 
 def ask_openai(config, history, new_message):
@@ -466,9 +460,7 @@ async def webhook(request: Request):
     resolved_msg = resolve_dates(incoming_msg)
     if resolved_msg != incoming_msg:
         print(f"📅 Date resolved: '{incoming_msg}' → '{resolved_msg}'")
-        date_in_msg = re.search(r"(\d{4}-\d{2}-\d{2})", resolved_msg)
-        if date_in_msg:
-            resolved_msg = resolved_msg + f" [INSTRUCCIÓN OBLIGATORIA AL ASISTENTE: La fecha correcta para esta cita es {date_in_msg.group(1)}. Debes usar EXACTAMENTE esta fecha: {date_in_msg.group(1)}. No uses ninguna otra fecha. No inventes fechas.]"
+        resolved_msg = resolved_msg + f" [FECHA RESUELTA POR SISTEMA: usa exactamente esta fecha en el resumen]"
 
     cancel_keywords = ["cancelar", "cancela", "cancel", "quiero cancelar", "cancelar cita"]
     reschedule_keywords = ["cambiar", "reschedule", "reprogramar", "cambiar cita", "mover cita", "otra fecha", "otro horario"]
@@ -552,52 +544,14 @@ async def webhook(request: Request):
     if "RESERVA_CONFIRMADA:" not in reply:
         confirmation_data = extract_confirmation_data(reply)
         if confirmation_data:
-            # SAFETY NET: also override the summary date if our code knows better
-            trusted_date = None
-            for msg in history[-6:]:
-                if msg.get("role") == "user":
-                    found = re.search(r"(\d{4}-\d{2}-\d{2})", msg.get("content", ""))
-                    if found:
-                        trusted_date = found.group(1)
-            found_now = re.search(r"(\d{4}-\d{2}-\d{2})", resolved_msg)
-            if found_now:
-                trusted_date = found_now.group(1)
-            if trusted_date and confirmation_data.get("date") != trusted_date:
-                print(f"⚠️ Summary date override: '{confirmation_data['date']}' → '{trusted_date}'")
-                confirmation_data["date"] = trusted_date
             reply = format_confirmation(confirmation_data)
             print(f"✅ Confirmation reformatted for {from_number}")
-            
+
     if "RESERVA_CONFIRMADA:" in reply:
         try:
             json_str = reply.split("RESERVA_CONFIRMADA:")[1].strip()
             json_end = json_str.index("}") + 1
             extracted = json.loads(json_str[:json_end])
-            
-            # SAFETY NET: if our date resolver found a date in the conversation,
-            # override whatever GPT produced. Our code knows the truth.
-            correct_date = None
-            for msg in history[-6:]:
-                if msg.get("role") == "user":
-                    found = re.search(r"(\d{4}-\d{2}-\d{2})", msg.get("content", ""))
-                    if found:
-                        correct_date = found.group(1)
-            # also check the current resolved message
-            found_now = re.search(r"(\d{4}-\d{2}-\d{2})", resolved_msg)
-            if found_now:
-                correct_date = found_now.group(1)
-            
-            if correct_date and extracted.get("datetime"):
-                gpt_dt = extracted["datetime"]
-                # extract time from whatever GPT gave us
-                time_match = re.search(r"(\d{2}:\d{2})", gpt_dt)
-                gpt_time = time_match.group(1) if time_match else "09:00"
-                # override with our trusted date + GPT's time
-                corrected_dt = f"{correct_date} {gpt_time}"
-                if corrected_dt != gpt_dt:
-                    print(f"⚠️ Date override: GPT said '{gpt_dt}' → forcing '{corrected_dt}'")
-                    extracted["datetime"] = corrected_dt
-            
             if not is_slot_available(extracted.get("datetime"), config["business_id"]):
                 reply = "Lo siento, ese horario ya está lleno 😅 ¿Puedes elegir otra hora?"
             else:
@@ -710,18 +664,6 @@ async def api_walkin_booking(request: Request):
             "status": "confirmed"
         }).execute()
         return JSONResponse({"success": True})
-    except Exception as e:
-        return JSONResponse({"success": False}, status_code=500)
-
-@app.get("/api/reservations/{business_id}")
-async def api_get_reservations(business_id: int, request: Request):
-    if not check_dashboard_auth(request, business_id):
-        return JSONResponse({"success": False}, status_code=401)
-    if not supabase:
-        return JSONResponse({"success": False}, status_code=500)
-    try:
-        result = supabase.table("reservations").select("*").eq("business_id", business_id).order("datetime").execute()
-        return JSONResponse({"success": True, "reservations": result.data or []})
     except Exception as e:
         return JSONResponse({"success": False}, status_code=500)
 
@@ -900,7 +842,7 @@ async def dashboard(request: Request, business_id: int):
                 actions = f'<button class="btn-edit-sm" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️</button>'
 
             cards += f"""
-            <div class="appt-card" data-rid="{rid}">
+            <div class="appt-card">
                 <div class="appt-time">{time_part}</div>
                 <div class="appt-sep"></div>
                 <div class="appt-info">
@@ -946,7 +888,7 @@ async def dashboard(request: Request, business_id: int):
                 actions = f'<button class="btn-edit-sm" onclick="openEdit({rid},\'{name_safe}\',\'{service_safe}\',\'{dt_edit}\',\'{status}\')">✏️</button>'
 
             rows += f"""
-            <tr data-rid="{rid}">
+            <tr>
                 <td><span class="td-date">{date_part}</span><span class="td-time">{time_part}</span></td>
                 <td class="td-name">{r.get("client_name", "-")}</td>
                 <td>{r.get("service", "-")}</td>
@@ -1024,12 +966,6 @@ async def dashboard(request: Request, business_id: int):
         .badge-green {{ background:var(--green-dim); color:var(--green); }}
         .badge-blue {{ background:var(--blue-dim); color:var(--blue); }}
         .badge-red {{ background:var(--red-dim); color:var(--red); }}
-        @keyframes newRowPulse {{
-            0% {{ background:rgba(34,197,94,0.25); }}
-            100% {{ background:transparent; }}
-        }}
-        .row-new td {{ animation:newRowPulse 3s ease-out; }}
-        .appt-card.row-new {{ animation:newRowPulse 3s ease-out; }}
         .btn-done {{ background:var(--green-dim); color:var(--green); border:1px solid var(--green-border); padding:5px 11px; border-radius:7px; font-size:0.73rem; font-weight:600; cursor:pointer; font-family:inherit; white-space:nowrap; }}
         .btn-done:hover {{ background:rgba(34,197,94,0.2); }}
         .dots-wrap {{ position:relative; display:inline-block; }}
@@ -1329,128 +1265,6 @@ async def dashboard(request: Request, business_id: int):
         if (result.success) location.reload();
         else alert('Error al cancelar.');
     }}
-    // ============ POLLING FOR NEW RESERVATIONS ============
-    let lastReservationIds = new Set();
-    let pollingPaused = false;
-
-    document.querySelectorAll('[data-rid]').forEach(el => {{
-        lastReservationIds.add(el.getAttribute('data-rid'));
-    }});
-
-    function isModalOpen() {{
-        return document.querySelector('.modal-overlay.active') !== null;
-    }}
-
-    document.addEventListener('visibilitychange', () => {{
-        pollingPaused = document.hidden;
-    }});
-
-    function formatDatetime(dt) {{
-        const dias = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
-        const meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-        try {{
-            const d = new Date(dt.replace(' ','T'));
-            const datePart = `${{dias[d.getDay()]}} ${{d.getDate()}} ${{meses[d.getMonth()]}}`;
-            let h = d.getHours();
-            const m = String(d.getMinutes()).padStart(2,'0');
-            const period = h < 12 ? 'AM' : 'PM';
-            h = h % 12 || 12;
-            return [datePart, `${{h}}:${{m}} ${{period}}`];
-        }} catch(e) {{ return [dt, '']; }}
-    }}
-
-    function escapeHtml(s) {{
-        if (!s) return '-';
-        return String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}})[c]);
-    }}
-
-    function buildActionsJS(r) {{
-        const rid = r.reservation_id;
-        const status = r.status;
-        const nameSafe = (r.client_name || '').replace(/'/g,"\\\\'");
-        const serviceSafe = (r.service || '').replace(/'/g,"\\\\'");
-        const dtEdit = (r.datetime || '').slice(0,16).replace('T',' ');
-        if (status === 'confirmed') {{
-            return `<button class="btn-done" onclick="completeReservation(${{rid}})">✔ Listo</button>`
-                + `<div class="dots-wrap"><button class="btn-dots-sm" onclick="toggleDropdown(this)">⋯</button>`
-                + `<div class="drop-menu">`
-                + `<div class="drop-item" onclick="openEdit(${{rid}},'${{nameSafe}}','${{serviceSafe}}','${{dtEdit}}','${{status}}')">✏️ Editar</div>`
-                + `<div class="drop-item danger" onclick="cancelReservation(${{rid}})">✖ Cancelar</div>`
-                + `</div></div>`;
-        }}
-        return `<button class="btn-edit-sm" onclick="openEdit(${{rid}},'${{nameSafe}}','${{serviceSafe}}','${{dtEdit}}','${{status}}')">✏️</button>`;
-    }}
-
-    function buildBadgeJS(status) {{
-        if (status === 'confirmed') return '<span class="badge badge-green">Confirmada</span>';
-        if (status === 'completed') return '<span class="badge badge-blue">Completada</span>';
-        return '<span class="badge badge-red">Cancelada</span>';
-    }}
-
-    function renderTableRow(r, isNew) {{
-        const [datePart, timePart] = formatDatetime(r.datetime || '');
-        const isPresencial = r.contact_phone === 'presencial';
-        const phoneDisplay = isPresencial ? '🚶 Presencial' : (r.contact_phone || '-');
-        const newClass = isNew ? 'row-new' : '';
-        return `<tr data-rid="${{r.reservation_id}}" class="${{newClass}}">`
-            + `<td><span class="td-date">${{datePart}}</span><span class="td-time">${{timePart}}</span></td>`
-            + `<td class="td-name">${{escapeHtml(r.client_name)}}</td>`
-            + `<td>${{escapeHtml(r.service)}}</td>`
-            + `<td class="td-phone">${{phoneDisplay}}</td>`
-            + `<td>${{buildBadgeJS(r.status)}}</td>`
-            + `<td class="td-actions">${{buildActionsJS(r)}}</td>`
-            + `</tr>`;
-    }}
-
-    async function pollReservations() {{
-        if (pollingPaused || isModalOpen()) return;
-        try {{
-            const res = await fetch(`/api/reservations/${{BIZ_ID}}`, {{
-                headers:{{'X-Business-Id':BIZ_ID}}
-            }});
-            if (!res.ok) return;
-            const data = await res.json();
-            if (!data.success) return;
-
-            const reservations = data.reservations;
-            const today = new Date().toISOString().slice(0,10);
-            const futureRes = reservations.filter(r => (r.datetime || '').slice(0,10) > today);
-
-            const currentIds = new Set(reservations.map(r => String(r.reservation_id)));
-            const newIds = new Set();
-            currentIds.forEach(id => {{ if (!lastReservationIds.has(id)) newIds.add(id); }});
-
-            if (currentIds.size === lastReservationIds.size) {{
-            let same = true;
-            currentIds.forEach(id => {{ if (!lastReservationIds.has(id)) same = false; }});
-            if (same) return;
-            }}
-            
-            const futureBody = document.getElementById('futureBody');
-            if (futureBody) {{
-                if (futureRes.length === 0) {{
-                    futureBody.innerHTML = '<tr><td colspan="6" class="empty-state">Sin citas</td></tr>';
-                }} else {{
-                    futureBody.innerHTML = futureRes.map(r =>
-                        renderTableRow(r, newIds.has(String(r.reservation_id)))
-                    ).join('');
-                }}
-            }}
-
-            lastReservationIds = currentIds;
-
-            const tabs = document.querySelectorAll('.tab-count');
-            const todayRes = reservations.filter(r => (r.datetime || '').slice(0,10) === today);
-            const pastRes = reservations.filter(r => (r.datetime || '').slice(0,10) < today);
-            if (tabs[0]) tabs[0].textContent = todayRes.length;
-            if (tabs[1]) tabs[1].textContent = futureRes.length;
-            if (tabs[2]) tabs[2].textContent = pastRes.length;
-        }} catch(e) {{
-            console.log('Poll error:', e);
-        }}
-    }}
-
-    setInterval(pollReservations, 10000);
 </script>
 </body>
 </html>"""
