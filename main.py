@@ -120,10 +120,12 @@ def resolve_dates(text: str) -> str:
         pattern = rf"\b(?:este\s+|el\s+(?:pr[oó]ximo\s+)?|pr[oó]ximo\s+)?{day_es}\b"
         match = re.search(pattern, result, re.IGNORECASE)
         if match:
+            matched_text = match.group()
+            is_proximo = bool(re.search(r"pr[oó]ximo", matched_text, re.IGNORECASE))
             days_ahead = (day_num - today.weekday()) % 7
-            if days_ahead == 0:
-                days_ahead = 7
-            if re.search(r"pr[oó]ximo", match.group(), re.IGNORECASE):
+            if is_proximo:
+                if days_ahead == 0:
+                    days_ahead = 7
                 days_ahead += 7
             target = today + timedelta(days=days_ahead)
             result = re.sub(pattern, target.strftime("%Y-%m-%d"), result, flags=re.IGNORECASE)
@@ -550,14 +552,52 @@ async def webhook(request: Request):
     if "RESERVA_CONFIRMADA:" not in reply:
         confirmation_data = extract_confirmation_data(reply)
         if confirmation_data:
+            # SAFETY NET: also override the summary date if our code knows better
+            trusted_date = None
+            for msg in history[-6:]:
+                if msg.get("role") == "user":
+                    found = re.search(r"(\d{4}-\d{2}-\d{2})", msg.get("content", ""))
+                    if found:
+                        trusted_date = found.group(1)
+            found_now = re.search(r"(\d{4}-\d{2}-\d{2})", resolved_msg)
+            if found_now:
+                trusted_date = found_now.group(1)
+            if trusted_date and confirmation_data.get("date") != trusted_date:
+                print(f"⚠️ Summary date override: '{confirmation_data['date']}' → '{trusted_date}'")
+                confirmation_data["date"] = trusted_date
             reply = format_confirmation(confirmation_data)
             print(f"✅ Confirmation reformatted for {from_number}")
-
+            
     if "RESERVA_CONFIRMADA:" in reply:
         try:
             json_str = reply.split("RESERVA_CONFIRMADA:")[1].strip()
             json_end = json_str.index("}") + 1
             extracted = json.loads(json_str[:json_end])
+            
+            # SAFETY NET: if our date resolver found a date in the conversation,
+            # override whatever GPT produced. Our code knows the truth.
+            correct_date = None
+            for msg in history[-6:]:
+                if msg.get("role") == "user":
+                    found = re.search(r"(\d{4}-\d{2}-\d{2})", msg.get("content", ""))
+                    if found:
+                        correct_date = found.group(1)
+            # also check the current resolved message
+            found_now = re.search(r"(\d{4}-\d{2}-\d{2})", resolved_msg)
+            if found_now:
+                correct_date = found_now.group(1)
+            
+            if correct_date and extracted.get("datetime"):
+                gpt_dt = extracted["datetime"]
+                # extract time from whatever GPT gave us
+                time_match = re.search(r"(\d{2}:\d{2})", gpt_dt)
+                gpt_time = time_match.group(1) if time_match else "09:00"
+                # override with our trusted date + GPT's time
+                corrected_dt = f"{correct_date} {gpt_time}"
+                if corrected_dt != gpt_dt:
+                    print(f"⚠️ Date override: GPT said '{gpt_dt}' → forcing '{corrected_dt}'")
+                    extracted["datetime"] = corrected_dt
+            
             if not is_slot_available(extracted.get("datetime"), config["business_id"]):
                 reply = "Lo siento, ese horario ya está lleno 😅 ¿Puedes elegir otra hora?"
             else:
