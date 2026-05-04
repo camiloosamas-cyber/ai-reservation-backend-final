@@ -291,7 +291,7 @@ FLUJO DE RESERVA:
 1. Saluda al cliente mencionando el nombre del negocio.
 2. Cuando el cliente quiera reservar, pídele su nombre completo, el servicio, la fecha y la hora. Recoge la información como el cliente la vaya dando.
 3. Si el cliente responde con información incompleta, solo pregunta por lo que falta. NUNCA hagas preguntas de confirmación de ningún tipo — ni del nombre, ni de la hora, ni del servicio. Si tienes toda la info, muestra el resumen directamente.
-4. Cuando tengas nombre, servicio, fecha Y hora en el mismo mensaje, muestra INMEDIATAMENTE el resumen sin hacer ninguna pregunta adicional.
+4. Cuando tengas nombre, servicio, fecha Y hora, muestra INMEDIATAMENTE el resumen sin hacer más preguntas.
 5. Cuando el cliente confirme, responde EXACTAMENTE con este JSON y nada más:
 RESERVA_CONFIRMADA:{{"name":"<nombre>","service":"<servicio>","datetime":"<YYYY-MM-DD HH:MM>"}}
 
@@ -303,14 +303,10 @@ REGLAS:
 - El formato de hora SIEMPRE debe ser: HH:MM
 - El año actual es 2026. Siempre usa 2026 cuando el cliente no especifique el año.
 - Eres el asistente virtual oficial de {config["name"]}. Si alguien pregunta si este es el número correcto o quién eres, confirma que sí.
-- Las fechas en los mensajes ya vienen resueltas como YYYY-MM-DD por el sistema. COPIA esa fecha exactamente en el resumen y en el JSON. Si el mensaje dice "2026-05-08", escribe "2026-05-08". Si el mensaje dice "2026-05-07", escribe "2026-05-07". PROHIBIDO calcular, cambiar o inventar fechas bajo ninguna circunstancia.
+- Las fechas en los mensajes ya vienen resueltas como YYYY-MM-DD por el sistema. COPIA esa fecha exactamente en el resumen y en el JSON. PROHIBIDO calcular, cambiar o inventar fechas bajo ninguna circunstancia.
 - "Corte de pelo", "corte de cabello", "pelo", "cabello", "un corte" son equivalentes al servicio "Corte". Reconoce variaciones del nombre del servicio.
 - Si el cliente pregunta por disponibilidad, horarios disponibles, o cuándo pueden atenderlo, responde SOLO con: CONSULTA_DISPONIBILIDAD
-- Si el cliente dice "a las 5 pm", "a las 3", "a las 17:00" o cualquier variación, eso ES la hora. No preguntes por la hora de nuevo.
-- Cuando el cliente envía su primer mensaje con toda la información (nombre, servicio, fecha, hora), extrae TODOS los datos de ese mensaje de una vez. No proceses cada dato por separado.
-- "pa el viernes", "el viernes", "este viernes" = usa la fecha YYYY-MM-DD que ya viene resuelta en el mensaje.
-- "pa las 3pm", "a las 3", "a las 15:00" = usa esa hora directamente.
-- "un corte", "corte de pelo", "pelo" = servicio "Corte"."""
+- Si el cliente dice "a las 5 pm", "a las 3", "a las 17:00" o cualquier variación, eso ES la hora. No preguntes por la hora de nuevo."""
 
 def ask_openai(config, history, new_message):
     system_prompt = build_system_prompt(config)
