@@ -467,8 +467,7 @@ async def webhook(request: Request):
 
     cancel_keywords = ["cancelar", "cancela", "cancel", "quiero cancelar", "cancelar cita"]
     reschedule_keywords = ["cambiar", "reschedule", "reprogramar", "cambiar cita", "mover cita", "otra fecha", "otro horario"]
-    availability_keywords = ["disponibilidad", "cuando tienen", "cuándo tienen", "qué días", "que dias", "horarios disponibles", "cuando puedo", "cuándo puedo"]
-
+    availability_keywords = [r"\bdisponibilidad\b", r"cuando tienen", r"cuándo tienen", r"qué días", r"que dias", r"horarios disponibles", r"cuando puedo", r"cuándo puedo"]
     def fmt_slot(s):
         h, m = map(int, s.split(":"))
         period = "AM" if h < 12 else "PM"
@@ -476,7 +475,7 @@ async def webhook(request: Request):
         if h12 == 0: h12 = 12
         return f"{h12}:{str(m).zfill(2)} {period}"
 
-    if any(kw in incoming_msg.lower() for kw in availability_keywords):
+    if any(re.search(kw, incoming_msg.lower()) for kw in availability_keywords):
         slots = get_available_slots(config["business_id"], config)
         if not slots:
             reply = "Lo siento, no hay disponibilidad en los próximos 7 días. Contáctanos directamente."
