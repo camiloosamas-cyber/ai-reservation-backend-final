@@ -173,7 +173,7 @@ def extract_and_validate_time(text: str, config: dict) -> tuple[str | None, bool
 
 def extract_confirmation_data(text: str) -> dict | None:
     lower = text.lower()
-    if not any(phrase in lower for phrase in ["confirmas", "te parece bien", "está bien", "correcto", "confirma la cita"]):
+    if not any(phrase in lower for phrase in ["confirmas", "te parece bien", "está bien", "correcto", "confirma la cita", "te gustaría confirmar", "gustaria confirmar"]):
         return None
     has_name = bool(re.search(r"nombre", lower))
     has_service = bool(re.search(r"servicio", lower))
