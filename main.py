@@ -70,7 +70,7 @@ app = FastAPI(title="AI Reservation Bot", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://ai-reservation-backend-final-production.up.railway.app"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -1097,10 +1097,14 @@ async def dashboard(request: Request, business_id: int):
         <div class="table-card">
             <div class="table-header">
                 <div class="section-title">Historial</div>
+                <div class="search-row">
+                    <input class="search-input" id="searchHistName" placeholder="Nombre..." oninput="filterHistorial()">
+                    <input class="search-input" id="searchHistPhone" placeholder="Teléfono..." oninput="filterHistorial()" style="width:130px">
+                </div>
             </div>
             <table>
                 <thead><tr><th>Fecha & Hora</th><th>Cliente</th><th>Servicio</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
-                <tbody>{build_table_rows(past_reservations)}</tbody>
+                <tbody id="historialBody">{build_table_rows(past_reservations)}</tbody>
             </table>
         </div>
     </div>
@@ -1182,6 +1186,18 @@ async def dashboard(request: Request, business_id: int):
             const matchPhone = cells[3].textContent.toLowerCase().includes(phone);
             const matchDate = !date || cells[0].textContent.includes(date);
             row.style.display = (matchName && matchPhone && matchDate) ? '' : 'none';
+        }});
+    }}
+
+    function filterHistorial() {{
+        const name = document.getElementById('searchHistName').value.toLowerCase();
+        const phone = document.getElementById('searchHistPhone').value.toLowerCase();
+        document.querySelectorAll('#historialBody tr').forEach(row => {{
+            const cells = row.querySelectorAll('td');
+            if (cells.length < 4) return;
+            const matchName = cells[1].textContent.toLowerCase().includes(name);
+            const matchPhone = cells[3].textContent.toLowerCase().includes(phone);
+            row.style.display = (matchName && matchPhone) ? '' : 'none';
         }});
     }}
 
