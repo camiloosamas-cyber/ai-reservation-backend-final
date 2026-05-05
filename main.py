@@ -1001,6 +1001,46 @@ async def dashboard(request: Request, business_id: int):
         table th:nth-child(4), table td:nth-child(4) {{ width:130px; }}
         table th:nth-child(5), table td:nth-child(5) {{ width:110px; }}
         table th:nth-child(6), table td:nth-child(6) {{ width:160px; overflow:visible; }}
+        .cal-controls {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px; }}
+        .cal-nav {{ display:flex; align-items:center; gap:8px; }}
+        .cal-title {{ font-size:0.9rem; font-weight:600; font-family:'DM Mono',monospace; min-width:200px; text-align:center; }}
+        .btn-nav {{ background:var(--surface2); border:1px solid var(--border); color:var(--muted); padding:5px 11px; border-radius:7px; cursor:pointer; font-family:inherit; font-size:0.82rem; }}
+        .btn-nav:hover {{ color:var(--text); }}
+        .btn-today {{ background:var(--green-dim); border:1px solid var(--green-border); color:var(--green); padding:5px 11px; border-radius:7px; cursor:pointer; font-family:inherit; font-size:0.75rem; font-weight:600; }}
+        .view-toggle {{ display:flex; gap:4px; }}
+        .btn-view {{ background:var(--surface2); border:1px solid var(--border); color:var(--muted); padding:5px 13px; border-radius:7px; cursor:pointer; font-family:inherit; font-size:0.75rem; font-weight:500; }}
+        .btn-view.active {{ background:var(--green-dim); border-color:var(--green-border); color:var(--green); }}
+        .week-grid {{ background:var(--surface); border:1px solid var(--border); border-radius:11px; overflow:hidden; }}
+        .week-header {{ display:grid; grid-template-columns:56px repeat(6,1fr); border-bottom:1px solid var(--border); }}
+        .week-hcell {{ padding:9px 6px; text-align:center; font-size:0.68rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; border-right:1px solid var(--border); }}
+        .week-hcell:last-child {{ border-right:none; }}
+        .week-hcell .wdn {{ display:block; font-size:1rem; font-weight:700; color:var(--text); font-family:'DM Mono',monospace; margin-top:2px; line-height:1; }}
+        .week-hcell.is-today .wdn {{ background:var(--green); color:#000; width:26px; height:26px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; margin-top:2px; }}
+        .week-body {{ display:grid; grid-template-columns:56px repeat(6,1fr); max-height:480px; overflow-y:auto; }}
+        .time-col {{ border-right:1px solid var(--border); }}
+        .tslot {{ height:52px; padding:3px 6px; font-size:0.62rem; color:var(--muted); font-family:'DM Mono',monospace; border-bottom:1px solid var(--border); display:flex; align-items:flex-start; }}
+        .dcol {{ border-right:1px solid var(--border); position:relative; }}
+        .dcol:last-child {{ border-right:none; }}
+        .dslot {{ height:52px; border-bottom:1px solid var(--border); padding:2px; position:relative; }}
+        .cal-appt {{ position:absolute; left:2px; right:2px; top:2px; border-radius:5px; padding:2px 5px; font-size:0.64rem; font-weight:500; line-height:1.25; overflow:hidden; cursor:pointer; }}
+        .cal-appt.g {{ background:var(--green-dim); border-left:2px solid var(--green); color:var(--green); }}
+        .cal-appt.b {{ background:var(--blue-dim); border-left:2px solid var(--blue); color:var(--blue); }}
+        .cal-appt.a {{ background:rgba(245,158,11,0.12); border-left:2px solid #f59e0b; color:#f59e0b; }}
+        .month-grid {{ background:var(--surface); border:1px solid var(--border); border-radius:11px; overflow:hidden; }}
+        .month-hrow {{ display:grid; grid-template-columns:repeat(6,1fr); border-bottom:1px solid var(--border); }}
+        .month-hcell {{ padding:9px; text-align:center; font-size:0.68rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; border-right:1px solid var(--border); }}
+        .month-hcell:last-child {{ border-right:none; }}
+        .month-body {{ display:grid; grid-template-columns:repeat(6,1fr); }}
+        .mcell {{ min-height:80px; padding:6px; border-right:1px solid var(--border); border-bottom:1px solid var(--border); }}
+        .mcell:nth-child(6n) {{ border-right:none; }}
+        .mcell.dim {{ opacity:0.3; }}
+        .mday {{ font-size:0.72rem; font-weight:600; font-family:'DM Mono',monospace; color:var(--muted); margin-bottom:3px; }}
+        .mcell.is-today .mday {{ background:var(--green); color:#000; width:20px; height:20px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; }}
+        .mappt {{ padding:2px 5px; border-radius:3px; font-size:0.6rem; font-weight:500; margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }}
+        .mappt.g {{ background:var(--green-dim); border-left:2px solid var(--green); color:var(--green); }}
+        .mappt.b {{ background:var(--blue-dim); border-left:2px solid var(--blue); color:var(--blue); }}
+        .mappt.a {{ background:rgba(245,158,11,0.12); border-left:2px solid #f59e0b; color:#f59e0b; }}
+        .mmore {{ font-size:0.6rem; color:var(--muted); padding:1px 3px; cursor:pointer; }}
         .empty-state {{ text-align:center; padding:36px; color:var(--muted); font-size:0.82rem; }}
         .modal-overlay {{ display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:300; justify-content:center; align-items:center; }}
         .modal-overlay.active {{ display:flex; }}
@@ -1042,6 +1082,7 @@ async def dashboard(request: Request, business_id: int):
     <div class="tab active" onclick="switchTab('hoy',this)">📅 Hoy <span class="tab-count">{today_count}</span></div>
     <div class="tab" onclick="switchTab('proximas',this)">🗓 Próximas <span class="tab-count">{upcoming_count}</span></div>
     <div class="tab" onclick="switchTab('historial',this)">🕐 Historial <span class="tab-count">{len(past_reservations)}</span></div>
+    <div class="tab" onclick="switchTab('calendario',this)">📆 Calendario</div>
 </div>
 
 <div class="container">
@@ -1108,6 +1149,39 @@ async def dashboard(request: Request, business_id: int):
             </table>
         </div>
     </div>
+
+    <div id="tab-calendario" class="tab-content">
+        <div class="cal-controls">
+            <div class="cal-nav">
+                <button class="btn-nav" onclick="calNav(-1)">←</button>
+                <div class="cal-title" id="calTitle"></div>
+                <button class="btn-nav" onclick="calNav(1)">→</button>
+                <button class="btn-today" onclick="calToday()">Hoy</button>
+            </div>
+            <div class="view-toggle">
+                <button class="btn-view active" id="btnSemana" onclick="calSetView('week')">Semana</button>
+                <button class="btn-view" id="btnMes" onclick="calSetView('month')">Mes</button>
+            </div>
+        </div>
+        <div id="calWeek">
+            <div class="week-grid">
+                <div class="week-header" id="weekHeader"></div>
+                <div class="week-body" id="weekBody"></div>
+            </div>
+        </div>
+        <div id="calMonth" style="display:none">
+            <div class="month-grid">
+                <div class="month-hrow">
+                    <div class="month-hcell">Lun</div><div class="month-hcell">Mar</div>
+                    <div class="month-hcell">Mié</div><div class="month-hcell">Jue</div>
+                    <div class="month-hcell">Vie</div><div class="month-hcell">Sáb</div>
+                </div>
+                <div class="month-body" id="monthBody"></div>
+            </div>
+            </div>
+
+    </div>
+
 </div>
 
 <div class="modal-overlay" id="editModal">
@@ -1154,6 +1228,107 @@ async def dashboard(request: Request, business_id: int):
 
 <script>
     const BIZ_ID = '{business_id}';
+
+    const CAL_DATA = {json.dumps([{{"datetime": r.get("datetime",""), "client_name": r.get("client_name",""), "service": r.get("service",""), "status": r.get("status","")}} for r in reservations if r.get("status") in ["confirmed","completed"]])};
+    const DIAS_CAL = ['Lun','Mar','Mié','Jue','Vie','Sáb'];
+    const MESES_CAL = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    const CAL_HOURS = [9,10,11,12,13,14,15,16,17,18];
+    let calView = 'week';
+    let calDate = new Date();
+
+    function calFmtDate(d) {{
+        return `${{d.getFullYear()}}-${{String(d.getMonth()+1).padStart(2,'0')}}-${{String(d.getDate()).padStart(2,'0')}}`;
+    }}
+    function calWeekStart(d) {{
+        const c = new Date(d);
+        const day = c.getDay();
+        const diff = day === 0 ? -6 : 1 - day;
+        c.setDate(c.getDate() + diff);
+        return c;
+    }}
+    function calColor(i) {{ return ['g','b','a'][i%3]; }}
+    function calAppts(dateStr, hour) {{
+        return CAL_DATA.filter(r => {{
+            if (!r.datetime) return false;
+            const [d,t] = r.datetime.split(' ');
+            return d === dateStr && parseInt(t) === hour;
+        }});
+    }}
+    function calDayAppts(dateStr) {{
+        return CAL_DATA.filter(r => r.datetime && r.datetime.startsWith(dateStr));
+    }}
+
+    function calRenderWeek() {{
+        const ws = calWeekStart(calDate);
+        const todayStr = calFmtDate(new Date());
+        const days = Array.from({{length:6}}, (_,i) => {{ const d = new Date(ws); d.setDate(ws.getDate()+i); return d; }});
+        document.getElementById('calTitle').textContent = `${{MESES_CAL[days[0].getMonth()]}} ${{days[0].getDate()}} – ${{days[5].getDate()}}, ${{days[0].getFullYear()}}`;
+        let hdr = '<div class="week-hcell"></div>';
+        days.forEach((d,i) => {{
+            const ds = calFmtDate(d);
+            const isT = ds === todayStr;
+            hdr += `<div class="week-hcell ${{isT?'is-today':''}}">${{DIAS_CAL[i]}}<span class="wdn">${{d.getDate()}}</span></div>`;
+        }});
+        document.getElementById('weekHeader').innerHTML = hdr;
+        let body = '<div class="time-col">' + CAL_HOURS.map(h => `<div class="tslot">${{h}}:00</div>`).join('') + '</div>';
+        days.forEach((d,di) => {{
+            const ds = calFmtDate(d);
+            body += '<div class="dcol">';
+            CAL_HOURS.forEach(h => {{
+                const appts = calAppts(ds, h);
+                body += '<div class="dslot">';
+                appts.forEach((a,ai) => {{
+                    body += `<div class="cal-appt ${{calColor(di+ai)}}"><div>${{a.client_name.split(' ')[0]}}</div><div style="opacity:0.8">${{a.service}}</div></div>`;
+                }});
+                body += '</div>';
+            }});
+            body += '</div>';
+        }});
+        document.getElementById('weekBody').innerHTML = body;
+    }}
+
+    function calRenderMonth() {{
+        const y = calDate.getFullYear(), m = calDate.getMonth();
+        const todayStr = calFmtDate(new Date());
+        document.getElementById('calTitle').textContent = `${{MESES_CAL[m]}} ${{y}}`;
+        const firstDay = new Date(y, m, 1);
+        let sd = firstDay.getDay(); if(sd===0) sd=7; sd--;
+        const dim = new Date(y, m+1, 0).getDate();
+        const dipm = new Date(y, m, 0).getDate();
+        let cells = '';
+        for(let i=sd-1;i>=0;i--) cells += `<div class="mcell dim"><div class="mday">${{dipm-i}}</div></div>`;
+        for(let day=1;day<=dim;day++) {{
+            const wd = new Date(y,m,day).getDay();
+            if(wd===0) continue;
+            const ds = `${{y}}-${{String(m+1).padStart(2,'0')}}-${{String(day).padStart(2,'0')}}`;
+            const isT = ds === todayStr;
+            const appts = calDayAppts(ds);
+            let ah = appts.slice(0,2).map((a,i) => {{
+                const t = a.datetime.split(' ')[1]?.substring(0,5)||'';
+                return `<div class="mappt ${{calColor(i)}}">${{t}} ${{a.client_name.split(' ')[0]}}</div>`;
+            }}).join('');
+            if(appts.length>2) ah += `<div class="mmore">+${{appts.length-2}} más</div>`;
+            cells += `<div class="mcell ${{isT?'is-today':''}}"><div class="mday">${{day}}</div>${{ah}}</div>`;
+        }}
+        document.getElementById('monthBody').innerHTML = cells;
+    }}
+
+    function calRender() {{ if(calView==='week') calRenderWeek(); else calRenderMonth(); }}
+    function calNav(dir) {{
+        if(calView==='week') calDate.setDate(calDate.getDate()+dir*7);
+        else calDate.setMonth(calDate.getMonth()+dir);
+        calRender();
+    }}
+    function calToday() {{ calDate = new Date(); calRender(); }}
+    function calSetView(v) {{
+        calView = v;
+        document.getElementById('calWeek').style.display = v==='week'?'block':'none';
+        document.getElementById('calMonth').style.display = v==='month'?'block':'none';
+        document.getElementById('btnSemana').classList.toggle('active', v==='week');
+        document.getElementById('btnMes').classList.toggle('active', v==='month');
+        calRender();
+    }}
+    document.addEventListener('DOMContentLoaded', () => {{ if(document.getElementById('calTitle')) calRender(); }});
 
     function switchTab(name, el) {{
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
