@@ -1229,7 +1229,7 @@ async def dashboard(request: Request, business_id: int):
 <script>
     const BIZ_ID = '{business_id}';
 
-    const CAL_DATA = {json.dumps([{{"datetime": r.get("datetime",""), "client_name": r.get("client_name",""), "service": r.get("service",""), "status": r.get("status","")}} for r in reservations if r.get("status") in ["confirmed","completed"]])};
+    const CAL_DATA = {json.dumps([{"datetime": r.get("datetime",""), "client_name": r.get("client_name",""), "service": r.get("service",""), "status": r.get("status","")} for r in reservations if r.get("status") in ["confirmed","completed"]])};
     const DIAS_CAL = ['Lun','Mar','Mié','Jue','Vie','Sáb'];
     const MESES_CAL = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
     const CAL_HOURS = [9,10,11,12,13,14,15,16,17,18];
