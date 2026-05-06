@@ -1250,12 +1250,13 @@ async def dashboard(request: Request, business_id: int):
     function calAppts(dateStr, hour) {{
         return CAL_DATA.filter(r => {{
             if (!r.datetime) return false;
-            const [d,t] = r.datetime.split(' ');
+            const dt = r.datetime.replace('T', ' ');
+            const [d,t] = dt.split(' ');
             return d === dateStr && parseInt(t) === hour;
         }});
     }}
     function calDayAppts(dateStr) {{
-        return CAL_DATA.filter(r => r.datetime && r.datetime.startsWith(dateStr));
+        return CAL_DATA.filter(r => r.datetime && r.datetime.replace('T',' ').startsWith(dateStr));
     }}
 
     function calRenderWeek() {{
@@ -1304,7 +1305,7 @@ async def dashboard(request: Request, business_id: int):
             const isT = ds === todayStr;
             const appts = calDayAppts(ds);
             let ah = appts.slice(0,2).map((a,i) => {{
-                const t = a.datetime.split(' ')[1]?.substring(0,5)||'';
+            const t = a.datetime.replace('T',' ').split(' ')[1]?.substring(0,5)||'';
                 return `<div class="mappt ${{calColor(i)}}">${{t}} ${{a.client_name.split(' ')[0]}}</div>`;
             }}).join('');
             if(appts.length>2) ah += `<div class="mmore">+${{appts.length-2}} más</div>`;
