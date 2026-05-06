@@ -307,6 +307,7 @@ REGLAS:
 - "Corte de pelo", "corte de cabello", "pelo", "cabello", "un corte" son equivalentes al servicio "Corte". Reconoce variaciones del nombre del servicio.
 - Si el mensaje del cliente contiene un nombre, una hora y una fecha resuelta (YYYY-MM-DD), NO hagas ninguna pregunta. Muestra el resumen inmediatamente.
 - Si el cliente pregunta por disponibilidad, horarios disponibles, o cuándo pueden atenderlo, responde SOLO con: CONSULTA_DISPONIBILIDAD
+- Cuando el cliente responda "confirmo", "sí", "correcto" o cualquier confirmación después de ver el resumen, responde ÚNICAMENTE con el JSON RESERVA_CONFIRMADA. Nada más.
 - Si el cliente dice "a las 5 pm", "a las 3", "a las 17:00" o cualquier variación, eso ES la hora. No preguntes por la hora de nuevo."""
 
 def ask_openai(config, history, new_message):
